@@ -301,3 +301,47 @@ func test_beacon_parsing() -> void:
 			'{"game":"BulletHwaven","version":2,"port":24680}', '{"game":"BulletHwaven","version":1,"port":0}',
 			'{"game":"BulletHwaven","version":1,"port":"x"}', '{"game":"BulletHwaven","version":1,"port":70000}']:
 		assert_true(LanDiscovery.parse_beacon(bad.to_utf8_buffer()).is_empty(), "rejected: " + bad)
+
+
+func test_snapshot_carries_identity() -> void:
+	var host := SimWorld.new(3)
+	host.add_vehicle(1, Vector2(100, 100), "Ace", 5)
+	host.add_vehicle(2, Vector2(200, 200), "Bob the Builder", 7)
+	host.add_vehicle(3, Vector2(300, 300))
+	assert_eq(host.vehicles[2].color_index, 2, "default colour = vehicle id")
+	assert_eq(host.vehicles[2].player_name, "DRIVER")
+	var client := SimWorld.new(0)
+	var held: SimVehicle = client.add_vehicle(9, Vector2(5, 5))
+	assert_true(Snapshot.apply(client, Snapshot.encode(host)))
+	assert_eq(client.vehicles.size(), 3)
+	assert_true(client.vehicles[0] == held, "updated in place")
+	for i in 3:
+		assert_eq(client.vehicles[i].player_name, host.vehicles[i].player_name, "name %d" % i)
+		assert_eq(client.vehicles[i].color_index, host.vehicles[i].color_index, "colour %d" % i)
+	assert_eq(client.vehicles[1].player_name, "Bob the Builder")
+	assert_eq(client.vehicles[1].color_index, 7)
+	var twin := SimWorld.new(3)
+	twin.add_vehicle(1, Vector2(100, 100), "Ace", 5)
+	var base: int = twin.checksum()
+	twin.vehicles[0].color_index = 6
+	assert_ne(twin.checksum(), base, "colour is part of the checksum")
+	twin.vehicles[0].color_index = 5
+	assert_eq(twin.checksum(), base)
+	twin.vehicles[0].player_name = "Zed"
+	assert_ne(twin.checksum(), base, "name is part of the checksum")
+
+	# A bad colour index or an unprintable name in a snapshot is rejected / cleaned.
+	var solo := SimWorld.new(1)
+	solo.add_vehicle(1, Vector2(1, 1), "ACE", 3)
+	var bytes: PackedByteArray = Snapshot.encode(solo)
+	var color_at: int = Snapshot.HEADER_BYTES + 1 + 4 + 1 + 3
+	assert_eq(bytes[color_at], 3, "colour byte where expected")
+	var bad: PackedByteArray = bytes.duplicate()
+	bad[color_at] = 8
+	var c2 := SimWorld.new(0)
+	assert_false(Snapshot.apply(c2, bad), "colour index out of range")
+	assert_eq(c2.vehicles.size(), 0, "world untouched")
+	var ugly: PackedByteArray = bytes.duplicate()
+	ugly[color_at - 2] = 7  # control character inside the name
+	assert_true(Snapshot.apply(c2, ugly))
+	assert_eq(c2.vehicles[0].player_name, "AE", "control char stripped on receipt")

@@ -20,6 +20,10 @@ const MAX_PACKET := 512
 ## Shown in the host's beacon (set by the lobby/main script).
 var player_count: int = 1
 var host_name: String = ""
+var match_state: String = "lobby"  ## "lobby" or "match"
+## Optional: when set, every beacon refreshes player_count, host_name and match_state from the
+## session (so the beacon stays current as people join, leave and the match starts).
+var session: NetSession = null
 ## Last error returned by a failed beacon send (OK if none). Useful to detect "no broadcast".
 var last_send_error: Error = OK
 var beacons_sent: int = 0
@@ -89,13 +93,24 @@ func _process(delta: float) -> void:
 		_poll()
 
 
+func _refresh_from_session() -> void:
+	if session != null and is_instance_valid(session):
+		player_count = session.player_count()
+		match_state = session.state_name()
+		var me: Dictionary = session.local_player()
+		if not me.is_empty():
+			host_name = me["name"]
+
+
 func _send_beacon() -> void:
+	_refresh_from_session()
 	var beacon := {
 		"game": GAME_NAME,
 		"version": PROTOCOL_VERSION,
 		"port": _game_port,
 		"players": player_count,
 		"name": host_name,
+		"state": match_state,
 	}
 	last_send_error = _udp.put_packet(JSON.stringify(beacon).to_utf8_buffer())
 	if last_send_error == OK:
@@ -148,4 +163,10 @@ static func parse_beacon(pkt: PackedByteArray) -> Dictionary:
 	var host_name_s: String = ""
 	if typeof(d.get("name")) == TYPE_STRING:
 		host_name_s = String(d["name"]).substr(0, 32)
-	return {"game": GAME_NAME, "version": PROTOCOL_VERSION, "port": port, "players": players, "name": host_name_s}
+	var state_s: String = "lobby"
+	if d.get("state") == "match":
+		state_s = "match"
+	return {
+		"game": GAME_NAME, "version": PROTOCOL_VERSION, "port": port, "players": players,
+		"name": host_name_s, "state": state_s,
+	}

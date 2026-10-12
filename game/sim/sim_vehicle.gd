@@ -5,8 +5,15 @@ extends RefCounted
 const RADIUS := 14.0
 const MAX_HP := 300.0
 
+# Player identity (lobby). Colour indices: 0 red, 1 magenta (the current art), 2..7 reserved for more paints.
+const COLOR_COUNT := 8
+const MAX_NAME_LEN := 16
+const DEFAULT_NAME := "DRIVER"
+
 var id: int = 0
 var peer_id: int = 0
+var player_name: String = DEFAULT_NAME  ## sanitised, 1..MAX_NAME_LEN printable ASCII chars
+var color_index: int = 0  ## 0..COLOR_COUNT-1 paint colour; defaults to id % COLOR_COUNT
 var pos: Vector2 = Vector2.ZERO
 var vel: Vector2 = Vector2.ZERO  ## px/s
 var heading: float = 0.0  ## radians, 0 = +X. Sprites face north: render rotation = heading + PI / 2.
@@ -57,6 +64,7 @@ var ram_damage: float = 0.0  ## per-tick damage dealt to touching enemies/vehicl
 func _init(p_id: int, p_peer_id: int, p_pos: Vector2) -> void:
 	id = p_id
 	peer_id = p_peer_id
+	color_index = p_id % COLOR_COUNT
 	pos = p_pos
 	orbit_dir = 1.0 if p_id % 2 == 0 else -1.0
 	Cards.recompute(self, true, false)
@@ -79,3 +87,23 @@ func engage_range() -> float:
 	for w in weapons:
 		r += float(w["range"])
 	return r / float(weapons.size())
+
+
+## Cleans a player name: printable ASCII only (0x20..0x7E), runs of spaces collapsed, trimmed,
+## at most MAX_NAME_LEN characters. Returns DEFAULT_NAME if nothing is left.
+static func sanitize_name(raw: String) -> String:
+	var out: String = ""
+	var last_space: bool = true  # also trims leading spaces
+	for i in mini(raw.length(), 128):
+		var c: int = raw.unicode_at(i)
+		if c < 0x20 or c > 0x7E:
+			continue
+		if c == 0x20:
+			if last_space:
+				continue
+			last_space = true
+		else:
+			last_space = false
+		out += char(c)
+	out = out.strip_edges().left(MAX_NAME_LEN).strip_edges()
+	return out if out != "" else DEFAULT_NAME

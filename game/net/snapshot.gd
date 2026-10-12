@@ -5,18 +5,19 @@ extends RefCounted
 ## Layout (little endian):
 ##   header   30 B  version, flags, tick, next_enemy_id, counts, enemy id base,
 ##                   phase, round, phase_ticks_left, winner_peer
-##   vehicles variable (about 150 B each: doctrine strings, weapons, fuel / flags, offers, cards, tech)
+##   vehicles variable (about 160 B each: doctrine strings, weapons, fuel / flags, offers, cards, tech,
+##                   player name and colour index)
 ##   events   7 B each  type, owner, kind, pos (u16 x2, 1/32 px, offset by POS_ORIGIN)
 ##   enemies  8 B each  id offset u16, x u16, y u16 (1/32 px), packed u16:
 ##                      kind 2 bits | hp 4 bits (1..15 of max) | speed 3 bits (0..7 of kind speed) | heading 7 bits
-##   projs   13 B each  x u16, y u16 (1/32 px, offset), vx i16, vy i16 (px/s), owner i8, ttl u8 (1/200 s), damage u8 (1/4)
+##   projs   13 B each  x u16, y u16 (1/32 px, offset), vx i16, vy i16 (px/s), owner i8, ttl u8 (1/100 s), damage u8 (1/4)
 ##
 ## Positions are quantized to 1/32 px (max error POS_ERROR). Enemy velocity is quantized to
 ## 1/7 of the kind's speed and 128 headings; enemy hp to 1/15 of the kind's max hp (for the
 ## current round, SimWorld.enemy_max_hp). Card and tech ids are table indices (Cards.DEFS / Tech.DEFS).
 ## Projectile pierce / splash are not sent: the client world is passive.
 
-const VERSION := 2
+const VERSION := 3
 const FLAG_WIDE_IDS := 1  ## enemy ids spread over more than 65535: ids are sent as u32 deltas from 0
 
 const POS_SCALE := 32.0
@@ -30,12 +31,12 @@ const PROJ_BYTES := 13
 const EVENT_BYTES := 7
 
 const MAX_VEHICLES := 64  ## vehicle ids travel as u8 / i8 owners, keep well below 127
-const EVENT_TYPES: PackedStringArray = ["fire", "hit", "kill", "vehicle_destroyed", "retreat", "respawn"]
+const EVENT_TYPES: PackedStringArray = ["fire", "hit", "kill", "vehicle_destroyed", "retreat", "respawn", "spit"]
 const MAX_ROUND := 65535
 const SPEED_STEPS := 7
 const HEADING_STEPS := 128
 const HP_STEPS := 15
-const TTL_SCALE := 200.0
+const TTL_SCALE := 100.0  # u8: up to 2.55 s (acid lives about 1.8 s)
 const DAMAGE_SCALE := 4.0
 
 
@@ -288,6 +289,8 @@ static func _put_str(sp: StreamPeerBuffer, s: String) -> void:
 static func _put_vehicle(sp: StreamPeerBuffer, v: SimVehicle) -> void:
 	sp.put_u8(v.id)
 	sp.put_32(v.peer_id)
+	_put_str(sp, v.player_name)
+	sp.put_u8(clampi(v.color_index, 0, SimVehicle.COLOR_COUNT - 1))
 	sp.put_float(v.pos.x)
 	sp.put_float(v.pos.y)
 	sp.put_float(v.vel.x)
@@ -366,6 +369,11 @@ static func _get_vehicle(r: _Reader) -> SimVehicle:
 	var id: int = r.u8()
 	var peer: int = r.s32()
 	var v := SimVehicle.new(id, peer, Vector2.ZERO)
+	v.player_name = SimVehicle.sanitize_name(r.string())
+	var pcolor: int = r.u8()
+	if pcolor >= SimVehicle.COLOR_COUNT:
+		r.fail()
+	v.color_index = pcolor
 	v.weapons.clear()
 	v.pos = Vector2(r.f32(), r.f32())
 	v.vel = Vector2(r.f32(), r.f32())
@@ -453,6 +461,8 @@ static func _commit_vehicles(world: SimWorld, fresh: Array[SimVehicle]) -> void:
 		if i < cur.size() and cur[i].id == src.id:
 			var dst: SimVehicle = cur[i]
 			dst.peer_id = src.peer_id
+			dst.player_name = src.player_name
+			dst.color_index = src.color_index
 			dst.pos = src.pos
 			dst.vel = src.vel
 			dst.heading = src.heading

@@ -28,17 +28,18 @@
   - `vehicles: Array[SimVehicle]`
   - Enemies as dense struct-of-arrays (length == `enemy_count`, swap-remove on death): `enemy_id: PackedInt32Array` (stable ids), `enemy_kind: PackedByteArray` (`SimWorld.MITE = 0`, `BOULDER = 1`, `SPITTER = 2`), `enemy_pos`, `enemy_vel: PackedVector2Array`, `enemy_hp: PackedFloat32Array`.
   - Projectiles as dense struct-of-arrays (length == `proj_count`): `proj_pos`, `proj_vel: PackedVector2Array`, `proj_ttl`, `proj_damage: PackedFloat32Array`, `proj_owner: PackedInt32Array` (vehicle id, `-1` = alien).
-  - `events: Array[Dictionary]`: this tick's events, cleared at the start of `step()`. `{"type": "fire"|"hit"|"kill"|"vehicle_destroyed", "pos": Vector2, "owner": int, "kind": int}`.
+  - `events: Array[Dictionary]`: this tick's events, cleared at the start of `step()`. `{"type": "fire"|"hit"|"kill"|"vehicle_destroyed"|"spit", "pos": Vector2, "owner": int, "kind": int}` (more types are listed under the round loop).
 - Methods:
   - `_init(p_seed: int)`
-  - `add_vehicle(peer_id: int, pos: Vector2) -> SimVehicle`
+  - `add_vehicle(peer_id: int, pos: Vector2, p_name := "DRIVER", p_color := -1) -> SimVehicle` (name sanitised; colour < 0 keeps the default `id % 8`)
   - `get_vehicle_for_peer(peer_id: int) -> SimVehicle` (or `null`)
   - `apply_command(peer_id: int, cmd: Dictionary)`. Commands: `{"type": "set_drive", "value": "circle"|"kite"|"charge"}`, `{"type": "set_target", "value": "nearest"|"strongest"|"players_first"}`.
   - `step()`: advances one tick (spawning, enemy AI, vehicle AI, weapons, projectiles, collisions via a spatial hash, deaths, scrap, events).
   - `checksum() -> int`: hash of the full state, for determinism and desync tests.
 
 `SimVehicle` (`sim/sim_vehicle.gd`, `class_name SimVehicle extends RefCounted`)
-- `id: int`, `peer_id: int`, `pos: Vector2`, `vel: Vector2`, `heading: float` (radians, Godot convention: 0 = +X/east; sprites face north, so render rotation = `heading + PI / 2`), `hp`, `max_hp: float`, `alive: bool`, `scrap: int`, `kills: int`.
+- `id: int`, `peer_id: int`, `player_name: String` (default `"DRIVER"`; 1..16 printable ASCII chars), `color_index: int` (0..7 paint colour, default `id % 8`; 0 = red, 1 = magenta as in the current art, 2..7 reserved for more paints). `SimVehicle.sanitize_name(raw)` is the one place names are cleaned (printable ASCII only, spaces collapsed and trimmed, max `MAX_NAME_LEN = 16`, empty becomes `"DRIVER"`); `COLOR_COUNT = 8`.
+- `pos: Vector2`, `vel: Vector2`, `heading: float` (radians, Godot convention: 0 = +X/east; sprites face north, so render rotation = `heading + PI / 2`), `hp`, `max_hp: float`, `alive: bool`, `scrap: int`, `kills: int`.
 - `doctrine: Dictionary = {"drive": "circle", "target": "nearest"}`.
 - `weapons: Array[Dictionary]`, each `{"kind": "mg", "damage": float, "range": float, "cooldown_ticks": int, "cooldown": int, "aim": float}`. `aim` is the world angle, updated by the sim so render can rotate turrets.
 
@@ -48,11 +49,22 @@ Skeleton gameplay: vehicles drive themselves according to their doctrine; weapon
 
 ## Net contract (`net/`)
 
-- `NetSession` (`net/net_session.gd`, `class_name NetSession extends Node`): `host(port := 24680) -> Error`, `join(address: String, port := 24680) -> Error`, `start_solo()`, `is_host() -> bool`, `local_peer_id() -> int`, `send_command(cmd: Dictionary)`, `var world: SimWorld`. Signals: `peer_joined(id)`, `peer_left(id)`, `session_started`.
-  - The host steps the sim in `_physics_process` (30 Hz), applies client commands with the sender's peer id, and sends a snapshot every 2 ticks (unreliable-ordered).
-  - Clients apply snapshots to their local `world`. Render smooths positions.
-- `Snapshot` (`net/snapshot.gd`): `static func encode(world: SimWorld) -> PackedByteArray`, `static func apply(world: SimWorld, bytes: PackedByteArray)`. Positions quantized, events included.
-- `LanDiscovery` (`net/lan_discovery.gd`): the host broadcasts a UDP beacon on port 24681 once per second; clients emit `host_found(address: String, info: Dictionary)`.
+- `NetSession` (`net/net_session.gd`, `class_name NetSession extends Node`): `host(port := 24680, auto_start := true) -> Error`, `join(address: String, port := 24680) -> Error`, `start_solo(name := "DRIVER", color_index := 0)`, `is_host() -> bool`, `local_peer_id() -> int`, `send_command(cmd: Dictionary)`, `var world: SimWorld` (never null after host/join/start_solo; in the lobby it is an empty placeholder that is not stepped). Signals: `peer_joined(id)`, `peer_left(id)`, `session_started`, plus the lobby signals below.
+  - The host steps the sim in `_physics_process` (30 Hz) **only while a match runs**, applies client commands with the sender's peer id, and sends a snapshot every 2 ticks (unreliable-ordered).
+  - Clients apply snapshots to their local `world` (only while in a match). Render smooths positions.
+- **Lobby and match lifecycle** (host-authoritative). `state` is `NetSession.State.IDLE | LOBBY | MATCH` (`in_lobby()`, `in_match()`, `state_name()` = `"lobby"|"match"`).
+  - `host(port, auto_start)` opens a lobby with the local player (profile from `set_profile()`, default `"DRIVER"`/0) and does not step the sim. `auto_start = true` (legacy `--host`, the default for now) calls `start_match()` immediately and accepts late joiners (`allow_late_join = true`). **The menu passes `auto_start = false`**, lets people gather, then calls `start_match()`. `join()` puts a client in the LOBBY state until the host's roster arrives; on connect it sends its profile as the hello.
+  - `lobby_players: Array[Dictionary]`, host first, `{"peer_id", "name", "color_index", "ready", "is_host"}`; read-only for callers. Authoritative on the host, re-sent (reliable) to clients on every change and validated by `NetSession.parse_lobby()` on receipt. During a match it is the roster of connected players (a departed peer is removed). `local_player() -> Dictionary` is the local entry (`{}` until the roster arrived), `lobby_all_ready()` is true when every non-host player is ready.
+  - Signals: `lobby_changed`, `match_started` (also on a rematch; `world` is then a fresh `SimWorld`, so re-bind render), `match_ended(winner_peer: int)` (game over reached, once per match, host and clients; -1 = nobody/solo loss), `join_rejected(reason: String)` (client only, followed by `disconnected`).
+  - `set_profile(name, color_index)`: before host/join/start_solo it only stores the profile; afterwards it sends the validated command `{"type": "profile", "name": String (raw <= 64 chars), "color_index": 0..7}` (the same command is the client's hello). The host sanitises the name (`SimVehicle.sanitize_name`), makes it unique among players (case-insensitive: `"BOB"`, `"BOB 2"`, ... within 16 chars) and keeps colours unique: a new player gets the preferred colour if free else the lowest free one; a player who asks for a taken colour keeps the current one. Profile changes are accepted in the lobby and also during a match (the vehicle is updated).
+  - `set_lobby_ready(bool)` sends `{"type": "lobby_ready", "value": bool}`; only meaningful in the lobby.
+  - `start_match() -> Error` (host/solo only, state LOBBY, at least 1 player; ready flags are not required, so the host may force): builds a fresh world (seed `world_seed + n` for the n-th match of the session, random if `world_seed < 0`; `fast_rounds` applied), one vehicle per roster entry in roster order with its name and colour, then emits `match_started` (clients get a reliable `match_started` RPC and start from a fresh passive world). Errors: `ERR_UNAUTHORIZED` (not host), `ERR_UNAVAILABLE` (not in lobby), `ERR_UNCONFIGURED` (empty roster).
+  - `rematch() -> Error` (host/solo only, only when `world.phase == PHASE_GAME_OVER`, else `ERR_UNAVAILABLE`): **chosen behaviour: straight into a new match**, not back to the lobby: new seed, same connected players with their names and colours, ready flags reset, `match_started` again. Solo restart uses the same call (`start_solo()` also still works and restarts at once).
+  - **Late join:** a peer that connects while a match runs is **refused** (simplest robust option; no spectator mode): the host sends `join_rejected("match in progress")` and closes the connection after the message is flushed. Exception: sessions started with `auto_start = true` (`allow_late_join`) still take late joiners as players, as before. A full lobby (8 players) is refused with `"lobby full"`.
+  - `leave()` (same as `stop()`): closes the connection and forgets the lobby; `world` is kept for inspection. Extras: `fast_rounds` (applied to every match world; `--fast` still works by setting `world.fast_rounds` after `host()`/`start_solo()`), `allow_late_join`, `player_count()` (roster size).
+  - **Security:** every client message (game and lobby) goes through `validate_command` (allow-list, types, ranges, lengths) and the 20/s per-peer limit; `profile` and `lobby_ready` additionally share a stricter limit of 4/s per peer. Clients never send start/rematch (host-only API, no command exists for them). Host-to-client messages (`lobby`, `match_started`, `rejected`) are accepted only from peer 1 and the lobby list is validated (max 8 entries, unique peers and colours, exactly one host, sanitised names).
+- `Snapshot` (`net/snapshot.gd`, format version 3): `static func encode(world: SimWorld) -> PackedByteArray`, `static func apply(world: SimWorld, bytes: PackedByteArray)`. Positions quantized, events included. Vehicles carry `player_name` and `color_index` (right after `peer_id`; a colour index >= 8 makes `apply()` return false, names are re-sanitised on receipt). Projectile ttl is sent in 1/100 s (acid lives about 1.8 s). Event type `spit` was appended to `EVENT_TYPES`.
+- `LanDiscovery` (`net/lan_discovery.gd`): the host broadcasts a UDP beacon on port 24681 once per second; clients emit `host_found(address: String, info: Dictionary)`. Beacon fields: `game`, `version` (1), `port`, `players`, `name`, `state` (`"lobby"` or `"match"`; unknown values parse as `"lobby"`). Set `lan.session = <NetSession>` and every beacon refreshes `players` (roster size), `name` (host's player name) and `state` from it; the plain fields `player_count`, `host_name`, `match_state` still work without a session.
 
 Net details (as built):
 - `NetSession` names itself `"NetSession"` and must sit at the same node path on every peer, because RPCs match by path.
@@ -83,7 +95,7 @@ Render details (as built):
 
 - `test.sh`: runs the headless test suite and exits non-zero on failure.
 - `shot.sh <scenario> <seed> <ticks> <out.png>`: renders a scenario under Xvfb and saves a screenshot.
-- `lan-smoke.sh`: starts a headless host and a headless client on localhost and checks they sync.
+- `lan-smoke.sh`: starts a headless host and client on localhost through the whole flow (host opens a lobby, the client joins with a colliding name and colour and readies up, the host starts the match, both play) and checks tick sync, command round trip, enemy counts and that names and colours were made unique and agree on both sides; a third client that joins mid-match must get `join_rejected("match in progress")`. LAN discovery (state and player count in the beacon) is checked when UDP broadcast works, else skipped. The harness is `net/smoke.gd` (`--role=host|client|late`).
 
 ## Round loop contract (design doc sections 3, 5 and 8)
 
@@ -137,3 +149,11 @@ Implemented in `sim/sim_world.gd`, `sim/cards.gd`, `sim/tech.gd`, `net/snapshot.
 - **Snapshot:** header gained `phase`, `round`, `phase_ticks_left`, `winner_peer`; vehicles carry fuel, respawn ticks, flag bits, reroll cost, scrap fraction, offers, cards (index + level) and tech (indices), and full weapon dicts. Out-of-range card/tech indices, levels outside 1..3 or an unknown phase make `apply()` return false with the world untouched. Clients recompute derived stats from cards and tech. Event types `retreat` and `respawn` were appended to `Snapshot.EVENT_TYPES`. Projectile pierce/splash are not sent (clients are passive).
 - **Checksum** now also covers phase, round, timers, winner, all new vehicle state (fuel, flags, offers, cards, tech, derived stats, full weapon dicts) and the new projectile arrays. It still excludes rng state.
 - **Late joiners:** `SimWorld.prepare_vehicle(v)` (called by `add_vehicle` and by `NetSession` when it reuses a slot) sets fuel and, during a workshop, rolls offers.
+
+## Spitters (as built)
+
+Constants on `SimWorld`: `SPITTER_MIN_ROUND = 3`, spawn chance `spitter_chance(r)` = 0 before round 3, then `0.08 + 0.03 (r-3)` capped at 0.25 (rolled after the boulder roll; no extra rng draw before round 3, so rounds 1-2 are unchanged). A spitter (hp 20, speed 55 px/s) holds 180 to 230 px from the nearest living vehicle (`SPITTER_KEEP_MIN/MAX`: backs away with a sideways drift when closer, closes in when farther, strafes slowly in between) and every `SPIT_PERIOD = 60` ticks (2 s, staggered by enemy id, so there is no extra per-enemy state) lobs one acid glob if the target is within `SPIT_RANGE = 260`: speed `SPIT_SPEED = 170` px/s, damage `SPIT_DAMAGE = 8` x `enemy_damage_mult(round)`, aimed with target lead and +-0.08 rad error (from `world.rng`), ttl about 1.8 s. The projectile has `owner = -1`; it damages vehicles only (armour applies, the kill costs fuel as an alien kill) and passes aliens by. Each shot emits `{"type": "spit", "pos": muzzle, "owner": -1, "kind": SPITTER}` for render. The old screenshot scenarios that fake spitter fire in `tools/scenarios.gd` now double up with the real thing and can drop their fake.
+
+## Tests
+
+`tests/test_lobby.gd` (lobby join, profile/colour uniqueness, name sanitising, validation of junk, start_match, rematch, late-join policy, solo defaults, beacon state, roster parsing), `tests/test_spitter.gd` (spawn rounds, distance keeping, acid damage and armour, determinism, spit event over the snapshot), `tests/test_net.gd::test_snapshot_carries_identity`.

@@ -36,6 +36,19 @@ const SPAWN_RAMP_INTERVAL := 10.0
 const BOULDER_CHANCE := 0.1
 const SPAWN_INSET := 8.0
 
+# Spitters (ranged aliens that keep their distance and lob slow acid at vehicles).
+const SPITTER_MIN_ROUND := 3
+const SPITTER_CHANCE_START := 0.08  # of spawns in round SPITTER_MIN_ROUND (after the boulder roll)
+const SPITTER_CHANCE_PER_ROUND := 0.03
+const SPITTER_CHANCE_MAX := 0.25
+const SPITTER_KEEP_MIN := 180.0  # backs away from its target closer than this
+const SPITTER_KEEP_MAX := 230.0  # closes in on its target farther than this
+const SPIT_PERIOD := 60  # ticks between shots per spitter (2 s), staggered by enemy id
+const SPIT_RANGE := 260.0  # only fires at a vehicle within this distance
+const SPIT_SPEED := 170.0  # px/s, slow enough to see coming
+const SPIT_DAMAGE := 8.0  # x enemy_damage_mult(round), reduced by armour like any hit
+const SPIT_INACCURACY := 0.08  # radians, uniform +-
+
 # Round loop (docs/architecture.md, "Round loop contract").
 const PHASE_COMBAT := 0
 const PHASE_WORKSHOP := 1
@@ -137,8 +150,12 @@ func _init(p_seed: int) -> void:
 
 # ---------------------------------------------------------------- public API
 
-func add_vehicle(peer_id: int, pos: Vector2) -> SimVehicle:
+## `p_name` is sanitised; `p_color` < 0 keeps the default (vehicle id % 8).
+func add_vehicle(peer_id: int, pos: Vector2, p_name: String = SimVehicle.DEFAULT_NAME, p_color: int = -1) -> SimVehicle:
 	var v := SimVehicle.new(vehicles.size(), peer_id, pos)
+	v.player_name = SimVehicle.sanitize_name(p_name)
+	if p_color >= 0:
+		v.color_index = p_color % SimVehicle.COLOR_COUNT
 	v.heading = (ARENA.get_center() - pos).angle()
 	vehicles.append(v)
 	prepare_vehicle(v)
@@ -222,6 +239,13 @@ static func spawn_rate_mult(r: int) -> float:
 
 static func boulder_chance(r: int) -> float:
 	return minf(BOULDER_CHANCE + BOULDER_CHANCE_PER_ROUND * float(maxi(r - 1, 0)), BOULDER_CHANCE_MAX)
+
+
+## Share of spawns that are spitters in round `r` (0 before SPITTER_MIN_ROUND).
+static func spitter_chance(r: int) -> float:
+	if r < SPITTER_MIN_ROUND:
+		return 0.0
+	return minf(SPITTER_CHANCE_START + SPITTER_CHANCE_PER_ROUND * float(r - SPITTER_MIN_ROUND), SPITTER_CHANCE_MAX)
 
 
 static func enemy_damage_mult(r: int) -> float:
@@ -328,6 +352,8 @@ func checksum() -> int:
 	for v in vehicles:
 		vf.append(float(v.id))
 		vf.append(float(v.peer_id))
+		vf.append(float(v.color_index))
+		vf.append(float(v.player_name.hash()))
 		vf.append(v.pos.x)
 		vf.append(v.pos.y)
 		vf.append(v.vel.x)
@@ -607,7 +633,10 @@ func _update_enemies() -> void:
 			var dir: Vector2 = _av_pos[bk] - p
 			var dl: float = dir.length()
 			if dl > 0.001:
-				desired = dir * (ENEMY_SPEED[kind] / dl)
+				if kind == SPITTER:
+					desired = _spitter_desire(dir / dl, dl, enemy_id[i])
+				else:
+					desired = dir * (ENEMY_SPEED[kind] / dl)
 		var vel: Vector2 = enemy_vel[i].lerp(desired, 0.25)
 		var np: Vector2 = p + vel * DT
 
@@ -667,9 +696,39 @@ func _update_enemies() -> void:
 		enemy_pos[i] = np
 		enemy_vel[i] = vel
 
+		if kind == SPITTER and bk >= 0 and enemy_hp[i] > 0.0 and (tick + enemy_id[i] * 7) % SPIT_PERIOD == 0:
+			_spit(np, vehicles[_av_idx[bk]])
+
 	for vidx in vehicles.size():
 		if _contact[vidx] > 0.0:
 			_damage_vehicle(vehicles[vidx], _contact[vidx], -1, false)
+
+
+## Spitter movement: hold SPITTER_KEEP_MIN..SPITTER_KEEP_MAX px from the target (`u` = unit vector to
+## it, `d` = distance), backing away (with a sideways drift, so it does not corner itself) when too
+## close, closing in when too far, and strafing slowly in between.
+static func _spitter_desire(u: Vector2, d: float, id: int) -> Vector2:
+	var side: float = 1.0 if id % 2 == 0 else -1.0
+	var tang: Vector2 = Vector2(-u.y, u.x) * side
+	var spd: float = ENEMY_SPEED[SPITTER]
+	if d > SPITTER_KEEP_MAX:
+		return u * spd
+	if d < SPITTER_KEEP_MIN:
+		return (-u + tang * 0.6).normalized() * spd
+	return tang * (spd * 0.4)
+
+
+## A spitter at `from` lobs one acid glob at `target` (leading its movement). Emits a "spit" event.
+func _spit(from: Vector2, target: SimVehicle) -> void:
+	var dist: float = from.distance_to(target.pos)
+	if dist > SPIT_RANGE or dist < 1.0:
+		return
+	var aim: Vector2 = target.pos + target.vel * (dist / SPIT_SPEED)
+	var ang: float = (aim - from).angle() + rng.randf_range(-SPIT_INACCURACY, SPIT_INACCURACY)
+	var dir: Vector2 = Vector2.from_angle(ang)
+	var muzzle: Vector2 = from + dir * 10.0
+	spawn_projectile(muzzle, dir * SPIT_SPEED, SPIT_RANGE / SPIT_SPEED + 0.3, SPIT_DAMAGE * enemy_damage_mult(round), -1)
+	_emit("spit", muzzle, -1, SPITTER)
 
 
 ## Contact damage per tick of one touching enemy after the vehicle's armour.
@@ -739,7 +798,11 @@ func _spawn_tick() -> void:
 				pos = Vector2(ARENA.position.x + SPAWN_INSET, ARENA.position.y + t * ARENA.size.y)
 			_:
 				pos = Vector2(ARENA.end.x - SPAWN_INSET, ARENA.position.y + t * ARENA.size.y)
-		var kind: int = BOULDER if rng.randf() < boulder_chance(round) else MITE
+		var kind: int = MITE
+		if rng.randf() < boulder_chance(round):
+			kind = BOULDER
+		elif round >= SPITTER_MIN_ROUND and rng.randf() < spitter_chance(round):
+			kind = SPITTER  # no extra rng draw before SPITTER_MIN_ROUND: early rounds are unchanged
 		spawn_enemy(kind, pos)
 
 
