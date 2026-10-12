@@ -215,3 +215,157 @@ static func _scatter(w: SimWorld, n: int, boulder_p: float, spitter_p: float, mi
 		w.spawn_enemy(kind, p)
 		placed += 1
 
+
+
+# ================================================================ playtest session replay
+## "replay" is not a named scenario: it rebuilds the world of a playtest session
+## (scripts/playtest.sh, tools/playtest.gd, main.gd --scenario=replay) from its session.json, so the
+## headless summary and the screenshots come from one and the same deterministic replay.
+##
+## session = {"seed", "mode": "solo"|"ffa", "name", "color", "opponents": [policy names],
+##   "fast": bool, "doctrine": {"drive", "target"},
+##   "decisions": [[cmd, ...], ...]   # commands applied to the human rig at workshop 1, 2, ...
+##   "pending": [cmd, ...]            # commands for the current decision point (the workshop of
+##                                    # round decisions.size() + 1), applied there and then we stop
+## }
+## The human is peer 1 (vehicle 0), bots are peers 2.. with BotPolicy workshops. Commands are applied
+## on the tick the workshop opens (human first, then the bots); the sim runs real round timings.
+## Same ring positions as NetSession.spawn_position() (duplicated so tools never depend on net/).
+
+const REPLAY_DEFAULT_OPPONENTS: PackedStringArray = ["balanced", "pvp_hunter", "random"]
+const REPLAY_COMMANDS: PackedStringArray = ["pick_card", "reroll", "buy_tech", "ready", "set_drive", "set_target"]
+
+
+static func replay_spawn_position(slot: int) -> Vector2:
+	var a: float = float(slot % 8) * TAU / 8.0
+	return SimWorld.ARENA.get_center() + Vector2(cos(a) * 480.0, sin(a) * 240.0)
+
+
+## Builds the run state for `session`: {"w": SimWorld, "bots": Array (null for the human), "target":
+## decision point (workshop round) to stop at, "handled": last workshop round already handled,
+## "cmd_log": {round: [text]}, "session": session}.
+static func replay_new(session: Dictionary) -> Dictionary:
+	var w := SimWorld.new(int(session.get("seed", 1)))
+	w.fast_rounds = bool(session.get("fast", false))
+	var me: SimVehicle = w.add_vehicle(1, replay_spawn_position(0), str(session.get("name", "DRIVER")), int(session.get("color", 0)))
+	var bots: Array = [null]
+	if str(session.get("mode", "solo")) == "ffa":
+		var used: Dictionary = {me.color_index: true}
+		var names: Dictionary = {me.player_name: true}
+		var opps: Array = session.get("opponents", [])
+		for i in opps.size():
+			var pol: String = str(opps[i])
+			var color: int = 0
+			while used.has(color):
+				color += 1
+			used[color] = true
+			var base: String = pol.replace("_", " ").to_upper().left(13)
+			var nm: String = base
+			var n: int = 2
+			while names.has(nm):
+				nm = "%s %d" % [base, n]
+				n += 1
+			names[nm] = true
+			var v: SimVehicle = w.add_vehicle(i + 2, replay_spawn_position(i + 1), nm, color)
+			var bot: BotPolicy = BotPolicy.create(pol, int(session.get("seed", 1)) * 31 + i + 1)
+			bots.append(bot)
+			if bot != null:
+				for cmd in bot.doctrine_commands(w, v):
+					w.apply_command(v.peer_id, cmd)
+	var doc: Dictionary = session.get("doctrine", {})
+	if doc.has("drive"):
+		w.apply_command(1, {"type": "set_drive", "value": doc["drive"]})
+	if doc.has("target"):
+		w.apply_command(1, {"type": "set_target", "value": doc["target"]})
+	var decisions: Array = session.get("decisions", [])
+	return {"w": w, "bots": bots, "target": decisions.size() + 1, "handled": 0, "cmd_log": {}, "session": session}
+
+
+## True once the replay reached its decision point (that workshop's commands are applied) or the game ended.
+static func replay_done(run: Dictionary) -> bool:
+	var w: SimWorld = run["w"]
+	if w.phase == SimWorld.PHASE_GAME_OVER:
+		return true
+	return w.phase == SimWorld.PHASE_WORKSHOP and int(run["handled"]) == w.round and w.round >= int(run["target"])
+
+
+## One sim tick; when it opens a workshop, the human's commands for that decision point and then the
+## bots' shopping are applied right away (so they happen "at the tick the workshop opens").
+static func replay_advance(run: Dictionary) -> void:
+	var w: SimWorld = run["w"]
+	w.step()
+	if w.phase == SimWorld.PHASE_WORKSHOP and int(run["handled"]) != w.round:
+		run["handled"] = w.round
+		_replay_workshop(run)
+
+
+static func _replay_workshop(run: Dictionary) -> void:
+	var w: SimWorld = run["w"]
+	var session: Dictionary = run["session"]
+	var decisions: Array = session.get("decisions", [])
+	var cmds: Array = decisions[w.round - 1] if w.round <= decisions.size() else session.get("pending", [])
+	var log: Array = []
+	var me: SimVehicle = w.vehicles[0]
+	for c: Variant in cmds:
+		if c is Dictionary:
+			log.append(replay_apply(w, me, c))
+	(run["cmd_log"] as Dictionary)[w.round] = log
+	var bots: Array = run["bots"]
+	for i in range(1, bots.size()):
+		var bot: BotPolicy = bots[i]
+		var v: SimVehicle = w.vehicles[i]
+		if bot != null and not v.eliminated:
+			bot.workshop_commands(w, v)
+
+
+## Applies one human command and returns a one-line account of what happened.
+static func replay_apply(w: SimWorld, v: SimVehicle, cmd: Dictionary) -> String:
+	var type: String = str(cmd.get("type", ""))
+	var val: Variant = cmd.get("value")
+	var label: String = type if val == null else "%s %s" % [type, str(int(val)) if (val is float and val == floorf(val)) else str(val)]
+	var scrap: int = v.scrap
+	var tech_n: int = v.tech.size()
+	var was_picked: bool = v.picked
+	var was_ready: bool = v.ready
+	if v.eliminated and type in ["pick_card", "reroll", "buy_tech", "ready"]:
+		return "%s -> IGNORED (you are eliminated)" % label
+	var old_offers: Array[String] = v.offers.duplicate()
+	var old_doc: Dictionary = v.doctrine.duplicate()
+	w.apply_command(v.peer_id, cmd)
+	match type:
+		"pick_card":
+			if v.picked and not was_picked:
+				var idx: int = int(val)
+				var id: String = old_offers[idx] if idx >= 0 and idx < old_offers.size() else "?"
+				return "%s -> took %s, now L%d" % [label, str((Cards.def(id)).get("name", id)), int(v.cards.get(id, 0))]
+			if was_picked:
+				return "%s -> IGNORED (already picked this workshop)" % label
+			return "%s -> IGNORED (bad index or not allowed)" % label
+		"reroll":
+			if v.scrap < scrap:
+				return "%s -> new offers %s (-%d scrap)" % [label, ", ".join(v.offers), scrap - v.scrap]
+			return "%s -> IGNORED (%s)" % [label, "already picked" if was_picked else "need %d scrap" % v.reroll_cost]
+		"buy_tech":
+			if v.tech.size() > tech_n:
+				return "%s -> bought (-%d scrap)" % [label, scrap - v.scrap]
+			var id2: String = str(val)
+			if not Tech.has(id2):
+				return "%s -> IGNORED (unknown tech id)" % label
+			if v.tech.has(id2):
+				return "%s -> IGNORED (already owned)" % label
+			var pre: String = Tech.prerequisite(id2)
+			if pre != "" and not v.tech.has(pre):
+				return "%s -> IGNORED (needs %s first)" % [label, pre]
+			return "%s -> IGNORED (costs %d, you have %d)" % [label, Tech.cost(id2), v.scrap]
+		"ready":
+			if v.ready and not was_ready:
+				return "ready -> ok"
+			return "ready -> %s" % ("already ready" if was_ready else "IGNORED")
+		"set_drive", "set_target":
+			var key: String = "drive" if type == "set_drive" else "target"
+			if str(v.doctrine[key]) == str(val) and str(old_doc[key]) != str(val):
+				return "%s -> ok" % label
+			if str(v.doctrine[key]) == str(val):
+				return "%s -> ok (unchanged)" % label
+			return "%s -> IGNORED (invalid value)" % label
+	return "%s -> IGNORED (unknown command)" % label

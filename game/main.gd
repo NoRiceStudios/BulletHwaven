@@ -11,6 +11,7 @@ extends Node
 ##                         and <png minus .png>_1080p.png (3x nearest), then quit (exit 1 on error).
 ##                         --hover puts the UI pointer at x,y (viewport px); --click clicks there
 ##                         through the visible UI's own click path (menu or workshop).
+##   --scenario=replay --session=<dir> --frames=<frames.json>   (playtest harness, scripts/playtest.sh)
 ## Keys (combat): 1/2/3 drive circle/kite/charge, Q/W/E target nearest/strongest/players_first,
 ## Esc the pause / menu overlay (solo pauses the sim). Workshop and game over keys are handled by
 ## render/workshop_ui.gd and render/game_over_ui.gd, menu keys by render/menu_ui.gd.
@@ -462,6 +463,9 @@ func _apply_ui_state(ui: Dictionary, world: SimWorld) -> int:
 func _run_shot(args: Dictionary) -> void:
 	var out_path: String = args["shot"]
 	var scenario: String = args.get("scenario", "skirmish")
+	if scenario == "replay":  # playtest harness: several frames of one session replay
+		await _run_replay_shots(args)
+		return
 	var sd: int = int(args.get("seed", "1"))
 	var ticks: int = int(args.get("ticks", "300"))
 	var world: SimWorld = Scenarios.build(scenario, sd)
@@ -505,15 +509,27 @@ func _run_shot(args: Dictionary) -> void:
 	# two drawn frames: the first bakes the decal viewport, the second shows it
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
+	if not _save_capture(out_path):
+		get_tree().quit(1)
+		return
+	print("SHOT_OK %s %s (tick %d, %d enemies, %d projectiles)" % [_abs_png(out_path), _abs_png(out_path).get_basename() + "_1080p.png", world.tick, world.enemy_count, world.proj_count])
+	get_tree().quit(0)
+
+
+func _abs_png(out_path: String) -> String:
+	return out_path if out_path.is_absolute_path() else OS.get_environment("PWD").path_join(out_path)
+
+
+## Saves the drawn viewport as <out_path> (native 640x360) and <out>_1080p.png (3x nearest).
+func _save_capture(out_path: String) -> bool:
 	var img: Image = get_viewport().get_texture().get_image()
 	if img == null or img.is_empty():
 		push_error("main: viewport capture failed")
-		get_tree().quit(1)
-		return
+		return false
 	var native := Vector2i(640, 360)
 	if img.get_size() != native:  # window-sized capture: the 640x360 frame scaled up by an integer
 		img.resize(native.x, native.y, Image.INTERPOLATE_NEAREST)
-	var abs_path: String = out_path if out_path.is_absolute_path() else OS.get_environment("PWD").path_join(out_path)
+	var abs_path: String = _abs_png(out_path)
 	var err: Error = img.save_png(abs_path)
 	var big: Image = img.duplicate()
 	big.resize(native.x * 3, native.y * 3, Image.INTERPOLATE_NEAREST)
@@ -522,7 +538,74 @@ func _run_shot(args: Dictionary) -> void:
 		err = big.save_png(big_path)
 	if err != OK:
 		push_error("main: cannot save %s (%s)" % [abs_path, error_string(err)])
+		return false
+	return true
+
+
+## Playtest harness (scripts/playtest.sh): `--scenario=replay --session=<dir> --frames=<frames.json>`
+## replays the session (Scenarios.replay_*, the same code tools/playtest.gd used for the summary) once
+## and saves a screenshot at every frame tick listed with "render": true (ascending order is not needed).
+func _run_replay_shots(args: Dictionary) -> void:
+	var dir: String = str(args.get("session", ""))
+	var session: Variant = JSON.parse_string(FileAccess.get_file_as_string(dir.path_join("session.json")))
+	var plan: Variant = JSON.parse_string(FileAccess.get_file_as_string(str(args.get("frames", ""))))
+	if not (session is Dictionary) or not (plan is Dictionary):
+		push_error("main: bad --session / --frames")
 		get_tree().quit(1)
 		return
-	print("SHOT_OK %s %s (tick %d, %d enemies, %d projectiles)" % [abs_path, big_path, world.tick, world.enemy_count, world.proj_count])
+	var todo: Array = []
+	for f: Dictionary in (plan as Dictionary).get("frames", []):
+		if bool(f.get("render", true)):
+			todo.append(f)
+	todo.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a["tick"]) < int(b["tick"]))
+	var run: Dictionary = Scenarios.replay_new(session)
+	var w: SimWorld = run["w"]
+	var history: Array = []
+	var last_phase: int = w.phase
+	for f: Dictionary in todo:
+		var want: int = int(f["tick"])
+		while w.tick < want and not Scenarios.replay_done(run):
+			Scenarios.replay_advance(run)
+			if w.phase == SimWorld.PHASE_COMBAT and last_phase != SimWorld.PHASE_COMBAT:
+				history.clear()  # a new combat: only its scars are on the ground
+			last_phase = w.phase
+			if w.phase != SimWorld.PHASE_WORKSHOP:
+				history.append(WorldView.record_tick(w))
+				var old: int = history.size() - 1 - WorldView.SHOT_EFFECT_TICKS - 2
+				if old >= 0:  # long-gone shots leave nothing to draw: drop their events
+					history[old]["events"] = (history[old]["events"] as Array).filter(
+						func(e: Dictionary) -> bool: return e["type"] != "fire" and e["type"] != "hit")
+		if w.tick != want:
+			push_error("main: replay is at tick %d, frame wants %d" % [w.tick, want])
+			get_tree().quit(1)
+			return
+		if not await _replay_frame(w, history, f):
+			get_tree().quit(1)
+			return
+		print("SHOT_OK %s (%s, tick %d, %d enemies)" % [f["png"], f["name"], w.tick, w.enemy_count])
 	get_tree().quit(0)
+
+
+func _replay_frame(w: SimWorld, history: Array, f: Dictionary) -> bool:
+	_view.frozen = true
+	_view.attract = false
+	_view.ui_visible = true
+	_menu.screen = MenuUi.Screen.NONE
+	if w.vehicles.size() < 2:
+		_view.game_over.restart = func() -> void: pass  # the solo screen as played
+		_view.game_over.restart_label = "RESTART"
+	elif bool(f.get("game_over", false)):
+		_apply_ui_state(Scenarios.ui_state("rematch"), w)  # a multiplayer host's game over screen
+	_view.game_over.quit = func() -> void: pass
+	_view.set_world(w, 1)
+	_view.prime(history)
+	_view.workshop.send_command = func(_cmd: Dictionary) -> void: pass
+	_view.workshop.use_real_pointer = false
+	_menu.use_real_pointer = false
+	_view.workshop.pointer_override = Vector2(-1, -1)
+	_menu.pointer_override = Vector2(-1, -1)
+	for i in 4:
+		await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	return _save_capture(str(f["png"]))
