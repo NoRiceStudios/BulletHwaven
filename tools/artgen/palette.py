@@ -21,6 +21,8 @@ RUST = ["#3b1f17", "#5e2f1e", "#843f24", "#a85a30", "#c97c45", "#e0a066"]
 TYRE = ["#141113", "#221d1f", "#332c2d", "#4a4142"]
 KHAKI = ["#2f2e1d", "#4a4930", "#6a6845", "#8c8a5e", "#ada97a"]
 LEATHER = ["#2a1a14", "#47291c", "#6b3d26", "#8f5534"]
+BRASS = ["#4a3414", "#7a5a24", "#a8823a", "#d2ad5c"]
+BURLAP = ["#3f3122", "#5f4a32", "#82694a", "#a48a63", "#bea57c"]
 HAZARD = "#c9a227"
 
 CHITIN = ["#3a2a24", "#5a4234", "#7d5d45", "#a07c5a", "#c4a076", "#dcc099"]
@@ -43,7 +45,7 @@ UI_PLATE = ["#2a2224", "#3d3233", "#56473f", "#6f5c4d"]
 
 RAMPS = {
     "SAND": SAND, "SALT": SALT, "CANYON": CANYON, "ROCK": ROCK, "BONE": BONE,
-    "STEEL": STEEL, "RUST": RUST, "TYRE": TYRE, "KHAKI": KHAKI,
+    "STEEL": STEEL, "RUST": RUST, "TYRE": TYRE, "KHAKI": KHAKI, "BRASS": BRASS, "BURLAP": BURLAP,
     "CHITIN": CHITIN, "GLOW": GLOW, "CRYSTAL": CRYSTAL, "VOLATILE": VOLATILE,
     "FIRE": FIRE, "SMOKE": SMOKE, "PLAYER RED": PLAYERS["red"],
     "PLAYER MAGENTA": PLAYERS["magenta"],

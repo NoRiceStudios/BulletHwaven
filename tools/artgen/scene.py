@@ -6,7 +6,7 @@ import numpy as np
 
 from palette import FIRE, GLOW, OUTLINE, PLAYERS, SAND, SMOKE, UI_PLATE, UI_TEXT
 from pixel import (Canvas, angle_to, bayer, blob, cast_shadow, circle, line, paint, paste, pixels,
-                   polar, poly, rect, rgb, text, text_width)
+                   polar, poly, rect, rgb, text, text_width, value_noise)
 from sprites import (boulder_back, buggy, dune_worm, glass_wing, hull_plate, mite_carcass, ribcage,
                      rock_cluster, sand_mite, scrap_bit, spitter, war_rig_cab, war_rig_trailer)
 from terrain import dune_sea
@@ -44,7 +44,8 @@ def facing_rot(sprite, ang):
 
 
 def dithered_circle(cv, cx, cy, r, color, density, seed=0):
-    m = circle(cv.w, cv.h, cx, cy, r) & (bayer(cv.h, cv.w, seed, seed) < density)
+    grain = np.random.default_rng(seed).random((cv.h, cv.w))
+    m = circle(cv.w, cv.h, cx, cy, r) & (grain < density)
     cv.put(m, color)
 
 
@@ -63,12 +64,14 @@ class Scene:
         paste(self.cv, spr, x, y)
 
     # ground marks ---------------------------------------------------
-    def track(self, pts, width=4):
+    def track(self, pts, width=4, depth=0.86):
+        """Tyre ruts: a soft trough with irregular, clumpy tread marks (no repeating pattern)."""
         m = line(W, H, pts, width)
-        ys, xs = np.mgrid[0:H, 0:W]
-        tread = ((xs + ys) % 3 == 0)
-        self.cv.rgb[m] *= 0.84
-        self.cv.rgb[m & tread] *= 0.85
+        clumps = value_noise(H, W, 2, len(pts)) > 0.55
+        self.cv.rgb[m] *= depth
+        self.cv.rgb[m & clumps] *= 0.9
+        rim = line(W, H, pts, width + 2) & ~m & (self.rng.random((H, W)) < 0.5)
+        self.cv.rgb[rim] = np.minimum(self.cv.rgb[rim] * 1.08, 255)  # sand pushed up at the edges
 
     def goo(self, x, y, r, seed):
         m = blob(W, H, x, y, r, r * 0.8, 0.5, seed, 2)
@@ -151,8 +154,8 @@ def build(seed=4):
     rig_cx, rig_cy = rig_x + 24, cab_y + 75
 
     # --- old tracks & props
-    sc.track([(0, 330), (120, 300), (260, 318), (400, 352)], 3)
-    sc.track([(0, 337), (120, 307), (260, 325), (400, 359)], 3)
+    sc.track([(0, 330), (120, 300), (260, 318), (400, 352)], 3, depth=0.93)  # old, half blown over
+    sc.track([(0, 337), (120, 307), (260, 325), (400, 359)], 3, depth=0.93)
     sc.sprite(hull_plate(1), -14, 70, shadow=(3, 4))
     sc.sprite(ribcage(2), 4, 168, shadow=(2, 3), strength=0.35)
     for (x, y, s, sd) in [(250, 8, 1.0, 3), (575, 12, 1.2, 8), (40, 292, 1.3, 11), (600, 300, 0.9, 5)]:

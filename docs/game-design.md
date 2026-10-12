@@ -301,6 +301,8 @@ This explains the scrap economy (the wreck is the resource), the Mad Max look (i
   - Starter buggy: about 32×48 px. A fully built war rig with trailers: 100–250 px long, so the vehicle growth is visible on screen.
 - **Modules are drawn onto the vehicle.** Each module on the chassis grid is a visible sprite at its grid position (guns rotate, armour plates sit on the edge). From above, your build is readable at a glance, which also helps with scouting rivals.
 - **Damage is visible:** dented plates, smoke, fire, missing modules, alien goo on the bodywork.
+- **Scrap-built, never factory-new:** every vehicle is patched together from mismatched panels (bare steel, rust, faded olive paint) joined by visible weld seams. Standard wear: bullet holes, dents, scratches, rust streaks, chipped player paint. Rugged add-ons break up the silhouette: spiked ram bars and hubs, chains, barbed wire, sandbags, tarp-covered cargo, jerrycans, ammo belts, trophies.
+- **Organic ground, no repeating patterns:** dunes are built from irregular noise, never periodic stripes or tiles, and sand texture uses random grain instead of an ordered dither. Ordered (checkerboard) dithering is reserved for light and glow effects.
 
 ### 11c. Colour palette and readability
 In a bullet heaven there are hundreds of objects on screen at once, so the palette has to deliver **readability**:

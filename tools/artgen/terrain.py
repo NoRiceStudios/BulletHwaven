@@ -15,23 +15,47 @@ def _lambert(height, k):
     return (nx * LIGHT[0] + ny * LIGHT[1] + nz * LIGHT[2]) / norm
 
 
-def dune_sea(w, h, seed=0, ox=0, oy=0):
-    ys, xs = np.mgrid[0:h, 0:w].astype(float)
-    xs += ox
-    ys += oy
-    warp = fbm(h, w, (96, 48, 24), seed)
-    p = ((xs * 0.8 + ys * 0.55) / 150.0 + warp * 1.3) % 1.0
-    crest = 0.8
-    dune = np.where(p < crest, p / crest, (1 - p) / (1 - crest))  # long windward, steep lee
-    dune = dune * dune * (3 - 2 * dune)
-    ripples = 0.018 * np.sin((xs * 0.35 + ys * 0.9) / 1.4 + warp * 14)
-    height = dune * 0.9 + warp * 0.8 + ripples
-    v = _lambert(height, 9.0)
-    v = (v - 0.25) * 1.25 + (fbm(h, w, (16, 8), seed + 9) - 0.5) * 0.25
-    out = dither_ramp(np.clip(v, 0.02, 0.98), SAND)
+def noise_at(x, y, cell, seed):
+    """Smooth value noise sampled at arbitrary (warped) coordinates."""
     rng = np.random.default_rng(seed)
-    peb = rng.random((h, w)) < 0.004  # pebbles
-    out[peb] = rgb(SAND[0])
+    gx, gy = x / cell, y / cell
+    x0, y0 = np.floor(gx).astype(int), np.floor(gy).astype(int)
+    fx, fy = gx - x0, gy - y0
+    fx, fy = fx * fx * (3 - 2 * fx), fy * fy * (3 - 2 * fy)
+    gw = int(x0.max() - x0.min()) + 3
+    gh = int(y0.max() - y0.min()) + 3
+    g = rng.random((gh, gw))
+    ix, iy = x0 - x0.min(), y0 - y0.min()
+    top = g[iy, ix] + (g[iy, ix + 1] - g[iy, ix]) * fx
+    bot = g[iy + 1, ix] + (g[iy + 1, ix + 1] - g[iy + 1, ix]) * fx
+    return top + (bot - top) * fy
+
+
+def grain_dither(v, ramp, seed, spread=0.55):
+    """Like dither_ramp, but with a random threshold: flat colour areas with sand grain at the
+    transitions, never a repeating pattern. spread=1 is full white-noise dither."""
+    ra = ramp_arr(ramp)
+    t = np.clip(v, 0, 1) * (len(ramp) - 1)
+    r = 0.5 + (np.random.default_rng(seed + 1).random(v.shape) - 0.5) * spread
+    idx = np.floor(t + r).astype(int)
+    return ra[np.clip(idx, 0, len(ramp) - 1)]
+
+
+def dune_sea(w, h, seed=0):
+    """Dunes from domain-warped ridged noise: meandering crests, lit windward faces, shaded slip faces."""
+    ys, xs = np.mgrid[0:h, 0:w].astype(float)
+    wx = (noise_at(xs, ys, 160, seed + 1) - 0.5) * 90
+    wy = (noise_at(xs, ys, 160, seed + 2) - 0.5) * 90
+    u, v = xs + wx, ys + wy
+    crest = 1 - np.abs(2 * noise_at(u, v, 150, seed + 3) - 1)               # big dune ridges
+    crest2 = 1 - np.abs(2 * noise_at(u * 1.1, v * 0.9, 70, seed + 4) - 1)   # smaller secondary dunes
+    height = crest ** 3 + crest2 ** 3 * 0.25 + noise_at(xs, ys, 200, seed + 5) * 0.4
+    light = _lambert(height, 22.0)
+    val = 0.52 + (light - 0.62) * 0.9 + (noise_at(xs, ys, 40, seed + 7) - 0.5) * 0.12
+    out = grain_dither(np.clip(val, 0.05, 0.95), SAND, seed)
+    rng = np.random.default_rng(seed)
+    peb = rng.random((h, w)) < 0.0025  # pebbles
+    out[peb] = rgb(SAND[1])
     return out
 
 

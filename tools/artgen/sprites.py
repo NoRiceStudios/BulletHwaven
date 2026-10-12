@@ -4,22 +4,157 @@ import math
 
 import numpy as np
 
-from palette import (BONE, CHITIN, CRYSTAL, GLASS, GLOW, HAZARD, KHAKI, LEATHER, OUTLINE, PLAYERS,
-                     ROCK, RUST, SAND, STEEL, TYRE, VOLATILE)
+from palette import (BONE, BRASS, BURLAP, CHITIN, CRYSTAL, GLASS, GLOW, HAZARD, KHAKI, LEATHER, OUTLINE,
+                     PLAYERS, ROCK, RUST, SAND, STEEL, TYRE, VOLATILE)
 from pixel import (Canvas, blob, circle, ellipse, line, outline, paint, paste, pixels, polar, poly,
                    rect, rgb, shift, value_noise)
 
 
 # ---------------------------------------------------------------- shared parts
 
-def wheel(cv, x, y, w, h, seed=0):
+def px(cv, pts, color, emissive=False):
+    cv.put(pixels(cv.w, cv.h, pts), color, emissive=emissive)
+
+
+def shade(cv, m, f):
+    """Darken (f < 1) or brighten (f > 1) already painted pixels, keeping their material colour."""
+    m = m & cv.solid()
+    cv.rgb[m] = np.clip(cv.rgb[m] * f, 0, 255)
+
+
+def _interior(area):
+    return area & shift(area, 1, 0) & shift(area, -1, 0) & shift(area, 0, 1) & shift(area, 0, -1)
+
+
+def _pick(area, rng):
+    ys, xs = np.nonzero(_interior(area))
+    if len(ys) == 0:
+        return None
+    i = rng.integers(len(ys))
+    return int(xs[i]), int(ys[i])
+
+
+def weather(cv, area, seed, holes=0, dents=0, scratches=0, streaks=0):
+    """Battle damage on an already painted surface: dents, bullet holes, scratches, rust streaks."""
+    rng = np.random.default_rng(seed)
+    W, H = cv.w, cv.h
+    area = area & cv.solid()
+    for _ in range(dents):
+        p = _pick(area, rng)
+        if not p:
+            break
+        x, y = p
+        rx, ry = rng.uniform(1.2, 2.4), rng.uniform(1.0, 1.8)
+        d = ellipse(W, H, x - rx, y - ry, x + rx, y + ry) & area
+        shade(cv, d, 0.85)
+        shade(cv, d & ~shift(d, 1, 1), 1.3)    # far rim catches the light (concave)
+        shade(cv, d & ~shift(d, -1, -1), 0.8)  # near rim in shadow
+    for _ in range(holes):
+        p = _pick(area, rng)
+        if not p:
+            break
+        x, y = p
+        px(cv, [(x, y)], OUTLINE)
+        shade(cv, pixels(W, H, [(x + 1, y), (x, y + 1)]) & area, 1.35)
+        shade(cv, pixels(W, H, [(x - 1, y), (x, y - 1)]) & area, 0.75)
+    for _ in range(scratches):
+        p = _pick(area, rng)
+        if not p:
+            break
+        x, y = p
+        a, ln = rng.uniform(0, math.pi), rng.integers(2, 5)
+        shade(cv, line(W, H, [(x, y), (x + math.cos(a) * ln, y + math.sin(a) * ln)], 1) & area, 1.3)
+    for _ in range(streaks):
+        p = _pick(area, rng)
+        if not p:
+            break
+        x, y = p
+        m = line(W, H, [(x, y), (x, y + rng.integers(2, 6))], 1) & area
+        cv.put(m, RUST[2], alpha=0.55)
+        px(cv, [(x, y)], RUST[1])
+
+
+def chip(cv, area, frac, seed, color):
+    """Knock clustered flecks out of a paint job to show the metal underneath."""
+    area = area & cv.solid()
+    if not area.any():
+        return
+    r = 0.7 * value_noise(cv.h, cv.w, 2, seed) + 0.3 * np.random.default_rng(seed).random((cv.h, cv.w))
+    cut = np.quantile(r[area], 1 - frac)
+    cv.put(area & (r > cut), color)
+
+
+def weld(cv, pts):
+    """Welded seam: a low bead with a little heat tint."""
+    m = line(cv.w, cv.h, pts, 1)
+    ys, xs = np.mgrid[0:cv.h, 0:cv.w]
+    cv.put(m, STEEL[3])
+    cv.put(m & ((xs + ys) % 2 == 0), STEEL[4])
+    cv.put(m & ((xs * 7 + ys * 3) % 6 == 0), RUST[4])
+
+
+def chain(cv, pts):
+    m = line(cv.w, cv.h, pts, 1)
+    ys, xs = np.mgrid[0:cv.h, 0:cv.w]
+    cv.put(m, STEEL[4])
+    cv.put(m & ((xs + ys) % 3 == 0), STEEL[1])
+
+
+def barbed(cv, p0, p1):
+    """Barbed wire between two points (spikes every 3 px)."""
+    cv.put(line(cv.w, cv.h, [p0, p1], 1), STEEL[1])
+    n = int(max(abs(p1[0] - p0[0]), abs(p1[1] - p0[1])))
+    dx, dy = (p1[0] - p0[0]) / max(n, 1), (p1[1] - p0[1]) / max(n, 1)
+    for i in range(1, n, 3):
+        x, y = p0[0] + dx * i, p0[1] + dy * i
+        px(cv, [(round(x - dy), round(y + dx)), (round(x + dy), round(y - dx))], STEEL[3])
+
+
+def sandbag(cv, x0, y0, x1, y1, seed=0):
+    m = ellipse(cv.w, cv.h, x0, y0, x1, y1)
+    paint(cv, m, BURLAP, base=3, noise=0.3, seed=seed)
+    cy = (y0 + y1) / 2
+    cv.put(line(cv.w, cv.h, [(x0 + 2, cy), (x1 - 2, cy)], 1) & m, BURLAP[1])
+    px(cv, [(round(x1 - 1), round(cy))], BURLAP[0])
+
+
+def tarp(cv, x0, y0, x1, y1, seed=0):
+    """Tarp-covered cargo lashed down with crossed ropes."""
+    m = blob(cv.w, cv.h, (x0 + x1) / 2, (y0 + y1) / 2, (x1 - x0) / 2, (y1 - y0) / 2, 0.15, seed, 3)
+    paint(cv, m, KHAKI, base=2, noise=0.45, seed=seed, depth=2)
+    for a, b in [((x0, y0 + 2), (x1, y1 - 2)), ((x0, y1 - 2), (x1, y0 + 2))]:
+        cv.put(line(cv.w, cv.h, [a, b], 1) & m, BURLAP[4])
+
+
+def headlight(cv, cx, cy, broken=False):
+    paint(cv, circle(cv.w, cv.h, cx, cy, 1.7), STEEL[1:], base=2)
+    if broken:
+        px(cv, [(round(cx), round(cy))], OUTLINE)
+        px(cv, [(round(cx) - 1, round(cy))], GLASS[1])
+    else:
+        px(cv, [(round(cx), round(cy)), (round(cx) - 1, round(cy))], GLASS[3])
+        px(cv, [(round(cx) - 1, round(cy) - 1)], "#ffffff")
+
+
+def wheel(cv, x, y, w, h, side="L", spikes=True, fender=True):
+    """Chunky off-road tyre: staggered lugs, dark outer sidewall, hub spikes, rusty fender."""
     W, H = cv.w, cv.h
     paint(cv, rect(W, H, x, y, x + w - 1, y + h - 1), TYRE, base=1)
-    tread = np.zeros((H, W), bool)
-    for yy in range(y + 1, y + h - 1, 2):
-        tread[yy, x + 1:x + w - 1] = True
-    cv.put(tread & rect(W, H, x, y, x + w - 1, y + h - 1), TYRE[3])
-    cv.put(rect(W, H, x + w // 2, y + 2, x + w // 2, y + h - 3), TYRE[0])  # centre groove
+    for i, yy in enumerate(range(y + 1, y + h - 1, 2)):
+        if i % 2 == 0:
+            cv.put(rect(W, H, x + 1, yy, x + w // 2, yy), TYRE[3])
+        else:
+            cv.put(rect(W, H, x + w // 2, yy, x + w - 2, yy), TYRE[3])
+    outer = x if side == "L" else x + w - 1
+    cv.put(rect(W, H, outer, y + 1, outer, y + h - 2), TYRE[0])
+    if spikes:
+        cy = y + h // 2
+        tip = [(outer - 1, cy), (outer - 2, cy)] if side == "L" else [(outer + 1, cy), (outer + 2, cy)]
+        px(cv, tip[:1], STEEL[4])
+        px(cv, tip[1:], STEEL[2])
+    if fender:
+        f = poly(W, H, [(x - 1, y + 3), (x, y), (x + w - 1, y), (x + w, y + 3)])
+        paint(cv, f, RUST, base=3, noise=0.4, seed=x * 7 + y)
 
 
 def rivets(cv, pts):
@@ -34,9 +169,16 @@ def hazard_stripes(cv, m, period=4):
     cv.put(m & ~stripe, OUTLINE)
 
 
+def ammo_belt(cv, pts):
+    m = line(cv.w, cv.h, pts, 1)
+    ys, xs = np.mgrid[0:cv.h, 0:cv.w]
+    cv.put(m, BRASS[3])
+    cv.put(m & ((xs + ys) % 2 == 0), BRASS[1])
+
+
 def turret(cv, cx, cy, r, ang, length, barrels=1, bw=2, ramp=STEEL, seed=0):
     W, H = cv.w, cv.h
-    paint(cv, circle(W, H, cx, cy, r), ramp, noise=0.15, seed=seed)
+    paint(cv, circle(W, H, cx, cy, r), ramp, noise=0.25, seed=seed)
     paint(cv, circle(W, H, cx, cy, max(1, r - 2)), ramp, base=len(ramp) // 2 - 1, light=False)
     perp = ang + math.pi / 2
     offs = [0.0] if barrels == 1 else [-(bw / 2 + 0.6), bw / 2 + 0.6]
@@ -44,151 +186,244 @@ def turret(cv, cx, cy, r, ang, length, barrels=1, bw=2, ramp=STEEL, seed=0):
         sx, sy = cx + math.sin(perp) * o, cy - math.cos(perp) * o
         ex, ey = polar(sx, sy, ang, length)
         paint(cv, line(W, H, [(sx, sy), (ex, ey)], width=bw), STEEL[:5], base=2)
+        # cooling-jacket bands along the barrel
+        for t in range(4, int(length) - 2, 4):
+            bx, by = polar(sx, sy, ang, t)
+            px(cv, [(round(bx), round(by))], STEEL[4])
         mx, my = polar(sx, sy, ang, length - 0.5)
-        cv.put(pixels(W, H, [(round(mx), round(my))]), STEEL[0])
-    cv.put(pixels(W, H, [(round(cx - 1), round(cy - 1))]), STEEL[5])
+        px(cv, [(round(mx), round(my))], OUTLINE)
+    # gun shield plate on the side facing the target
+    sh = [polar(cx, cy, ang + d, r + 0.5) for d in (-0.9, -0.45, 0.0, 0.45, 0.9)]
+    cv.put(line(W, H, sh, 2), ramp[2])
+    cv.put(line(W, H, sh[1:4], 1), ramp[4])
+    px(cv, [(round(cx - 1), round(cy - 1))], STEEL[5])
 
 
 # ---------------------------------------------------------------- vehicles
 
 def buggy(player="red", gun_angle=0.0, seed=1):
-    """Starter vehicle: welded scrap buggy with one pintle MG (about 34x50)."""
+    """Starter vehicle: welded scrap buggy with one pintle MG (36x52)."""
     W, H = 36, 52
     cv = Canvas(W, H)
     pc = PLAYERS[player]
-    for x, y in [(3, 8), (26, 8), (3, 34), (26, 34)]:
-        wheel(cv, x, y, 7, 11, seed)
-    # suspension arms
-    for (a, b) in [((9, 12), (13, 12)), ((26, 12), (22, 12)), ((9, 39), (13, 39)), ((26, 39), (22, 39))]:
+    for x, y, w, h, side in [(3, 8, 7, 11, "L"), (26, 8, 7, 11, "R"), (2, 33, 8, 13, "L"), (26, 33, 8, 13, "R")]:
+        wheel(cv, x, y, w, h, side)
+    for a, b in [((9, 13), (13, 13)), ((26, 13), (22, 13)), ((9, 39), (13, 39)), ((26, 39), (22, 39))]:
         cv.put(line(W, H, [a, b], 2), STEEL[1])
-    paint(cv, poly(W, H, [(11, 4), (24, 4), (28, 10), (28, 42), (25, 47), (10, 47), (7, 42), (7, 10)]),
-          RUST, noise=0.35, seed=seed, depth=2)
-    # bolted-on hood plate with player stripes
-    hood = poly(W, H, [(12, 6), (23, 6), (25, 11), (25, 18), (10, 18), (10, 11)])
-    paint(cv, hood, STEEL, noise=0.2, seed=seed + 1)
-    for sx in (13, 20):
-        paint(cv, rect(W, H, sx, 6, sx + 1, 18) & hood, pc, base=2, light=False)
-    rivets(cv, [(11, 11), (24, 11), (11, 16), (24, 16)])
-    cv.put(rect(W, H, 13, 4, 22, 4), STEEL[1])  # grille
-    cv.put(pixels(W, H, [(14, 4), (16, 4), (18, 4), (20, 4)]), STEEL[3])
-    # open cockpit
+    # spare tyre strapped to the left flank, jerrycan to the right
+    paint(cv, rect(W, H, 3, 21, 6, 30), TYRE, base=2)
+    cv.put(rect(W, H, 4, 22, 5, 29), TYRE[0])
+    cv.put(rect(W, H, 3, 25, 6, 25), LEATHER[2])
+    paint(cv, rect(W, H, 28, 21, 32, 29), RUST[1:], base=2, noise=0.3, seed=seed)
+    px(cv, [(30, 21), (31, 21)], STEEL[1])
+    cv.put(rect(W, H, 28, 25, 32, 25), LEATHER[1])
+    # body tub
+    body = poly(W, H, [(11, 5), (24, 5), (28, 10), (28, 43), (25, 47), (10, 47), (7, 43), (7, 10)])
+    paint(cv, body, RUST, noise=0.4, seed=seed, depth=2)
+    # mismatched salvaged hood plates, welded together
+    left = poly(W, H, [(11, 6), (17, 6), (17, 18), (9, 18), (9, 11)])
+    right = poly(W, H, [(18, 6), (24, 6), (26, 11), (26, 18), (18, 18)])
+    paint(cv, left, STEEL, noise=0.3, seed=seed + 1)
+    paint(cv, right, KHAKI, base=3, noise=0.35, seed=seed + 2)
+    stripes = (rect(W, H, 12, 7, 13, 17) & left) | (line(W, H, [(19, 16), (24, 9)], 2) & right)
+    paint(cv, stripes, pc, base=2, light=False)
+    chip(cv, stripes, 0.3, seed, STEEL[2])
+    weld(cv, [(17, 6), (17, 18)])
+    weld(cv, [(9, 19), (26, 19)])
+    weather(cv, body | left | right, seed, holes=4, dents=3, scratches=6, streaks=4)
+    rivets(cv, [(10, 12), (25, 12), (10, 16), (25, 16)])
+    headlight(cv, 11, 8)
+    headlight(cv, 24, 8, broken=True)
+    # spiked ram bar
+    paint(cv, line(W, H, [(7, 4), (28, 4)], 2), STEEL, base=3)
+    for x in (8, 13, 22, 27):
+        paint(cv, poly(W, H, [(x - 1, 4), (x + 1, 4), (x, 0)]), STEEL[1:], base=2)
+    # open cockpit seen from above: seat back, jacket shoulders, steel pot helmet, scarf
     paint(cv, rect(W, H, 10, 20, 25, 35), STEEL[:3], base=1, light=False)
-    paint(cv, circle(W, H, 17.5, 29, 2.8), LEATHER, base=2)  # driver helmet
-    cv.put(pixels(W, H, [(16, 27), (19, 27)]), GLASS[2])  # goggles glint
-    # roll cage
+    paint(cv, rect(W, H, 14, 30, 21, 34), LEATHER[:3], base=1)
+    paint(cv, ellipse(W, H, 12, 25, 23, 31), LEATHER, base=1, noise=0.3, seed=seed)
+    cv.put(rect(W, H, 15, 30, 20, 30), pc[1])
+    px(cv, [(21, 31), (22, 32)], pc[1])
+    paint(cv, circle(W, H, 17.5, 27, 2.3), STEEL, base=3)
+    # roll cage with welded joints and barbed wire
     for seg in [[(9, 20), (26, 20)], [(9, 36), (26, 36)], [(9, 20), (9, 36)], [(26, 20), (26, 36)]]:
         paint(cv, line(W, H, seg, 1), STEEL, base=3, light=False)
-    # rear deck: spare tyre + jerrycan
-    paint(cv, rect(W, H, 9, 37, 26, 45), STEEL, base=2, noise=0.3, seed=seed + 3)
-    paint(cv, circle(W, H, 14, 41, 3.4), TYRE, base=2)
-    cv.put(circle(W, H, 14, 41, 1.2), STEEL[3])
-    paint(cv, rect(W, H, 20, 38, 24, 44), RUST[1:], base=3)
-    cv.put(pixels(W, H, [(22, 38), (22, 39)]), STEEL[1])
-    cv.put(pixels(W, H, [(10, 47), (25, 47)]), STEEL[0])  # exhausts
-    # pintle machine gun
+    px(cv, [(9, 20), (26, 20), (9, 36), (26, 36)], STEEL[5])
+    barbed(cv, (8, 22), (8, 34))
+    # exposed rear engine: cylinder heads, air filter, curling exhausts
+    paint(cv, rect(W, H, 11, 37, 24, 46), STEEL, noise=0.25, seed=seed + 3, depth=2)
+    for i in range(3):
+        paint(cv, rect(W, H, 12, 38 + i * 3, 14, 39 + i * 3), STEEL, base=4)
+        paint(cv, rect(W, H, 21, 38 + i * 3, 23, 39 + i * 3), STEEL, base=4)
+    paint(cv, circle(W, H, 17.5, 41.5, 2.3), STEEL[1:], base=3)
+    px(cv, [(17, 41), (18, 42)], STEEL[0])
+    for pts in ([(12, 45), (9, 48), (9, 51)], [(23, 45), (26, 48), (26, 51)]):
+        paint(cv, line(W, H, pts, 2), RUST[1:], base=2)
+        px(cv, [pts[-1]], OUTLINE)
+    # antenna with a tattered flag streaming backwards
+    px(cv, [(27, 44)], STEEL[1])
+    paint(cv, poly(W, H, [(27, 44), (31, 45), (29, 46), (31, 48), (28, 48)]), pc, base=3)
+    # pintle MG fed by an ammo belt
+    paint(cv, rect(W, H, 21, 21, 24, 24), KHAKI, base=2)
+    ammo_belt(cv, [(21, 22), (19, 22)])
     turret(cv, 17.5, 22, 2.5, gun_angle, 14, barrels=1, bw=2, seed=seed)
-    paint(cv, rect(W, H, 21, 21, 24, 24), KHAKI, base=2)  # ammo box
     outline(cv, OUTLINE)
     return cv
 
 
 def war_rig_cab(player="red", aim=(0.0,), seed=3):
-    """Late-game tractor: V-plow, supercharged V8, armoured cabin, roof twin-MG (48x72)."""
+    """Late-game tractor: spiked V-plow, supercharged V8, armoured cabin, roof twin-MG (48x72)."""
     W, H = 48, 72
     cv = Canvas(W, H)
     pc = PLAYERS[player]
-    for x, y in [(1, 16), (40, 16), (1, 46), (40, 46), (1, 58), (40, 58)]:
-        wheel(cv, x, y, 7, 11, seed)
-    # chassis + side skirts
+    for x, y, side in [(1, 16, "L"), (40, 16, "R"), (1, 46, "L"), (40, 46, "R"), (1, 58, "L"), (40, 58, "R")]:
+        wheel(cv, x, y, 7, 11, side, fender=(y != 58))
     paint(cv, rect(W, H, 8, 12, 39, 68), STEEL[:4], base=1, light=False)
-    for x0 in (6, 38):
-        sk = rect(W, H, x0, 30, x0 + 3, 44)
-        paint(cv, sk, STEEL, noise=0.2, seed=seed)
-        rivets(cv, [(x0 + 1, 32), (x0 + 1, 38), (x0 + 1, 42)])
-    # engine bay / hood
-    hood = poly(W, H, [(10, 12), (37, 12), (39, 16), (39, 33), (8, 33), (8, 16)])
-    paint(cv, hood, RUST, noise=0.35, seed=seed + 1, depth=2)
-    paint(cv, rect(W, H, 18, 13, 29, 24), STEEL, noise=0.1, seed=seed + 2, depth=2)  # blower
+    # side skirts with barbed wire
+    for x0, bx in ((5, 4), (39, 43)):
+        sk = rect(W, H, x0, 29, x0 + 3, 44)
+        paint(cv, sk, STEEL, noise=0.3, seed=seed + x0)
+        weather(cv, sk, seed + x0, holes=1, scratches=2)
+        barbed(cv, (bx, 30), (bx, 43))
+    # hood: three salvaged panels
+    hl = poly(W, H, [(10, 12), (17, 12), (17, 33), (8, 33), (8, 16)])
+    hc = rect(W, H, 18, 12, 29, 33)
+    hr = poly(W, H, [(30, 12), (37, 12), (39, 16), (39, 33), (30, 33)])
+    paint(cv, hl, RUST, noise=0.4, seed=seed + 1, depth=2)
+    paint(cv, hc, STEEL, noise=0.3, seed=seed + 2, depth=2)
+    paint(cv, hr, KHAKI, base=3, noise=0.4, seed=seed + 3, depth=2)
+    stripes = rect(W, H, 11, 14, 12, 31) | rect(W, H, 34, 14, 35, 31)
+    paint(cv, stripes, pc, base=2, light=False)
+    chip(cv, stripes, 0.35, seed, STEEL[2])
+    weld(cv, [(17, 12), (17, 33)])
+    weld(cv, [(30, 12), (30, 33)])
+    # cabin: half steel, half rust
+    cab_l, cab_r = rect(W, H, 8, 33, 23, 50), rect(W, H, 24, 33, 39, 50)
+    paint(cv, cab_l, STEEL, noise=0.3, seed=seed + 5, depth=2)
+    paint(cv, cab_r, RUST, base=2, noise=0.4, seed=seed + 6, depth=2)
+    roof_stripe = rect(W, H, 8, 40, 39, 41)
+    paint(cv, roof_stripe, pc, base=2, light=False)
+    chip(cv, roof_stripe, 0.4, seed + 1, STEEL[2])
+    weld(cv, [(23, 33), (23, 50)])
+    deck = rect(W, H, 8, 51, 39, 67)
+    paint(cv, deck, RUST, noise=0.45, seed=seed + 7)
+    weather(cv, hl | hc | hr | cab_l | cab_r | deck, seed, holes=7, dents=5, scratches=10, streaks=6)
+    # blower, intake and hoses
+    paint(cv, rect(W, H, 18, 13, 29, 24), STEEL, noise=0.15, seed=seed + 2, depth=2)
     for yy in range(15, 24, 2):
         cv.put(rect(W, H, 19, yy, 28, yy), STEEL[1])
-    paint(cv, rect(W, H, 20, 10, 27, 13), STEEL[1:], base=2)  # intake scoop
-    for sx in (11, 33):
-        paint(cv, circle(W, H, sx + 1.5, 28, 2.6), STEEL[:3], base=1)  # exhaust stacks
-        cv.put(circle(W, H, sx + 1.5, 28, 1.0), OUTLINE)
-    for sx in (12, 34):
-        paint(cv, rect(W, H, sx, 15, sx + 1, 26) & hood, pc, base=2, light=False)
-    # V-plow with spikes and a mite skull trophy
+    paint(cv, rect(W, H, 20, 9, 27, 13), STEEL[1:], base=2)
+    cv.put(rect(W, H, 21, 10, 26, 10), OUTLINE)
+    for pts in ([(18, 20), (15, 22), (15, 27)], [(29, 20), (32, 22), (32, 27)]):
+        cv.put(line(W, H, pts, 2), TYRE[2])
+        px(cv, [pts[0]], STEEL[4])
+    # exhaust stacks with soot
+    for sx in (12.5, 34.5):
+        soot = circle(W, H, sx, 28, 4) & (value_noise(H, W, 2, seed) > 0.35)
+        shade(cv, soot, 0.6)
+        paint(cv, circle(W, H, sx, 28, 2.6), STEEL[:3], base=1)
+        cv.put(circle(W, H, sx, 28, 1.0), OUTLINE)
+    headlight(cv, 10, 14)
+    headlight(cv, 37, 14)
+    # V-plow: spikes, draped chain, mite-skull trophy
     plow = poly(W, H, [(3, 11), (24, 2), (44, 11), (44, 14), (24, 6), (3, 14)])
-    paint(cv, plow, STEEL, noise=0.25, seed=seed + 4)
-    for i, x in enumerate(range(5, 44, 5)):
+    paint(cv, plow, STEEL, noise=0.35, seed=seed + 4)
+    weather(cv, plow, seed + 4, holes=2, scratches=4, streaks=3)
+    for x in range(5, 44, 5):
         y = 11 - (x if x < 24 else 48 - x) * 9 / 21
         paint(cv, poly(W, H, [(x - 1, y), (x + 1, y), (x - 1 if x < 24 else x + 1, y - 3)]), STEEL[2:], base=2)
+    chain(cv, [(7, 12), (12, 14), (17, 12)])
+    chain(cv, [(30, 12), (35, 14), (40, 12)])
     paint(cv, ellipse(W, H, 21, 3, 26, 7), BONE, base=3)
-    cv.put(pixels(W, H, [(22, 5), (25, 5)]), OUTLINE)
-    # cabin
-    cab = rect(W, H, 8, 33, 39, 50)
-    paint(cv, cab, STEEL, noise=0.25, seed=seed + 5, depth=2)
-    cv.put(rect(W, H, 10, 34, 37, 35), STEEL[0])  # windscreen slit
-    cv.put(pixels(W, H, [(13, 34), (14, 34), (30, 35)]), GLASS[1])
-    paint(cv, rect(W, H, 8, 40, 39, 41), pc, base=2, light=False)
-    rivets(cv, [(10, 37), (37, 37), (10, 48), (37, 48)])
-    # rear deck
-    deck = rect(W, H, 8, 51, 39, 67)
-    paint(cv, deck, RUST, noise=0.4, seed=seed + 6)
-    for i, (x, y) in enumerate([(10, 53), (10, 60)]):
-        paint(cv, rect(W, H, x, y, x + 6, y + 5), KHAKI, base=2)
+    px(cv, [(22, 5), (25, 5)], OUTLINE)
+    # windscreen slit behind a welded mesh
+    cv.put(rect(W, H, 10, 34, 37, 36), OUTLINE)
+    for x in range(10, 38, 3):
+        cv.put(rect(W, H, x, 34, x, 36), STEEL[3])
+    px(cv, [(14, 35), (31, 35)], GLASS[1])
+    rivets(cv, [(10, 38), (37, 38), (10, 48), (37, 48)])
+    # roof: sandbags around the gun ring
+    for i, (x0, y0) in enumerate([(9, 43), (9, 46), (32, 43), (32, 46)]):
+        sandbag(cv, x0, y0, x0 + 6, y0 + 3, seed + i)
+    # rear deck: ammo crates, tarp-covered cargo, fuel drums
+    for x, y in [(10, 53), (10, 60)]:
+        paint(cv, rect(W, H, x, y, x + 6, y + 5), KHAKI, base=2, noise=0.2, seed=x + y)
         cv.put(rect(W, H, x, y + 2, x + 6, y + 2), KHAKI[1])
-    paint(cv, rect(W, H, 30, 53, 37, 66), RUST[1:], base=2)  # fuel drum stack
+    tarp(cv, 18, 52, 28, 65, seed + 8)
+    paint(cv, rect(W, H, 30, 53, 37, 66), RUST[1:], base=2, noise=0.3, seed=seed + 9)
+    cv.put(rect(W, H, 30, 59, 37, 59), RUST[0])
     hazard_stripes(cv, rect(W, H, 30, 64, 37, 66))
-    paint(cv, rect(W, H, 21, 67, 26, 71), STEEL[:4], base=2)  # hitch
+    paint(cv, rect(W, H, 21, 67, 26, 71), STEEL[:4], base=2)
     turret(cv, 23.5, 45, 5, aim[0], 15, barrels=2, bw=2, seed=seed)
     outline(cv, OUTLINE)
     return cv
 
 
 def war_rig_trailer(player="red", aim=(0.0, 0.0, math.pi), seed=5):
-    """Trailer = extra chassis grid: turrets, ammo, mortar, fuel tank, rear MG, armour edges (52x88)."""
+    """Trailer = extra chassis grid: turrets, ammo, mortar, fuel tank, rear MG, armour edges (52x90)."""
     W, H = 52, 90
     cv = Canvas(W, H)
     pc = PLAYERS[player]
-    for x, y in [(1, 62), (44, 62), (1, 75), (44, 75)]:
-        wheel(cv, x, y, 7, 11, seed)
+    for x, y, side in [(1, 62, "L"), (44, 62, "R"), (1, 75, "L"), (44, 75, "R")]:
+        wheel(cv, x, y, 7, 11, side, fender=(y == 62))
     paint(cv, rect(W, H, 23, 0, 28, 5), STEEL[:4], base=2)  # tongue
-    paint(cv, rect(W, H, 7, 4, 44, 86), STEEL, base=2, noise=0.3, seed=seed)
+    bed = rect(W, H, 7, 4, 44, 86)
+    paint(cv, bed, STEEL[:4], base=1, noise=0.35, seed=seed)  # dark bed so the modules pop
     for yy in range(10, 86, 6):  # tread-plate texture
-        cv.put(pixels(W, H, [(x, yy + (x // 3) % 2) for x in range(9, 43, 3)]), STEEL[3])
-    # module grid lines (the chassis grid is visible on the bed)
-    for yy in (24, 46, 60):
+        cv.put(pixels(W, H, [(x, yy + (x // 3) % 2) for x in range(9, 43, 3)]), STEEL[2])
+    for yy in (24, 46, 60):  # the module grid is visible on the bed
         cv.put(rect(W, H, 9, yy, 42, yy), STEEL[0])
-    # armour edges with player hazard paint
-    for x0 in (4, 43):
-        plates = rect(W, H, x0, 6, x0 + 4, 58)
-        paint(cv, plates, STEEL, noise=0.25, seed=seed + x0, depth=1)
-        for yy in range(6, 58, 13):
-            cv.put(rect(W, H, x0, yy, x0 + 4, yy), STEEL[1])
-            rivets(cv, [(x0 + 2, yy + 3), (x0 + 2, yy + 9)])
+        weld(cv, [(9, yy + 1), (16, yy + 1)])
+        weld(cv, [(31, yy + 1), (42, yy + 1)])
+    weather(cv, bed, seed, holes=6, dents=4, scratches=10, streaks=6)
+    # uneven armour plates, welded, with barbed wire on the outside
+    rng = np.random.default_rng(seed)
+    for x0, bx in ((4, 3), (43, 48)):
+        y = 6
+        while y < 58:
+            hgt = int(rng.integers(9, 15))
+            wob = int(rng.integers(0, 2))
+            plate_m = rect(W, H, x0 - wob * (x0 < 20), y, x0 + 4 + wob * (x0 > 20), min(57, y + hgt - 1))
+            paint(cv, plate_m, STEEL if rng.random() < 0.6 else RUST, noise=0.35, seed=seed + y + x0)
+            weather(cv, plate_m, seed + y, holes=1, scratches=1, streaks=1)
+            weld(cv, [(x0, y), (x0 + 4, y)])
+            rivets(cv, [(x0 + 2, y + 3)])
+            y += hgt
         paint(cv, rect(W, H, x0 + 1, 22, x0 + 3, 30), pc, base=2, light=False)
-    # row 1: ammo crates | MG turret | ammo crate
-    for x, y in [(10, 7), (10, 15), (35, 7)]:
-        paint(cv, rect(W, H, x, y, x + 6, y + 6), KHAKI, base=2, noise=0.15, seed=x + y)
+        chip(cv, rect(W, H, x0 + 1, 22, x0 + 3, 30), 0.3, seed + x0, STEEL[2])
+        barbed(cv, (bx, 8), (bx, 56))
+    # front sandbag wall
+    for i, x0 in enumerate((8, 15, 30, 37)):
+        sandbag(cv, x0, 3, x0 + 6, 6, seed + i)
+    # row 1: ammo crates feeding the twin MG, generator
+    for x, y in [(10, 8), (10, 16), (35, 8)]:
+        paint(cv, rect(W, H, x, y, x + 6, y + 6), KHAKI, base=2, noise=0.25, seed=x + y)
         cv.put(rect(W, H, x, y + 3, x + 6, y + 3), KHAKI[1])
-        cv.put(pixels(W, H, [(x + 1, y + 1)]), KHAKI[4])
-    paint(cv, rect(W, H, 35, 15, 41, 22), STEEL, base=2)  # generator
-    cv.put(pixels(W, H, [(37, 17), (39, 17), (37, 19), (39, 19)]), STEEL[0])
-    # row 2: mortar | heavy cannon
-    paint(cv, circle(W, H, 16, 35, 6.5), STEEL, noise=0.2, seed=seed + 7)
+        px(cv, [(x + 1, y + 1)], KHAKI[4])
+    ammo_belt(cv, [(17, 11), (20, 12), (22, 14)])
+    paint(cv, rect(W, H, 35, 16, 41, 23), STEEL, base=2)
+    px(cv, [(37, 18), (39, 18), (37, 20), (39, 20)], STEEL[0])
+    cv.put(line(W, H, [(38, 23), (38, 27), (35, 30)], 1), OUTLINE)  # cable to the cannon
+    # row 2: mortar with a rack of shells
+    paint(cv, circle(W, H, 16, 35, 6.5), STEEL, noise=0.3, seed=seed + 7)
     paint(cv, circle(W, H, 16, 35, 3.5), STEEL[:3], base=2)
     cv.put(circle(W, H, 16, 35, 2.2), OUTLINE)
-    # row 3: fuel tank capsule
+    for i in range(4):
+        paint(cv, rect(W, H, 9 + i * 2, 42, 9 + i * 2, 44), BRASS, base=2, light=False)
+        px(cv, [(9 + i * 2, 42)], BRASS[3])
+    # row 3: fuel tank, shot through and leaking
     tank = ellipse(W, H, 9, 48, 42, 58)
-    paint(cv, tank, RUST, noise=0.25, seed=seed + 8, depth=2)
+    paint(cv, tank, RUST, noise=0.35, seed=seed + 8, depth=2)
     hazard_stripes(cv, rect(W, H, 9, 48, 13, 58) & tank)
     hazard_stripes(cv, rect(W, H, 38, 48, 42, 58) & tank)
     cv.put(rect(W, H, 14, 51, 37, 51), RUST[5])
-    # row 4: rear deck with crates, spare tyre, flag
-    paint(cv, rect(W, H, 10, 63, 17, 70), KHAKI, base=2)
-    paint(cv, circle(W, H, 14, 78, 4), TYRE, base=2)
-    cv.put(circle(W, H, 14, 78, 1.3), STEEL[3])
+    weather(cv, tank & rect(W, H, 14, 48, 37, 58), seed + 8, holes=3, dents=2, streaks=3)
+    chain(cv, [(12, 47), (12, 59)])
+    chain(cv, [(39, 47), (39, 59)])
+    # row 4: rear deck with tarp cargo, spare tyre, flag
+    tarp(cv, 9, 62, 21, 72, seed + 9)
+    paint(cv, circle(W, H, 14, 79, 4), TYRE, base=2)
+    cv.put(circle(W, H, 14, 79, 1.3), STEEL[3])
     cv.put(line(W, H, [(40, 84), (40, 70)], 1), STEEL[1])
     paint(cv, poly(W, H, [(40, 70), (47, 71), (45, 73), (48, 75), (40, 75)]), pc, base=3)
     # weapons last so barrels overlap the bed
