@@ -298,3 +298,48 @@ Remaining concerns:
 - Return fire is a new rule that the design doc only mentions as the "Opportunistic" stance (section 8); its 2 s window and the "deliberate attack" condition are untested with humans.
 - `propulsion_3` and `salvage_3` are owned by under 25% of players at the end (the 300-scrap tier is out of reach in short runs); `vulture` is still the only card with a significant negative lift (-1.0).
 - The "alien curve too gentle" finding line still prints for an empty list (cosmetic, `bot_league.gd`).
+
+## Iteration 3: playtest round 1 fixes
+
+Sim changes from `docs/playtest/round1/summary.md` (fixes 1, 3, 4, 7, 8, 9; stats for the UI are fix 2, details in `docs/architecture.md`): flat spawn finish and alive caps, fuel steal and a multiplayer fuel drain, 3 s invulnerability, 10 s PvP grace at round 4, underdog fuel discount, diminishing repeat-kill rewards, `players_first` prefers the leader, draft rules (new weapon guaranteed while a slot is free, no category triple, a reroll never repeats a card, early weapon weighting, thinner filler commons), interest cap 5 + 2 x round, contact damage reduction and thorns on spiked plating and berserker, charge avoids boulders without berserker, new `turtle` bot policy. Full output of the final run is in `docs/balance/iteration3/`.
+
+The new rules made the game much easier at first (flat finish and capped boulders: `balanced` and `greedy_damage` reached the 20-round cap in 100% of runs), so the hive was retuned in three steps; every step is one solo run of 4 seeds (`balanced`, `greedy_damage`, `tech_rush`, `never_upgrade`, `focus_*`, `tank`, `turtle`, `random`), 24-round cap:
+
+| step | `balanced` / `greedy_damage` median | note |
+|---|---|---|
+| flat curve + caps only (boulders 6 + 2r, spitters 2 + r/2) | 21 / 21 (100% at the cap) | far too easy |
+| + caps 8 + 3r / 3 + r/2, spawn scale 0.11 -> 0.15, hive hp scale 0.15 -> 0.20 | 23.7 / 22 | still easy: the damage builds scale without limit |
+| + quadratic hive hp term `0.015 (r-1)^2` | 11 / 12 | too hard, `focus_mg` 7.5 |
+| term 0.010 | 12 / 20 | `greedy_damage` (three level-3 guns through 50 rerolls) runs away |
+| term 0.0125 + defence cards buffed (steel plates +60 hp / +1.5 armour, reinforced hull +110, ablative +3, regenerator 2.5) | **15 / 14.5** | kept |
+| `SPEED_KITE` 105 -> 96 | `balanced_kite` 18.5 -> 15.4 | kite had become a free survival doctrine once boulders were capped |
+
+Final run: `scripts/bot-league.sh --solo-seeds 8 --ffa-matches 100 --random-seeds 24 --rounds 20` (4 cores, about 9 minutes). The "before" column is the same reduced run on the iteration 2 build (6 solo seeds, 40 ffa matches, 24 random), so differences under about 1 round or 15 points of win rate are noise.
+
+| metric | before (iteration 2) | after | target |
+|---|---|---|---|
+| `balanced` solo median / mean | 16.0 / 14.8 | 15.0 / 15.3 | 12-16 |
+| `greedy_damage` median | 16.5 | 14.5 | 12-16 |
+| `balanced_kite` median | 16.0 | 14.5 | 12-16 |
+| `never_upgrade` | 5.0 | 5.0 | <= 5 |
+| `random` mean | 7.0 | 7.8 | |
+| single-weapon builds (`focus_mg/shotgun/cannon/flamer`) medians | 8.5 / 10.5 / 11.5 / 8.0 | 12.5 / 10.5 / 12.0 / 13.5 | >= 9 |
+| `turtle` solo (new) | - | 13.0 | |
+| policies at the round cap in 50%+ of solo runs | 0 of 15 | 0 of 16 | 0 |
+| deaths in the last 10 s of a combat (`balanced`, rounds 1-14, 8 seeds) | 100% (33 of 33) | 55% (18 of 33); 36% in 40-50 s, 9% in 30-40 s | spread out |
+| alive aliens 45 s -> 55 s in round 10 (`balanced`) | 88 -> 116 (+32%) | 112 -> 112 (flat) | no snowball |
+| alive boulders / spitters at 55 s, round 10 | 53 / 33 (iteration 2 sim, same bot) | 38 / 8 (the caps) | |
+| `pvp_hunter` solo (charge, players_first) | 8.5 | 7.0 | |
+| ffa: matches decided before the cap / median length | 55% / 18 | 80% / 16 | |
+| ffa top win rates (fair share 25%) | `balanced_kite` 38% (8 games), `balanced` 33% (9) | `balanced_kite` 62% (21), `focus_cannon` 48% (23), `tech_rush` 46% (24), `balanced` 42% (19) | < 40% |
+| ffa `turtle` (never targets players, kites) | - | 31% (26 games), avg place 1.9, mean round out 17.5 | not dominant |
+
+Reading the ffa rows: with four random policies per match the field is mostly strong-versus-weak (8 of 16 policies are real builds), so the strongest builds win far more than 25%; the first column's sample is only 8 to 16 games per policy. The target of 40% is **not met** for `balanced_kite` (62% on 21 games). It matches `balanced` in solo, so it is not a doctrine bug, but its FFA edge is the survival edge of a policy that never fights. A heavier drain (8 + (round - 8) / 2 per round) was tried and did not move the win rates (`balanced_kite` 67%), so it was dropped. The bots themselves are the limit here: only `players_first` bots ever shoot players (apart from return fire), so the fuel steal and drain mostly act on the hunters. This needs a human or a smarter FFA bot, see below.
+
+Remaining concerns and notes:
+- 85-90% of solo losses are still boulder contact; the spitter share shrank (cap and spreading). Armour that counts against contact (`CONTACT_ARMOR_FACTOR` 0.08) is still weak next to hp cards.
+- `pvp_hunter` and `balanced_charge` sit at 6.5-7 rounds: charge without berserker now avoids boulders, so it clears them from range at best. If rams should be a strategy, berserker and spiked plating (now −10% / −12% contact damage per level, spikes reflect) need to be seen more often or `CHARGE_RAM_DAMAGE` raised.
+- `greedy_damage` still ends with 3 maxed guns by round 12 through about 50 rerolls per game; reroll cost grows only within a workshop. A reroll cost that rises with the round would be the next scrap sink.
+- Fuel drain (5 per round from round 8, +1 every 3 rounds) and the kill steal (10, leader +10) are untested with humans.
+- Interest is 10% of held scrap with cap 5 + 2 x round (7 in round 1, 25 in round 10): `balanced` ends with about 2,900 unspent scrap, unchanged in practice (tech 2,650 in total); more scrap sinks are still open.
+- `bot_league.gd` now reads the death cause from the `vehicle_destroyed` event (`cause`), so "pvp" includes rams and shots exactly.

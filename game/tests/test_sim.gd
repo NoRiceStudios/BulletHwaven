@@ -137,6 +137,8 @@ func test_drive_doctrines() -> void:
 		w.spawning_enabled = false
 		var v := w.add_vehicle(1, Vector2(640, 360))
 		w.apply_command(1, {"type": "set_drive", "value": drive})
+		v.cards["berserker"] = 1  # charge only rams boulders with the berserker card
+		Cards.recompute(v)
 		w.spawn_enemy(SimWorld.BOULDER, Vector2(1000, 360))
 		w.enemy_hp[0] = 1.0e9  # immortal anchor
 		w.rebuild_derived()

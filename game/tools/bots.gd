@@ -47,8 +47,8 @@ const CARDS_SPEED := {
 	"reinforced_hull": 3.0, "mg": 5.5, "shotgun": 6.0, "cannon": 6.5, "flamer": 5.0,
 }
 const CARDS_HUNTER := {
-	"mg": 7.0, "shotgun": 8.0, "cannon": 8.0, "flamer": 6.0, "vulture": 8.0, "berserker": 6.0,
-	"nitro": 5.0, "v8_engine": 5.0, "steel_plates": 3.0, "reinforced_hull": 3.0,
+	"mg": 7.0, "shotgun": 8.0, "cannon": 8.0, "flamer": 6.0, "vulture": 8.0, "berserker": 8.0,
+	"spiked_plating": 7.0, "nitro": 5.0, "v8_engine": 5.0, "steel_plates": 4.0, "reinforced_hull": 4.0,
 }
 
 # Tech purchase orders (strict: the bot saves for the first unowned entry).
@@ -167,6 +167,13 @@ static func _table() -> Dictionary:
 			"desc": "Mobility cards and propulsion tech, kites.",
 			"cards": CARDS_SPEED, "default_card": 1.0, "upgrade_bonus": 0.0, "new_weapon_bonus": 4.0,
 			"tech_mode": "order", "tech": TECH_SPEED, "tech_reserve": 0,
+			"reroll_below": 7.0, "max_rerolls": 3, "reroll_reserve": 10,
+			"drive": "kite", "target": "nearest",
+		},
+		"turtle": {
+			"desc": "Passive FFA play: tank build, kites, never targets players (nearest alien only; the sim's return fire still applies).",
+			"cards": CARDS_TANK, "default_card": 1.0, "upgrade_bonus": 0.0, "new_weapon_bonus": 4.0,
+			"tech_mode": "order", "tech": TECH_TANK, "tech_reserve": 0,
 			"reroll_below": 7.0, "max_rerolls": 3, "reroll_reserve": 10,
 			"drive": "kite", "target": "nearest",
 		},
@@ -294,7 +301,7 @@ func next_command(world: SimWorld, v: SimVehicle) -> Dictionary:
 			return {"type": "pick_card", "value": best_i}
 
 	# 2. tech
-	var tid: String = _next_tech(v)
+	var tid: String = _next_tech(world, v)
 	if tid != "":
 		return {"type": "buy_tech", "value": tid}
 
@@ -319,7 +326,7 @@ func card_score(v: SimVehicle, id: String) -> float:
 
 
 ## The tech id this policy wants to buy right now (affordable and allowed), or "".
-func _next_tech(v: SimVehicle) -> String:
+func _next_tech(world: SimWorld, v: SimVehicle) -> String:
 	var mode: String = str(cfg.get("tech_mode", "none"))
 	if mode == "none":
 		return ""
@@ -334,7 +341,7 @@ func _next_tech(v: SimVehicle) -> String:
 		return ok[rng.randi() % ok.size()]
 	var reserve: int = int(cfg.get("tech_reserve", 0))
 	if mode == "saver":
-		reserve = v.interest_cap * SimWorld.INTEREST_PER
+		reserve = world.interest_cap_for(v) * SimWorld.INTEREST_PER
 	for entry in cfg.get("tech", []):
 		var id2: String = str(entry)
 		if v.tech.has(id2):

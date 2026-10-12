@@ -8,6 +8,8 @@ extends RefCounted
 ##   hp (max hp), armor (flat damage reduction), speed / turn (additive multipliers),
 ##   scrap (scrap multiplier), regen (hp/s), contact (damage per tick to touching enemies),
 ##   ram (extra "charge" ram multiplier), vulture (extra damage vs targets under 30% hp),
+##   creduce (fraction of enemy contact damage ignored, total capped at MAX_CONTACT_REDUCTION),
+##   thorns (fraction of the contact damage an enemy deals that it takes back, per touching enemy and tick),
 ##   dmg / range / rate (weapon damage, range and fire rate multipliers, additive).
 ##   Tech adds `slots` (weapon slots) and `interest` (interest cap) on top (see tech.gd).
 
@@ -16,6 +18,8 @@ const BASE_WEAPON_SLOTS := 2
 const BASE_INTEREST_CAP := 5
 const OFFER_COUNT := 3
 const VULTURE_HP_FRACTION := 0.3
+const EARLY_ROUNDS := 3  ## rounds 1..3 favour weapon variety in drafts
+const MAX_CONTACT_REDUCTION := 0.6
 
 const WEAPON_KINDS: PackedStringArray = ["mg", "shotgun", "cannon", "flamer"]
 
@@ -51,20 +55,20 @@ const DEFS: Array = [
 	{"id": "cannon", "name": "Siege Cannon", "category": "weapon", "rarity": "rare", "weight": 6, "fx": {}},
 	{"id": "flamer", "name": "Flamethrower", "category": "weapon", "rarity": "rare", "weight": 6, "fx": {}},
 	# armour
-	{"id": "steel_plates", "name": "Steel Plates", "category": "armor", "rarity": "common", "weight": 10, "fx": {"hp": 40.0, "armor": 1.0}},
-	{"id": "spiked_plating", "name": "Spiked Plating", "category": "armor", "rarity": "common", "weight": 7, "fx": {"armor": 0.5, "contact": 0.6}},
-	{"id": "reinforced_hull", "name": "Reinforced Hull", "category": "armor", "rarity": "common", "weight": 7, "fx": {"hp": 80.0}},
-	{"id": "ablative_scrap", "name": "Ablative Scrap", "category": "armor", "rarity": "rare", "weight": 5, "fx": {"armor": 2.0}},
+	{"id": "steel_plates", "name": "Steel Plates", "category": "armor", "rarity": "common", "weight": 8, "fx": {"hp": 60.0, "armor": 1.5}},
+	{"id": "spiked_plating", "name": "Spiked Plating", "category": "armor", "rarity": "common", "weight": 7, "fx": {"armor": 0.5, "contact": 0.6, "creduce": 0.10, "thorns": 0.5}},
+	{"id": "reinforced_hull", "name": "Reinforced Hull", "category": "armor", "rarity": "common", "weight": 6, "fx": {"hp": 110.0}},
+	{"id": "ablative_scrap", "name": "Ablative Scrap", "category": "armor", "rarity": "rare", "weight": 5, "fx": {"armor": 3.0}},
 	# mobility
-	{"id": "v8_engine", "name": "V8 Engine", "category": "mobility", "rarity": "common", "weight": 10, "fx": {"speed": 0.10}},
-	{"id": "off_road_tyres", "name": "Off-road Tyres", "category": "mobility", "rarity": "common", "weight": 8, "fx": {"turn": 0.15, "speed": 0.03}},
+	{"id": "v8_engine", "name": "V8 Engine", "category": "mobility", "rarity": "common", "weight": 6, "fx": {"speed": 0.10}},
+	{"id": "off_road_tyres", "name": "Off-road Tyres", "category": "mobility", "rarity": "common", "weight": 5, "fx": {"turn": 0.15, "speed": 0.03}},
 	{"id": "nitro", "name": "Nitro Injection", "category": "mobility", "rarity": "rare", "weight": 5, "fx": {"speed": 0.18}},
 	{"id": "caterpillar_tracks", "name": "Caterpillar Tracks", "category": "mobility", "rarity": "rare", "weight": 6, "fx": {"hp": 30.0, "armor": 0.5, "speed": -0.05}},
 	# behaviour mods
-	{"id": "scrap_magnet", "name": "Scrap Magnet", "category": "behavior", "rarity": "common", "weight": 8, "fx": {"scrap": 0.15}},
-	{"id": "berserker", "name": "Berserker Doctrine", "category": "behavior", "rarity": "rare", "weight": 6, "fx": {"contact": 0.8, "ram": 0.4}},
+	{"id": "scrap_magnet", "name": "Scrap Magnet", "category": "behavior", "rarity": "common", "weight": 6, "fx": {"scrap": 0.15}},
+	{"id": "berserker", "name": "Berserker Doctrine", "category": "behavior", "rarity": "rare", "weight": 6, "fx": {"contact": 0.8, "ram": 0.4, "creduce": 0.12}},
 	{"id": "vulture", "name": "Vulture", "category": "behavior", "rarity": "rare", "weight": 6, "fx": {"vulture": 0.25}},
-	{"id": "regenerator", "name": "Regenerator", "category": "behavior", "rarity": "rare", "weight": 7, "fx": {"regen": 1.5}},
+	{"id": "regenerator", "name": "Regenerator", "category": "behavior", "rarity": "rare", "weight": 7, "fx": {"regen": 2.5}},
 ]
 
 static var _index: Dictionary = {}
@@ -134,28 +138,90 @@ static func is_offerable(v: SimVehicle, id: String) -> bool:
 
 
 ## Draws up to `count` distinct offerable card ids, weighted by rarity weight. Uses `rng` only.
-static func roll_offers(rng: RandomNumberGenerator, v: SimVehicle, count: int = OFFER_COUNT) -> Array[String]:
+## Draft rules (balance iteration 3):
+##  - never `count` cards of one category (a third card of a category already drawn twice is skipped);
+##  - while the vehicle has a free weapon slot and a weapon it does not own is offerable, one offer is
+##    a new weapon (so a free slot never stays empty because the dice said no);
+##  - in the early rounds (`round_no` 1..EARLY_ROUNDS) unowned weapons weigh double (weapon variety);
+##  - cards in `exclude` (the previous offer, for a reroll) are not offered again, unless that would
+##    leave fewer than `count` cards to choose from.
+static func roll_offers(rng: RandomNumberGenerator, v: SimVehicle, count: int = OFFER_COUNT, round_no: int = 0, exclude: Array[String] = []) -> Array[String]:
 	var pool: Array[String] = []
 	var weights: Array[int] = []
-	var total: int = 0
 	for d: Dictionary in DEFS:
 		var id: String = d["id"]
-		if is_offerable(v, id):
+		if is_offerable(v, id) and not exclude.has(id):
 			pool.append(id)
-			weights.append(int(d["weight"]))
-			total += int(d["weight"])
+			weights.append(_offer_weight(v, d, round_no))
+	if pool.size() < count:  # not enough fresh cards: allow repeats of the previous offer
+		pool.clear()
+		weights.clear()
+		for d: Dictionary in DEFS:
+			var id2: String = d["id"]
+			if is_offerable(v, id2):
+				pool.append(id2)
+				weights.append(_offer_weight(v, d, round_no))
 	var out: Array[String] = []
+	var cats: Dictionary = {}
+	# Guarantee: a free weapon slot gets a new weapon offer.
+	if weapon_cards_owned(v) < v.weapon_slots:
+		var cand: Array[int] = []
+		for k in pool.size():
+			if WEAPONS.has(pool[k]) and int(v.cards.get(pool[k], 0)) == 0:
+				cand.append(k)
+		if not cand.is_empty():
+			var kk: int = _draw(rng, weights, cand)
+			out.append(pool[kk])
+			cats["weapon"] = 1
+			_remove(pool, weights, kk)
 	while out.size() < count and not pool.is_empty():
-		var roll: int = rng.randi() % total
-		var k: int = 0
-		while k < pool.size() - 1 and roll >= weights[k]:
-			roll -= weights[k]
-			k += 1
-		out.append(pool[k])
-		total -= weights[k]
-		pool.remove_at(k)
-		weights.remove_at(k)
+		var allowed: Array[int] = []
+		for k in pool.size():
+			var cat: String = str(def(pool[k])["category"])
+			# a card that would be the `count`-th of one category is skipped
+			if int(cats.get(cat, 0)) >= count - 1 and count >= 3:
+				continue
+			allowed.append(k)
+		if allowed.is_empty():
+			for k in pool.size():
+				allowed.append(k)
+		var pick: int = _draw(rng, weights, allowed)
+		var pcat: String = str(def(pool[pick])["category"])
+		cats[pcat] = int(cats.get(pcat, 0)) + 1
+		out.append(pool[pick])
+		_remove(pool, weights, pick)
+	# Shuffle so the guaranteed weapon is not always first (Fisher-Yates with the world rng).
+	for k in range(out.size() - 1, 0, -1):
+		var m: int = rng.randi() % (k + 1)
+		var tmp: String = out[k]
+		out[k] = out[m]
+		out[m] = tmp
 	return out
+
+
+static func _offer_weight(v: SimVehicle, d: Dictionary, round_no: int) -> int:
+	var w: int = int(d["weight"])
+	if round_no >= 1 and round_no <= EARLY_ROUNDS and str(d["category"]) == "weapon" and int(v.cards.get(str(d["id"]), 0)) == 0:
+		w *= 2
+	return w
+
+
+## Weighted pick among the pool indices in `allowed`.
+static func _draw(rng: RandomNumberGenerator, weights: Array[int], allowed: Array[int]) -> int:
+	var total: int = 0
+	for k in allowed:
+		total += weights[k]
+	var roll: int = rng.randi() % maxi(total, 1)
+	for k in allowed:
+		if roll < weights[k]:
+			return k
+		roll -= weights[k]
+	return allowed[allowed.size() - 1]
+
+
+static func _remove(pool: Array[String], weights: Array[int], k: int) -> void:
+	pool.remove_at(k)
+	weights.remove_at(k)
 
 
 ## Adds one level of `id` to `v` (new cards start at level 1) and recomputes its stats.
@@ -181,6 +247,7 @@ static func recompute(v: SimVehicle, rebuild_weapons: bool = true, adjust_hp: bo
 	var st := {
 		"hp": 0.0, "armor": 0.0, "speed": 0.0, "turn": 0.0, "scrap": 0.0, "regen": 0.0, "contact": 0.0,
 		"ram": 0.0, "vulture": 0.0, "dmg": 0.0, "range": 0.0, "rate": 0.0, "slots": 0.0, "interest": 0.0,
+		"creduce": 0.0, "thorns": 0.0,
 	}
 	for id: String in v.cards:
 		var d: Dictionary = def(id)
@@ -209,6 +276,8 @@ static func recompute(v: SimVehicle, rebuild_weapons: bool = true, adjust_hp: bo
 	v.scrap_mult = maxf(1.0 + float(st["scrap"]), 0.0)
 	v.regen = float(st["regen"])
 	v.contact_damage = float(st["contact"])
+	v.contact_reduction = clampf(float(st["creduce"]), 0.0, MAX_CONTACT_REDUCTION)
+	v.thorns = float(st["thorns"])
 	v.ram_mult = 1.0 + float(st["ram"])
 	v.vulture = float(st["vulture"])
 	v.weapon_slots = BASE_WEAPON_SLOTS + int(st["slots"])

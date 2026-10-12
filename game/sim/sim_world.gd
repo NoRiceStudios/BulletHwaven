@@ -19,6 +19,16 @@ const ENEMY_CONTACT_DAMAGE: PackedFloat32Array = [0.35, 1.5, 0.6]  # per tick wh
 const ENEMY_SCRAP: PackedInt32Array = [1, 5, 2]
 const MAX_ENEMY_RADIUS := 14.0
 
+# Damage sources (stats, "vehicle_destroyed" cause). 0..2 equal the enemy kind (contact damage).
+const SRC_MITE := 0
+const SRC_BOULDER := 1
+const SRC_SPITTER := 2  # spitter body contact
+const SRC_ACID := 3
+const SRC_RAM := 4  # a rival's ram / spikes
+const SRC_PLAYER := 5  # a rival's shots
+const SRC_NAMES: PackedStringArray = ["mite", "boulder", "spitter", "acid", "ram", "player"]
+const WEAPON_RAM := 4  # "weapon" of a player kill by ramming (Cards.WEAPON_KINDS holds 0..3)
+
 const MAX_ENEMIES := 2500
 const MAX_PROJECTILES := 2000
 const MAX_EVENTS := 1024
@@ -34,6 +44,15 @@ const PVP_KILL_SCRAP := 15  # bounty for destroying another player's vehicle
 const PVP_START_ROUND := 4  # before this round vehicles never target, shoot or ram each other
 const LEADER_BOUNTY_MULT := 3  # killing the leader pays PVP_KILL_SCRAP x this
 const LEADER_SCRAP_DIVISOR := 10  # leader score = kills + scrap / this
+const PVP_GRACE_TICKS := 300  # 10 s at the start of round PVP_START_ROUND during which PvP is still off
+const INVULN_TICKS := 90  # 3 s of invulnerability after a respawn and at the start of every combat from round 2
+const UNDERDOG_FUEL_FACTOR := 0.7  # the lowest-fuel player loses 30% less fuel per death
+const FUEL_STEAL := 10  # a player kill moves this much of the victim's fuel loss to the killer
+const LEADER_FUEL_BONUS := 10  # extra fuel for destroying the marked leader
+const REPEAT_KILL_FACTORS: Array[float] = [1.0, 0.5, 0.0]  # reward share for the 1st, 2nd, 3rd+ kill of the same victim in a round
+const FUEL_DRAIN_START_ROUND := 8  # PVP_START_ROUND + 4: multiplayer only, from the workshop after this round
+const FUEL_DRAIN_BASE := 5
+const FUEL_DRAIN_ROUNDS_PER_STEP := 3  # the drain grows by 1 every this many rounds past the start
 const PVP_PROTECT_TICKS := 60  # 2 s of third-party protection after a player kill
 const PVP_PROTECT_FACTOR := 0.5  # damage multiplier while protected
 const RETALIATE_TICKS := 60  # return fire: a vehicle shoots back at a player that hurt it for 2 s (any doctrine)
@@ -41,8 +60,16 @@ const RETALIATE_TICKS := 60  # return fire: a vehicle shoots back at a player th
 const SPAWN_RATE_START := 1.5  # enemies / s
 const SPAWN_RATE_RAMP := 0.5  # added every SPAWN_RAMP_INTERVAL seconds of the combat phase
 const SPAWN_RAMP_INTERVAL := 10.0
+const SPAWN_RAMP_END_BEFORE := 15.0  # the in-round ramp stops this many seconds before the round ends (flat finish)
 const BOULDER_CHANCE := 0.1
 const SPAWN_INSET := 8.0
+# Alive caps: a spawn that would exceed the cap becomes a mite, so the field never snowballs.
+const BOULDER_CAP_BASE := 8
+const BOULDER_CAP_PER_ROUND := 3
+const BOULDER_CAP_MAX := 48
+const SPITTER_CAP_BASE := 3
+const SPITTER_CAP_MAX := 12
+const SPITTER_SPAWN_GAP := 75  # ticks (2.5 s) between spitter spawns, on a different edge than the last
 
 # Spitters (ranged aliens that keep their distance and lob slow acid at vehicles).
 const SPITTER_MIN_ROUND := 3
@@ -73,13 +100,15 @@ const START_FUEL := 100
 const FUEL_LOSS := 20  # destroyed by aliens
 const FUEL_LOSS_PVP := 30  # destroyed by another player
 const RESPAWN_TICKS := 90  # 3 s
-const INTEREST_PER := 10  # +1 scrap per this much scrap held at the end of a round
+const INTEREST_PER := 10  # +1 scrap per this much scrap held at the end of a round (10%)
+const INTEREST_CAP_PER_ROUND := 2  # interest cap = Vehicle.interest_cap (5 + salvage tech) + this x round
 const REROLL_COST_START := 6
 const RETREAT_EVENT_CAP := 150  # at most this many "retreat" events per round end
 
 # Per-round enemy scaling (round 1 = x1).
-const HP_SCALE_PER_ROUND := 0.15
-const SPAWN_SCALE_PER_ROUND := 0.11
+const HP_SCALE_PER_ROUND := 0.20
+const HP_SCALE_QUAD := 0.0125  # late-game term: the hive outgrows a linear power curve
+const SPAWN_SCALE_PER_ROUND := 0.15
 const BOULDER_CHANCE_PER_ROUND := 0.025
 const BOULDER_CHANCE_MAX := 0.4
 const DAMAGE_SCALE_PER_ROUND := 0.03
@@ -108,6 +137,10 @@ var phase_ticks_left: int = COMBAT_TICKS_EARLY
 var winner_peer: int = -1  ## peer id of the winner once phase == PHASE_GAME_OVER (-1 = none / solo loss)
 ## Peer id of the marked leader (bounty target), -1 = nobody. See update_leader().
 var leader_peer: int = -1
+## Ticks of PvP grace left at the start of round PVP_START_ROUND (0 = none / over). See pvp_enabled().
+var pvp_grace_ticks: int = 0
+## Fuel every player loses at the coming workshop (0 = no drain yet / solo). See fuel_drain_for_round().
+var fuel_drain: int = 0
 ## Shortens combat and workshop (tests, screenshots). Set it right after construction: at tick 0 it
 ## also resets the running combat timer.
 var fast_rounds: bool = false:
@@ -132,6 +165,7 @@ var proj_owner: PackedInt32Array = PackedInt32Array()  # vehicle id, -1 = alien
 var proj_pierce: PackedByteArray = PackedByteArray()  # extra enemies the projectile may pass through
 var proj_splash: PackedFloat32Array = PackedFloat32Array()  # splash radius on enemy hit, 0 = none
 var proj_last: PackedInt32Array = PackedInt32Array()  # id of the last enemy pierced (not hit twice), -1 = none
+var proj_weapon: PackedByteArray = PackedByteArray()  # weapon kind index of the shooter's gun (kill feed), 255 = alien
 
 var events: Array[Dictionary] = []
 
@@ -144,11 +178,14 @@ var ai_buf: PackedInt32Array = PackedInt32Array()
 
 var _hash: SpatialHash
 var _spawn_accum: float = 0.0
+var _hit_weapon: int = -1  # weapon kind index of the projectile being resolved (kill feed)
+var _spitter_gap: int = 0
+var _last_spitter_side: int = -1
 var _query_buf: PackedInt32Array = PackedInt32Array()
 var _splash_buf: PackedInt32Array = PackedInt32Array()
 var _av_pos: PackedVector2Array = PackedVector2Array()  # alive vehicle positions (enemy phase)
 var _av_idx: PackedInt32Array = PackedInt32Array()
-var _contact: PackedFloat32Array = PackedFloat32Array()
+var _contact: PackedFloat32Array = PackedFloat32Array()  # per vehicle x 3 enemy kinds, damage this tick
 
 
 func _init(p_seed: int) -> void:
@@ -177,7 +214,7 @@ func add_vehicle(peer_id: int, pos: Vector2, p_name: String = SimVehicle.DEFAULT
 func prepare_vehicle(v: SimVehicle) -> void:
 	v.fuel = START_FUEL
 	if phase == PHASE_WORKSHOP:
-		v.offers = Cards.roll_offers(rng, v)
+		v.offers = Cards.roll_offers(rng, v, Cards.OFFER_COUNT, round)
 
 
 func get_vehicle_for_peer(peer_id: int) -> SimVehicle:
@@ -213,7 +250,7 @@ func apply_command(peer_id: int, cmd: Dictionary) -> void:
 			if _can_shop(v) and not v.picked and v.scrap >= v.reroll_cost:
 				v.scrap -= v.reroll_cost
 				v.reroll_cost += 1
-				v.offers = Cards.roll_offers(rng, v)
+				v.offers = Cards.roll_offers(rng, v, Cards.OFFER_COUNT, round, v.offers)
 		"buy_tech":
 			if _can_shop(v):
 				Tech.buy(v, str(cmd.get("value", "")))
@@ -239,10 +276,66 @@ static func _integral(x: Variant) -> int:
 
 # ---------------------------------------------------------------- PvP rules
 
-## False during the grace rounds (< PVP_START_ROUND): vehicles do not target players, player
-## projectiles pass through other vehicles and ramming does no damage. Alien hits are unaffected.
+## False during the grace rounds (< PVP_START_ROUND) and during the first PVP_GRACE_TICKS (10 s) of round
+## PVP_START_ROUND (`pvp_grace_ticks` > 0): vehicles do not target players, player projectiles pass
+## through other vehicles and ramming does no damage. Alien hits are unaffected. A "pvp_on" event is
+## emitted on the tick PvP switches on.
 func pvp_enabled() -> bool:
-	return round >= PVP_START_ROUND
+	return round >= PVP_START_ROUND and pvp_grace_ticks <= 0
+
+
+## True when `v` has strictly the least fuel of all non-eliminated players (and there is another one):
+## it loses UNDERDOG_FUEL_FACTOR x the usual fuel per death.
+func is_underdog(v: SimVehicle) -> bool:
+	if v.eliminated:
+		return false
+	var others: int = 0
+	for o in vehicles:
+		if o == v or o.eliminated:
+			continue
+		others += 1
+		if o.fuel <= v.fuel:
+			return false
+	return others > 0
+
+
+## Fuel every player loses at the workshop after round `r` (multiplayer only, 0 before
+## FUEL_DRAIN_START_ROUND): 5, growing by 1 every 3 rounds (8..10: 5, 11..13: 6, ...).
+static func fuel_drain_for_round(r: int) -> int:
+	if r < FUEL_DRAIN_START_ROUND:
+		return 0
+	return FUEL_DRAIN_BASE + (r - FUEL_DRAIN_START_ROUND) / FUEL_DRAIN_ROUNDS_PER_STEP
+
+
+## Interest cap at the current round: the vehicle's own cap (5 + salvage tech) + 2 per round.
+func interest_cap_for(v: SimVehicle) -> int:
+	return v.interest_cap + INTEREST_CAP_PER_ROUND * round
+
+
+## Interest a vehicle would earn now: 10% of held scrap (INTEREST_PER), capped at interest_cap_for().
+func interest_for(v: SimVehicle) -> int:
+	return mini(v.scrap / INTEREST_PER, interest_cap_for(v))
+
+
+## Fresh per-round stats (see docs/architecture.md, "Stats").
+static func new_round_stats(r: int) -> Dictionary:
+	return {
+		"round": r,
+		"taken": {"mite": 0.0, "boulder": 0.0, "spitter": 0.0, "acid": 0.0, "rival": 0.0},
+		"taken_players": {},  # attacker vehicle id -> hp (rival shots and rams)
+		"dealt": 0.0, "dealt_players": 0.0,
+		"kills": 0, "kills_players": 0,
+		"deaths": [],  # {"t": ticks into combat, "cause": SRC_NAMES entry, "src": int, "killer": vehicle id or -1, "killer_kind": enemy kind or -1}
+		"fuel_lost": 0, "fuel_gained": 0, "fuel_drained": 0,
+		"scrap_earned": 0, "interest": 0,
+	}
+
+
+static func new_match_stats() -> Dictionary:
+	return {
+		"kills": 0, "player_kills": 0, "ram_kills": 0, "deaths": 0, "dmg_dealt": 0.0, "scrap_earned": 0,
+		"top_victim": -1, "top_victim_n": 0, "nemesis": -1, "nemesis_n": 0,
+	}
 
 
 ## Leader score: kills (aliens and players) plus a tenth of the scrap in hand.
@@ -273,18 +366,25 @@ func update_leader() -> void:
 			elif s == best:
 				tied = true
 				incumbent_in_top = incumbent_in_top or v.peer_id == leader_peer
+	var old_peer: int = leader_peer
 	if alive_n < 2 or best <= 0:
 		leader_peer = -1
 	elif not tied:
 		leader_peer = best_peer
 	elif not incumbent_in_top:
 		leader_peer = -1
+	if leader_peer != old_peer:
+		var nv: SimVehicle = get_vehicle_for_peer(leader_peer) if leader_peer >= 0 else null
+		var ov: SimVehicle = get_vehicle_for_peer(old_peer) if old_peer >= 0 else null
+		_emit("bounty", nv.pos if nv != null else (ov.pos if ov != null else Vector2.ZERO),
+			nv.id if nv != null else -1, ov.id if ov != null else -1)
 
 
 # ---------------------------------------------------------------- round scaling
 
 static func enemy_hp_mult(r: int) -> float:
-	return 1.0 + HP_SCALE_PER_ROUND * float(maxi(r - 1, 0))
+	var n: float = float(maxi(r - 1, 0))
+	return 1.0 + HP_SCALE_PER_ROUND * n + HP_SCALE_QUAD * n * n
 
 
 static func spawn_rate_mult(r: int) -> float:
@@ -300,6 +400,16 @@ static func spitter_chance(r: int) -> float:
 	if r < SPITTER_MIN_ROUND:
 		return 0.0
 	return minf(SPITTER_CHANCE_START + SPITTER_CHANCE_PER_ROUND * float(r - SPITTER_MIN_ROUND), SPITTER_CHANCE_MAX)
+
+
+## Most boulders alive at once in round `r`: 6 + 2 per round, at most 32.
+static func boulder_cap(r: int) -> int:
+	return mini(BOULDER_CAP_BASE + BOULDER_CAP_PER_ROUND * maxi(r, 1), BOULDER_CAP_MAX)
+
+
+## Most spitters alive at once in round `r`: 2 + r / 2, at most 8.
+static func spitter_cap(r: int) -> int:
+	return mini(SPITTER_CAP_BASE + maxi(r, 0) / 2, SPITTER_CAP_MAX)
 
 
 static func enemy_damage_mult(r: int) -> float:
@@ -321,6 +431,14 @@ func workshop_duration() -> int:
 	return FAST_WORKSHOP_TICKS if fast_rounds else WORKSHOP_TICKS
 
 
+## Enemies per second `ticks_in` ticks into a combat of round `r`. The in-round ramp (+0.5/s per 10 s) stops
+## SPAWN_RAMP_END_BEFORE seconds before the round ends, so the last 15 s are flat (no end-of-round snowball).
+func spawn_rate_at(r: int, ticks_in: int) -> float:
+	var total_secs: float = float(combat_duration(r)) * DT
+	var ramp_secs: float = minf(float(ticks_in) * DT, maxf(total_secs - SPAWN_RAMP_END_BEFORE, 0.0))
+	return (SPAWN_RATE_START + SPAWN_RATE_RAMP * floorf(ramp_secs / SPAWN_RAMP_INTERVAL)) * spawn_rate_mult(r)
+
+
 ## Adds an enemy and returns its stable id (or -1 if the cap is reached).
 func spawn_enemy(kind: int, pos: Vector2) -> int:
 	if enemy_count >= MAX_ENEMIES:
@@ -336,7 +454,7 @@ func spawn_enemy(kind: int, pos: Vector2) -> int:
 	return id
 
 
-func spawn_projectile(pos: Vector2, vel: Vector2, ttl: float, damage: float, owner: int, pierce: int = 0, splash: float = 0.0) -> void:
+func spawn_projectile(pos: Vector2, vel: Vector2, ttl: float, damage: float, owner: int, pierce: int = 0, splash: float = 0.0, weapon: int = 255) -> void:
 	if proj_count >= MAX_PROJECTILES:
 		return
 	proj_pos.append(pos)
@@ -347,6 +465,7 @@ func spawn_projectile(pos: Vector2, vel: Vector2, ttl: float, damage: float, own
 	proj_pierce.append(clampi(pierce, 0, 255))
 	proj_splash.append(splash)
 	proj_last.append(-1)
+	proj_weapon.append(clampi(weapon, 0, 255))
 	proj_count += 1
 
 
@@ -367,6 +486,10 @@ func step() -> void:
 
 
 func _step_combat() -> void:
+	if pvp_grace_ticks > 0:
+		pvp_grace_ticks -= 1
+		if pvp_grace_ticks == 0:
+			_emit("pvp_on", ARENA.get_center(), -1, -1)
 	update_leader()
 	_update_respawns()
 	_update_enemies()
@@ -401,7 +524,7 @@ func _step_workshop() -> void:
 func checksum() -> int:
 	var ctx := HashingContext.new()
 	ctx.start(HashingContext.HASH_SHA256)
-	var head := PackedInt64Array([tick, enemy_count, proj_count, vehicles.size(), phase, round, phase_ticks_left, winner_peer, next_enemy_id, leader_peer])
+	var head := PackedInt64Array([tick, enemy_count, proj_count, vehicles.size(), phase, round, phase_ticks_left, winner_peer, next_enemy_id, leader_peer, pvp_grace_ticks, fuel_drain])
 	ctx.update(head.to_byte_array())
 	var vf := PackedFloat64Array()
 	for v in vehicles:
@@ -439,6 +562,9 @@ func checksum() -> int:
 		vf.append(float(v.weapon_slots))
 		vf.append(float(v.interest_cap))
 		vf.append(float(v.protect_ticks))
+		vf.append(float(v.invuln_ticks))
+		vf.append(v.contact_reduction)
+		vf.append(v.thorns)
 		vf.append(float(v.offers.size()))
 		for oid in v.offers:
 			vf.append(float(Cards.index_of(oid)))
@@ -491,6 +617,11 @@ func rebuild_derived() -> void:
 		proj_pierce.resize(proj_count)
 	if proj_splash.size() != proj_count:
 		proj_splash.resize(proj_count)
+	if proj_weapon.size() != proj_count:
+		var oldw: int = proj_weapon.size()
+		proj_weapon.resize(proj_count)
+		for i in range(oldw, proj_count):
+			proj_weapon[i] = 255
 	if proj_last.size() != proj_count:
 		var old: int = proj_last.size()
 		proj_last.resize(proj_count)
@@ -501,10 +632,12 @@ func rebuild_derived() -> void:
 
 # ---------------------------------------------------------------- events
 
-func _emit(type: String, pos: Vector2, owner: int, kind: int) -> void:
+func _emit(type: String, pos: Vector2, owner: int, kind: int, extra: Dictionary = {}) -> void:
 	if events.size() >= MAX_EVENTS:
 		return
-	events.append({"type": type, "pos": pos, "owner": owner, "kind": kind})
+	var e := {"type": type, "pos": pos, "owner": owner, "kind": kind}
+	e.merge(extra)
+	events.append(e)
 
 
 # ---------------------------------------------------------------- round loop
@@ -527,6 +660,7 @@ func _respawn(v: SimVehicle) -> void:
 	v.alive = true
 	v.respawn_ticks = 0
 	v.protect_ticks = 0
+	v.invuln_ticks = INVULN_TICKS
 	v.retaliate_ticks = 0
 	v.target_kind = 0
 	v.heading = (ARENA.get_center() - v.pos).angle()
@@ -568,6 +702,10 @@ func _begin_workshop() -> void:
 	_clear_field()
 	phase = PHASE_WORKSHOP
 	phase_ticks_left = workshop_duration()
+	pvp_grace_ticks = 0
+	# Multiplayer fuel drain from round FUEL_DRAIN_START_ROUND: only kills (fuel steal) refill it. Never
+	# eliminates by itself (floor 1). Solo has no drain: there is nobody to take fuel from.
+	fuel_drain = fuel_drain_for_round(round) if vehicles.size() >= 2 else 0
 	for v in vehicles:
 		v.vel = Vector2.ZERO
 		v.target_kind = 0
@@ -575,6 +713,7 @@ func _begin_workshop() -> void:
 		v.ready = false
 		v.picked = false
 		v.protect_ticks = 0
+		v.invuln_ticks = 0
 		v.retaliate_ticks = 0
 		v.reroll_cost = REROLL_COST_START
 		v.offers = []
@@ -582,8 +721,17 @@ func _begin_workshop() -> void:
 			continue
 		if not v.alive:
 			_respawn(v)
-		v.scrap += mini(v.scrap / INTEREST_PER, v.interest_cap)
-		v.offers = Cards.roll_offers(rng, v)
+			v.invuln_ticks = 0
+		var interest: int = interest_for(v)
+		v.scrap += interest
+		_note_scrap(v, interest)
+		v.round_stats["interest"] = interest
+		if fuel_drain > 0:
+			var d: int = mini(fuel_drain, maxi(v.fuel - 1, 0))
+			v.fuel -= d
+			v.round_stats["fuel_drained"] = d
+			_emit("drain", v.pos, v.id, d)
+		v.offers = Cards.roll_offers(rng, v, Cards.OFFER_COUNT, round)
 
 
 ## Workshop -> combat: the next round starts, vehicles are repaired, unused offers are dropped.
@@ -592,12 +740,24 @@ func _begin_combat() -> void:
 	phase = PHASE_COMBAT
 	phase_ticks_left = combat_duration(round)
 	_spawn_accum = 0.0
+	_spitter_gap = 0
+	_last_spitter_side = -1
+	pvp_grace_ticks = 0
+	if round == PVP_START_ROUND:
+		if fast_rounds:
+			_emit("pvp_on", ARENA.get_center(), -1, -1)  # fast rounds (tests, screenshots) skip the grace
+		else:
+			pvp_grace_ticks = PVP_GRACE_TICKS
 	for v in vehicles:
 		v.offers = []
 		v.ready = false
 		v.picked = false
+		v.round_stats = new_round_stats(round)
+		v.kill_counts = {}
+		v.last_hit_attacker = -1
 		if v.alive and not v.eliminated:
 			v.hp = v.max_hp
+			v.invuln_ticks = INVULN_TICKS
 		for w in v.weapons:
 			w["cooldown"] = 0
 
@@ -641,6 +801,7 @@ func _clear_field() -> void:
 	proj_pierce.resize(0)
 	proj_splash.resize(0)
 	proj_last.resize(0)
+	proj_weapon.resize(0)
 	proj_count = 0
 	_hash.rebuild(enemy_pos, 0)
 
@@ -659,7 +820,7 @@ func _update_enemies() -> void:
 			_av_pos.append(vehicles[vi].pos)
 			_av_idx.append(vi)
 	var nv: int = _av_pos.size()
-	_contact.resize(vehicles.size())
+	_contact.resize(vehicles.size() * 3)
 	_contact.fill(0.0)
 
 	var cols: int = _hash.cols
@@ -745,10 +906,13 @@ func _update_enemies() -> void:
 				np = vp + dv2 * (rr2 / dl3)
 				vel = Vector2.ZERO
 				var vidx: int = _av_idx[k]
-				_contact[vidx] += _contact_hit(kind, vehicles[vidx].armor)
-				var ram: float = vehicles[vidx].ram_damage
+				var cv: SimVehicle = vehicles[vidx]
+				_contact[vidx * 3 + kind] += _contact_hit(kind, cv.armor, cv.contact_reduction)
+				var ram: float = cv.ram_damage
+				if cv.thorns > 0.0:
+					ram += cv.thorns * ENEMY_CONTACT_DAMAGE[kind] * enemy_damage_mult(round)
 				if ram > 0.0 and not killed:
-					_hit_enemy(i, ram, vidx)
+					_hit_enemy(i, ram, vidx, true)
 					killed = enemy_hp[i] <= 0.0
 
 		np.x = clampf(np.x, a_min.x, a_max.x)
@@ -760,8 +924,17 @@ func _update_enemies() -> void:
 			_spit(np, vehicles[_av_idx[bk]])
 
 	for vidx in vehicles.size():
-		if _contact[vidx] > 0.0:
-			_damage_vehicle(vehicles[vidx], _contact[vidx], -1, false)
+		var c0: float = _contact[vidx * 3]
+		var c1: float = _contact[vidx * 3 + 1]
+		var c2: float = _contact[vidx * 3 + 2]
+		var ctot: float = c0 + c1 + c2
+		if ctot > 0.0:
+			var dom: int = SRC_MITE
+			if c1 > c0 and c1 >= c2:
+				dom = SRC_BOULDER
+			elif c2 > c0 and c2 > c1:
+				dom = SRC_SPITTER
+			_damage_vehicle(vehicles[vidx], ctot, -1, false, dom, PackedFloat32Array([c0, c1, c2]))
 
 
 ## Spitter movement: hold SPITTER_KEEP_MIN..SPITTER_KEEP_MAX px from the target (`u` = unit vector to
@@ -792,28 +965,45 @@ func _spit(from: Vector2, target: SimVehicle) -> void:
 
 
 ## Contact damage per tick of one touching enemy after the vehicle's armour.
-func _contact_hit(kind: int, armor: float) -> float:
+func _contact_hit(kind: int, armor: float, reduction: float = 0.0) -> float:
 	var d: float = ENEMY_CONTACT_DAMAGE[kind] * enemy_damage_mult(round)
-	return maxf(d - armor * CONTACT_ARMOR_FACTOR, d * ARMOR_MIN_FRACTION)
+	return maxf(d - armor * CONTACT_ARMOR_FACTOR, d * ARMOR_MIN_FRACTION) * (1.0 - reduction)
 
 
 ## Applies damage to an enemy; credits the kill (event, scrap, kills) on death.
 ## The enemy stays in the arrays until _compact_enemies().
-func _hit_enemy(j: int, dmg: float, killer: int) -> void:
+func _hit_enemy(j: int, dmg: float, killer: int, by_ram: bool = false) -> void:
 	if enemy_hp[j] <= 0.0:
 		return
+	var applied: float = minf(dmg, enemy_hp[j])
 	enemy_hp[j] -= dmg
+	var kv: SimVehicle = vehicles[killer] if (killer >= 0 and killer < vehicles.size()) else null
+	if kv != null:
+		kv.round_stats["dealt"] = float(kv.round_stats["dealt"]) + applied
+		kv.match_stats["dmg_dealt"] = float(kv.match_stats["dmg_dealt"]) + applied
 	if enemy_hp[j] > 0.0:
 		return
 	var kind: int = enemy_kind[j]
 	_emit("kill", enemy_pos[j], killer, kind)
-	if killer >= 0 and killer < vehicles.size():
-		var kv: SimVehicle = vehicles[killer]
+	if kv != null:
 		kv.scrap_frac += float(ENEMY_SCRAP[kind]) * kv.scrap_mult
 		var whole: int = int(kv.scrap_frac)
 		kv.scrap += whole
 		kv.scrap_frac -= float(whole)
 		kv.kills += 1
+		_note_scrap(kv, whole)
+		kv.round_stats["kills"] = int(kv.round_stats["kills"]) + 1
+		kv.match_stats["kills"] = int(kv.match_stats["kills"]) + 1
+		if by_ram:
+			kv.match_stats["ram_kills"] = int(kv.match_stats["ram_kills"]) + 1
+
+
+## Books `n` scrap as earned in the round and match stats (the scrap itself is already added).
+func _note_scrap(v: SimVehicle, n: int) -> void:
+	if n <= 0:
+		return
+	v.round_stats["scrap_earned"] = int(v.round_stats["scrap_earned"]) + n
+	v.match_stats["scrap_earned"] = int(v.match_stats["scrap_earned"]) + n
 
 
 ## Swap-removes dead enemies (hp <= 0), then shrinks all arrays once.
@@ -841,29 +1031,55 @@ func _compact_enemies() -> void:
 func _spawn_tick() -> void:
 	if not spawning_enabled:
 		return
-	var secs: float = float(combat_duration(round) - phase_ticks_left) * DT  # seconds into this round
-	var rate: float = (SPAWN_RATE_START + SPAWN_RATE_RAMP * floorf(secs / SPAWN_RAMP_INTERVAL)) * spawn_rate_mult(round)
-	_spawn_accum += rate * DT
+	_spawn_accum += spawn_rate_at(round, combat_duration(round) - phase_ticks_left) * DT
+	if _spitter_gap > 0:
+		_spitter_gap -= 1
+	if _spawn_accum < 1.0:
+		return
+	var n_boulder: int = 0
+	var n_spitter: int = 0
+	for i in enemy_count:
+		var ek: int = enemy_kind[i]
+		if ek == BOULDER:
+			n_boulder += 1
+		elif ek == SPITTER:
+			n_spitter += 1
 	while _spawn_accum >= 1.0:
 		_spawn_accum -= 1.0
 		var side: int = rng.randi() % 4
 		var t: float = rng.randf()
-		var pos: Vector2
-		match side:
-			0:
-				pos = Vector2(ARENA.position.x + t * ARENA.size.x, ARENA.position.y + SPAWN_INSET)
-			1:
-				pos = Vector2(ARENA.position.x + t * ARENA.size.x, ARENA.end.y - SPAWN_INSET)
-			2:
-				pos = Vector2(ARENA.position.x + SPAWN_INSET, ARENA.position.y + t * ARENA.size.y)
-			_:
-				pos = Vector2(ARENA.end.x - SPAWN_INSET, ARENA.position.y + t * ARENA.size.y)
 		var kind: int = MITE
 		if rng.randf() < boulder_chance(round):
 			kind = BOULDER
 		elif round >= SPITTER_MIN_ROUND and rng.randf() < spitter_chance(round):
 			kind = SPITTER  # no extra rng draw before SPITTER_MIN_ROUND: early rounds are unchanged
-		spawn_enemy(kind, pos)
+		if kind == BOULDER:
+			if n_boulder >= boulder_cap(round):
+				kind = MITE
+			else:
+				n_boulder += 1
+		elif kind == SPITTER:
+			if _spitter_gap > 0 or n_spitter >= spitter_cap(round):
+				kind = MITE
+			else:
+				n_spitter += 1
+				_spitter_gap = SPITTER_SPAWN_GAP
+				if side == _last_spitter_side:  # spread: never two spitters in a row from the same edge
+					side = (side + 1 + rng.randi() % 3) % 4
+				_last_spitter_side = side
+		spawn_enemy(kind, _edge_pos(side, t))
+
+
+## Point on arena edge `side` (0 top, 1 bottom, 2 left, 3 right) at fraction `t` along it.
+static func _edge_pos(side: int, t: float) -> Vector2:
+	match side:
+		0:
+			return Vector2(ARENA.position.x + t * ARENA.size.x, ARENA.position.y + SPAWN_INSET)
+		1:
+			return Vector2(ARENA.position.x + t * ARENA.size.x, ARENA.end.y - SPAWN_INSET)
+		2:
+			return Vector2(ARENA.position.x + SPAWN_INSET, ARENA.position.y + t * ARENA.size.y)
+	return Vector2(ARENA.end.x - SPAWN_INSET, ARENA.position.y + t * ARENA.size.y)
 
 
 # ---------------------------------------------------------------- vehicles
@@ -876,6 +1092,8 @@ func _update_vehicles() -> void:
 			continue
 		if v.protect_ticks > 0:
 			v.protect_ticks -= 1
+		if v.invuln_ticks > 0:
+			v.invuln_ticks -= 1
 		if v.retaliate_ticks > 0:
 			v.retaliate_ticks -= 1
 		if v.regen > 0.0 and v.hp < v.max_hp:
@@ -916,26 +1134,37 @@ func _resolve_vehicle_contacts() -> void:
 			if not pvp_enabled():
 				continue  # grace period: the vehicles only push each other
 			if va.ram_damage > 0.0:
-				_damage_vehicle(vb, va.ram_damage, va.id)
+				_damage_vehicle(vb, va.ram_damage, va.id, true, SRC_RAM)
 			if vb.ram_damage > 0.0:
-				_damage_vehicle(va, vb.ram_damage, vb.id)
+				_damage_vehicle(va, vb.ram_damage, vb.id, true, SRC_RAM)
 
 
-## Applies damage to a vehicle (armour first unless `use_armor` is false). On destruction: fuel
-## loss, a respawn timer (or elimination at 0 fuel) and, for a player kill, kill count and bounty.
-func _damage_vehicle(v: SimVehicle, dmg: float, attacker: int, use_armor: bool = true) -> void:
-	if not v.alive:
+## Applies damage to a vehicle (armour first unless `use_armor` is false). Invulnerable vehicles
+## (`invuln_ticks` > 0) take nothing. `src` is the damage source (SRC_*; default: SRC_PLAYER for a rival
+## attacker, else SRC_MITE) and `split` the contact damage per enemy kind (stats only). On destruction:
+## fuel loss (the lowest-fuel player loses less), a respawn timer (or elimination at 0 fuel) and, for a
+## player kill, kill count, scrap bounty, fuel steal and a "kill" event; always a "vehicle_destroyed" event.
+func _damage_vehicle(v: SimVehicle, dmg: float, attacker: int, use_armor: bool = true, src: int = -1, split: PackedFloat32Array = PackedFloat32Array()) -> void:
+	if not v.alive or v.invuln_ticks > 0:
 		return
+	var by_player: bool = attacker >= 0 and attacker != v.id and attacker < vehicles.size()
+	if src < 0:
+		src = SRC_PLAYER if by_player else SRC_MITE
 	if use_armor and v.armor > 0.0:
 		dmg = maxf(dmg - v.armor, dmg * ARMOR_MIN_FRACTION)
 	if v.protect_ticks > 0:
 		dmg *= PVP_PROTECT_FACTOR
-	if attacker >= 0 and attacker != v.id and attacker < vehicles.size():
-		var av0: SimVehicle = vehicles[attacker]
-		if av0.target_kind == 2 and av0.target_id == v.id:  # deliberate attack, not a stray shot
-			v.retaliate_id = attacker
-			v.retaliate_ticks = RETALIATE_TICKS
+	var av: SimVehicle = vehicles[attacker] if by_player else null
+	if av != null and av.target_kind == 2 and av.target_id == v.id:  # deliberate attack, not a stray shot
+		v.retaliate_id = attacker
+		v.retaliate_ticks = RETALIATE_TICKS
+	var applied: float = minf(dmg, v.hp)
 	v.hp -= dmg
+	_note_taken(v, applied, src, attacker if by_player else -1, split)
+	if av != null:
+		av.round_stats["dealt"] = float(av.round_stats["dealt"]) + applied
+		av.round_stats["dealt_players"] = float(av.round_stats["dealt_players"]) + applied
+		av.match_stats["dmg_dealt"] = float(av.match_stats["dmg_dealt"]) + applied
 	if v.hp > 0.0:
 		return
 	v.hp = 0.0
@@ -943,20 +1172,96 @@ func _damage_vehicle(v: SimVehicle, dmg: float, attacker: int, use_armor: bool =
 	v.vel = Vector2.ZERO
 	v.target_kind = 0
 	v.ram_damage = 0.0
-	_emit("vehicle_destroyed", v.pos, v.id, -1)
-	var by_player: bool = attacker >= 0 and attacker != v.id and attacker < vehicles.size()
-	v.fuel = maxi(v.fuel - (FUEL_LOSS_PVP if by_player else FUEL_LOSS), 0)
+	var killer_id: int = attacker if by_player else -1
+	var killer_kind: int = -1
+	if src <= SRC_SPITTER:
+		killer_kind = src
+	elif src == SRC_ACID:
+		killer_kind = SPITTER
+	(v.round_stats["deaths"] as Array).append({
+		"t": combat_duration(round) - phase_ticks_left, "cause": SRC_NAMES[clampi(src, 0, SRC_NAMES.size() - 1)],
+		"src": src, "killer": killer_id, "killer_kind": killer_kind,
+	})
+	v.match_stats["deaths"] = int(v.match_stats["deaths"]) + 1
+	_emit("vehicle_destroyed", v.pos, v.id, -1, {"cause": src, "killer": killer_id})
+	var base_loss: int = FUEL_LOSS_PVP if by_player else FUEL_LOSS
+	if is_underdog(v):
+		base_loss = roundi(float(base_loss) * UNDERDOG_FUEL_FACTOR)
+	var lost: int = mini(base_loss, v.fuel)
+	v.fuel -= lost
+	v.round_stats["fuel_lost"] = int(v.round_stats["fuel_lost"]) + lost
 	if v.fuel <= 0:
 		v.eliminated = true
 		v.respawn_ticks = 0
 	else:
 		v.respawn_ticks = RESPAWN_TICKS
 	if by_player:
-		var av: SimVehicle = vehicles[attacker]
-		av.kills += 1
-		av.scrap += PVP_KILL_SCRAP * (LEADER_BOUNTY_MULT if v.peer_id == leader_peer else 1)
-		if av.alive:
-			av.protect_ticks = PVP_PROTECT_TICKS
+		_reward_player_kill(av, v, src, lost)
+
+
+## Books `hp` of damage taken from `src` / `attacker` in the round stats of `v`. `split` (contact damage
+## per enemy kind) spreads one contact total over mite / boulder / spitter.
+func _note_taken(v: SimVehicle, hp: float, src: int, attacker: int, split: PackedFloat32Array) -> void:
+	if hp <= 0.0:
+		return
+	var taken: Dictionary = v.round_stats["taken"]
+	if split.size() == 3:
+		var tot: float = split[0] + split[1] + split[2]
+		if tot > 0.0:
+			taken["mite"] = float(taken["mite"]) + hp * split[0] / tot
+			taken["boulder"] = float(taken["boulder"]) + hp * split[1] / tot
+			taken["spitter"] = float(taken["spitter"]) + hp * split[2] / tot
+		return
+	match src:
+		SRC_MITE:
+			taken["mite"] = float(taken["mite"]) + hp
+		SRC_BOULDER:
+			taken["boulder"] = float(taken["boulder"]) + hp
+		SRC_SPITTER:
+			taken["spitter"] = float(taken["spitter"]) + hp
+		SRC_ACID:
+			taken["acid"] = float(taken["acid"]) + hp
+		_:
+			taken["rival"] = float(taken["rival"]) + hp
+			if attacker >= 0:
+				var tp: Dictionary = v.round_stats["taken_players"]
+				tp[attacker] = float(tp.get(attacker, 0.0)) + hp
+
+
+## Everything a player kill pays the killer: kill count, scrap bounty (x3 on the leader), fuel steal
+## (+ a leader bonus) and third-party protection. Repeat kills of the same victim in a round pay
+## REPEAT_KILL_FACTORS (100% / 50% / 0%). Also the "kill" feed event and the match stats.
+func _reward_player_kill(av: SimVehicle, v: SimVehicle, src: int, fuel_lost: int) -> void:
+	var n: int = int(av.kill_counts.get(v.id, 0))
+	av.kill_counts[v.id] = n + 1
+	var factor: float = REPEAT_KILL_FACTORS[mini(n, REPEAT_KILL_FACTORS.size() - 1)]
+	var is_leader: bool = v.peer_id == leader_peer
+	av.kills += 1
+	av.round_stats["kills_players"] = int(av.round_stats["kills_players"]) + 1
+	var ms: Dictionary = av.match_stats
+	ms["player_kills"] = int(ms["player_kills"]) + 1
+	if src == SRC_RAM:
+		ms["ram_kills"] = int(ms["ram_kills"]) + 1
+	var bounty: int = roundi(float(PVP_KILL_SCRAP * (LEADER_BOUNTY_MULT if is_leader else 1)) * factor)
+	av.scrap += bounty
+	_note_scrap(av, bounty)
+	if not av.eliminated:
+		var steal: int = roundi(float(mini(FUEL_STEAL, fuel_lost) + (LEADER_FUEL_BONUS if is_leader else 0)) * factor)
+		var gain: int = clampi(steal, 0, maxi(START_FUEL - av.fuel, 0))
+		av.fuel += gain
+		av.round_stats["fuel_gained"] = int(av.round_stats["fuel_gained"]) + gain
+	if av.alive:
+		av.protect_ticks = PVP_PROTECT_TICKS
+	# Top victim / nemesis (ties keep the earlier holder).
+	av.victim_counts[v.id] = int(av.victim_counts.get(v.id, 0)) + 1
+	if int(av.victim_counts[v.id]) > int(ms["top_victim_n"]):
+		ms["top_victim"] = v.id
+		ms["top_victim_n"] = av.victim_counts[v.id]
+	v.killed_by_counts[av.id] = int(v.killed_by_counts.get(av.id, 0)) + 1
+	if int(v.killed_by_counts[av.id]) > int(v.match_stats["nemesis_n"]):
+		v.match_stats["nemesis"] = av.id
+		v.match_stats["nemesis_n"] = v.killed_by_counts[av.id]
+	_emit("kill", v.pos, av.id, -1, {"victim": v.id, "weapon": WEAPON_RAM if src == SRC_RAM else _hit_weapon})
 
 
 func _fire_weapons(v: SimVehicle) -> void:
@@ -988,7 +1293,7 @@ func _fire_weapons(v: SimVehicle) -> void:
 		var muzzle: Vector2 = v.pos + Vector2.from_angle(ang) * MUZZLE_OFFSET
 		for p in pellets:
 			var dir: Vector2 = Vector2.from_angle(ang + rng.randf_range(-spread, spread))
-			spawn_projectile(muzzle, dir * speed, ttl, dmg, v.id, pierce, splash)
+			spawn_projectile(muzzle, dir * speed, ttl, dmg, v.id, pierce, splash, Cards.weapon_kind_index(str(w["kind"])))
 		w["cooldown"] = int(w["cooldown_ticks"])
 		_emit("fire", muzzle, v.id, Cards.weapon_kind_index(str(w["kind"])))
 
@@ -1059,7 +1364,7 @@ func _update_projectiles() -> void:
 					hit_enemy = j
 		for vi in nveh:
 			var v: SimVehicle = vehicles[vi]
-			if not v.alive or v.id == owner or (owner >= 0 and not pvp):
+			if not v.alive or v.id == owner or v.invuln_ticks > 0 or (owner >= 0 and not pvp):
 				continue
 			var tv: float = _segment_circle_t(p0, step_v, v.pos, SimVehicle.RADIUS + PROJECTILE_RADIUS)
 			if tv >= 0.0 and tv < best_t:
@@ -1071,7 +1376,9 @@ func _update_projectiles() -> void:
 		if hit_vehicle >= 0:
 			var hv: SimVehicle = vehicles[hit_vehicle]
 			_emit("hit", p0 + step_v * best_t, owner, -1)
-			_damage_vehicle(hv, dmg, owner)
+			_hit_weapon = proj_weapon[i] if proj_weapon[i] != 255 else -1
+			_damage_vehicle(hv, dmg, owner, true, SRC_ACID if owner < 0 else SRC_PLAYER)
+			_hit_weapon = -1
 			remove = true
 		elif hit_enemy >= 0:
 			var hit_pos: Vector2 = p0 + step_v * best_t
@@ -1097,6 +1404,7 @@ func _update_projectiles() -> void:
 			proj_pierce[i] = proj_pierce[n]
 			proj_splash[i] = proj_splash[n]
 			proj_last[i] = proj_last[n]
+			proj_weapon[i] = proj_weapon[n]
 		else:
 			proj_pos[i] = p1
 			proj_ttl[i] = ttl
@@ -1110,6 +1418,7 @@ func _update_projectiles() -> void:
 		proj_pierce.resize(n)
 		proj_splash.resize(n)
 		proj_last.resize(n)
+		proj_weapon.resize(n)
 		proj_count = n
 
 

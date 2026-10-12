@@ -3,11 +3,13 @@ extends RefCounted
 ## Compact binary world snapshot (host -> clients). See docs/architecture.md ("Net contract").
 ##
 ## Layout (little endian):
-##   header   34 B  version, flags, tick, next_enemy_id, counts, enemy id base,
-##                   phase, round, phase_ticks_left, winner_peer, leader_peer
+##   header   37 B  version, flags, tick, next_enemy_id, counts, enemy id base,
+##                   phase, round, phase_ticks_left, winner_peer, leader_peer, pvp_grace_ticks, fuel_drain
 ##   vehicles variable (about 160 B each: doctrine strings, weapons, fuel / flags, offers, cards, tech,
 ##                   player name and colour index)
-##   events   7 B each  type, owner, kind, pos (u16 x2, 1/32 px, offset by POS_ORIGIN)
+##   events   7 B each  type, owner, kind, pos (u16 x2, 1/32 px, offset by POS_ORIGIN); the type byte's
+##                      top bit (EVENT_EXTRA_BIT) adds 2 signed bytes: kill = victim, weapon;
+##                      vehicle_destroyed = cause (SimWorld.SRC_*), killer
 ##   enemies  8 B each  id offset u16, x u16, y u16 (1/32 px), packed u16:
 ##                      kind 2 bits | hp 4 bits (1..15 of max) | speed 3 bits (0..7 of kind speed) | heading 7 bits
 ##   projs   13 B each  x u16, y u16 (1/32 px, offset), vx i16, vy i16 (px/s), owner i8, ttl u8 (1/100 s), damage u8 (1/4)
@@ -17,21 +19,26 @@ extends RefCounted
 ## current round, SimWorld.enemy_max_hp). Card and tech ids are table indices (Cards.DEFS / Tech.DEFS).
 ## Projectile pierce / splash are not sent: the client world is passive.
 
-const VERSION := 4  # 4: header leader_peer, per-vehicle protect_ticks
+const VERSION := 5  # 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
 const FLAG_WIDE_IDS := 1  ## enemy ids spread over more than 65535: ids are sent as u32 deltas from 0
+const FLAG_STATS := 2  ## vehicles carry round_stats and match_stats (sent outside combat only)
+const EVENT_EXTRA_BIT := 0x80
+const EVENT_EXTRAS := {"kill": ["victim", "weapon"], "vehicle_destroyed": ["cause", "killer"]}
+const MAX_DEATHS := 16
+const MAX_ROUND_PLAYERS := 16
 
 const POS_SCALE := 32.0
 const POS_ORIGIN := 64.0  ## added to projectile/event coordinates (they may leave the arena slightly)
 const POS_ERROR := 1.0 / 64.0
 
-const HEADER_BYTES := 34
+const HEADER_BYTES := 37
 const ENEMY_BYTES := 8
 const WIDE_ENEMY_BYTES := 10
 const PROJ_BYTES := 13
 const EVENT_BYTES := 7
 
 const MAX_VEHICLES := 64  ## vehicle ids travel as u8 / i8 owners, keep well below 127
-const EVENT_TYPES: PackedStringArray = ["fire", "hit", "kill", "vehicle_destroyed", "retreat", "respawn", "spit"]
+const EVENT_TYPES: PackedStringArray = ["fire", "hit", "kill", "vehicle_destroyed", "retreat", "respawn", "spit", "pvp_on", "bounty", "drain"]
 const MAX_ROUND := 65535
 const SPEED_STEPS := 7
 const HEADING_STEPS := 128
@@ -62,6 +69,9 @@ static func encode(world: SimWorld, p_events: Array[Dictionary] = []) -> PackedB
 				id_max = eid
 	var wide: bool = (id_max - id_min) > 65535
 	var flags: int = FLAG_WIDE_IDS if wide else 0
+	var with_stats: bool = world.phase != SimWorld.PHASE_COMBAT
+	if with_stats:
+		flags |= FLAG_STATS
 	if wide:
 		id_min = 0
 
@@ -80,19 +90,27 @@ static func encode(world: SimWorld, p_events: Array[Dictionary] = []) -> PackedB
 	sp.put_u16(clampi(world.phase_ticks_left, 0, 65535))
 	sp.put_32(world.winner_peer)
 	sp.put_32(world.leader_peer)
+	sp.put_u16(clampi(world.pvp_grace_ticks, 0, 65535))
+	sp.put_u8(clampi(world.fuel_drain, 0, 255))
 
 	for vi in n_veh:
-		_put_vehicle(sp, world.vehicles[vi])
+		_put_vehicle(sp, world.vehicles[vi], with_stats)
 
 	for ei in n_evt:
 		var e: Dictionary = evs[ei]
 		var tix: int = EVENT_TYPES.find(str(e.get("type", "")))
 		var epos: Vector2 = e.get("pos", Vector2.ZERO)
-		sp.put_u8(maxi(tix, 0))
+		var etype: String = str(e.get("type", ""))
+		var keys: Array = EVENT_EXTRAS.get(etype, [])
+		var has_extra: bool = not keys.is_empty() and e.has(keys[0])
+		sp.put_u8(maxi(tix, 0) | (EVENT_EXTRA_BIT if has_extra else 0))
 		sp.put_8(clampi(int(e.get("owner", -1)), -1, 127))
 		sp.put_8(clampi(int(e.get("kind", -1)), -1, 127))
 		sp.put_u16(_q_off(epos.x))
 		sp.put_u16(_q_off(epos.y))
+		if has_extra:
+			sp.put_8(clampi(int(e.get(keys[0], -1)), -1, 127))
+			sp.put_8(clampi(int(e.get(keys[1], -1)), -1, 127))
 
 	var out: PackedByteArray = sp.data_array
 
@@ -154,27 +172,41 @@ static func apply(world: SimWorld, bytes: PackedByteArray) -> bool:
 	var phase_left: int = r.u16()
 	var winner: int = r.s32()
 	var leader: int = r.s32()
+	var grace: int = r.u16()
+	var drain: int = r.u8()
+	var with_stats: bool = (flags & FLAG_STATS) != 0
 	if not r.ok or n_veh > MAX_VEHICLES or phase > SimWorld.PHASE_GAME_OVER or round_n < 1:
 		return false
 	var wide: bool = (flags & FLAG_WIDE_IDS) != 0
 
 	var vehicles: Array[SimVehicle] = []
 	for vi in n_veh:
-		var v: SimVehicle = _get_vehicle(r)
+		var v: SimVehicle = _get_vehicle(r, with_stats)
 		if not r.ok:
 			return false
 		vehicles.append(v)
 
 	var events: Array[Dictionary] = []
 	for ei in n_evt:
-		var tix: int = r.u8()
+		var tbyte: int = r.u8()
+		var tix: int = tbyte & (EVENT_EXTRA_BIT - 1)
 		var owner: int = r.s8()
 		var kind: int = r.s8()
 		var ex: float = float(r.u16()) / POS_SCALE - POS_ORIGIN
 		var ey: float = float(r.u16()) / POS_SCALE - POS_ORIGIN
+		var ev := {}
 		if not r.ok or tix >= EVENT_TYPES.size():
 			return false
-		events.append({"type": EVENT_TYPES[tix], "pos": Vector2(ex, ey), "owner": owner, "kind": kind})
+		ev = {"type": EVENT_TYPES[tix], "pos": Vector2(ex, ey), "owner": owner, "kind": kind}
+		if (tbyte & EVENT_EXTRA_BIT) != 0:
+			var keys: Array = EVENT_EXTRAS.get(EVENT_TYPES[tix], [])
+			if keys.is_empty():
+				return false
+			ev[keys[0]] = r.s8()
+			ev[keys[1]] = r.s8()
+			if not r.ok:
+				return false
+		events.append(ev)
 
 	var estride: int = WIDE_ENEMY_BYTES if wide else ENEMY_BYTES
 	if not r.has(n_enemy * estride + n_proj * PROJ_BYTES):
@@ -251,6 +283,8 @@ static func apply(world: SimWorld, bytes: PackedByteArray) -> bool:
 	world.phase_ticks_left = phase_left
 	world.winner_peer = winner
 	world.leader_peer = leader
+	world.pvp_grace_ticks = grace
+	world.fuel_drain = drain
 	_commit_vehicles(world, vehicles)
 	world.events = events
 	world.enemy_id = e_id
@@ -289,7 +323,7 @@ static func _put_str(sp: StreamPeerBuffer, s: String) -> void:
 		sp.put_data(b)
 
 
-static func _put_vehicle(sp: StreamPeerBuffer, v: SimVehicle) -> void:
+static func _put_vehicle(sp: StreamPeerBuffer, v: SimVehicle, with_stats: bool = false) -> void:
 	sp.put_u8(v.id)
 	sp.put_32(v.peer_id)
 	_put_str(sp, v.player_name)
@@ -367,9 +401,110 @@ static func _put_vehicle(sp: StreamPeerBuffer, v: SimVehicle) -> void:
 	for ti in tech_ix:
 		sp.put_u8(ti)
 	sp.put_u8(clampi(v.protect_ticks, 0, 255))
+	sp.put_u8(clampi(v.invuln_ticks, 0, 255))
+	if with_stats:
+		_put_stats(sp, v)
 
 
-static func _get_vehicle(r: _Reader) -> SimVehicle:
+## Round and match stats of one vehicle (see SimWorld.new_round_stats / new_match_stats).
+static func _put_stats(sp: StreamPeerBuffer, v: SimVehicle) -> void:
+	var rs: Dictionary = v.round_stats
+	var tk: Dictionary = rs.get("taken", {})
+	sp.put_u16(clampi(int(rs.get("round", 0)), 0, 65535))
+	for key in ["mite", "boulder", "spitter", "acid", "rival"]:
+		sp.put_u16(clampi(roundi(float(tk.get(key, 0.0))), 0, 65535))
+	var tp: Dictionary = rs.get("taken_players", {})
+	var tp_ids: Array = tp.keys()
+	tp_ids.sort()
+	if tp_ids.size() > MAX_ROUND_PLAYERS:
+		tp_ids.resize(MAX_ROUND_PLAYERS)
+	sp.put_u8(tp_ids.size())
+	for pid: int in tp_ids:
+		sp.put_u8(clampi(pid, 0, 255))
+		sp.put_u16(clampi(roundi(float(tp[pid])), 0, 65535))
+	sp.put_u32(clampi(roundi(float(rs.get("dealt", 0.0))), 0, 0x7fffffff))
+	sp.put_u32(clampi(roundi(float(rs.get("dealt_players", 0.0))), 0, 0x7fffffff))
+	sp.put_u16(clampi(int(rs.get("kills", 0)), 0, 65535))
+	sp.put_u16(clampi(int(rs.get("kills_players", 0)), 0, 65535))
+	var deaths: Array = rs.get("deaths", [])
+	var nd: int = mini(deaths.size(), MAX_DEATHS)
+	sp.put_u8(nd)
+	for i in nd:
+		var d: Dictionary = deaths[i]
+		sp.put_u16(clampi(int(d.get("t", 0)), 0, 65535))
+		sp.put_u8(clampi(int(d.get("src", 0)), 0, 255))
+		sp.put_8(clampi(int(d.get("killer", -1)), -1, 127))
+		sp.put_8(clampi(int(d.get("killer_kind", -1)), -1, 127))
+	sp.put_u16(clampi(int(rs.get("fuel_lost", 0)), 0, 65535))
+	sp.put_u16(clampi(int(rs.get("fuel_gained", 0)), 0, 65535))
+	sp.put_u16(clampi(int(rs.get("fuel_drained", 0)), 0, 65535))
+	sp.put_u32(clampi(int(rs.get("scrap_earned", 0)), 0, 0x7fffffff))
+	sp.put_u16(clampi(int(rs.get("interest", 0)), 0, 65535))
+	var ms: Dictionary = v.match_stats
+	sp.put_u32(clampi(int(ms.get("kills", 0)), 0, 0x7fffffff))
+	sp.put_u16(clampi(int(ms.get("player_kills", 0)), 0, 65535))
+	sp.put_u16(clampi(int(ms.get("ram_kills", 0)), 0, 65535))
+	sp.put_u16(clampi(int(ms.get("deaths", 0)), 0, 65535))
+	sp.put_u32(clampi(roundi(float(ms.get("dmg_dealt", 0.0))), 0, 0x7fffffff))
+	sp.put_u32(clampi(int(ms.get("scrap_earned", 0)), 0, 0x7fffffff))
+	sp.put_8(clampi(int(ms.get("top_victim", -1)), -1, 127))
+	sp.put_u16(clampi(int(ms.get("top_victim_n", 0)), 0, 65535))
+	sp.put_8(clampi(int(ms.get("nemesis", -1)), -1, 127))
+	sp.put_u16(clampi(int(ms.get("nemesis_n", 0)), 0, 65535))
+
+
+static func _get_stats(r: _Reader, v: SimVehicle) -> void:
+	var rs := SimWorld.new_round_stats(r.u16())
+	var tk: Dictionary = rs["taken"]
+	for key in ["mite", "boulder", "spitter", "acid", "rival"]:
+		tk[key] = float(r.u16())
+	var ntp: int = r.u8()
+	if ntp > MAX_ROUND_PLAYERS:
+		r.fail()
+		return
+	var tp: Dictionary = rs["taken_players"]
+	for i in ntp:
+		var pid: int = r.u8()
+		tp[pid] = float(r.u16())
+	rs["dealt"] = float(r.u32())
+	rs["dealt_players"] = float(r.u32())
+	rs["kills"] = r.u16()
+	rs["kills_players"] = r.u16()
+	var nd: int = r.u8()
+	if nd > MAX_DEATHS:
+		r.fail()
+		return
+	var deaths: Array = rs["deaths"]
+	for i in nd:
+		var t: int = r.u16()
+		var src: int = r.u8()
+		var killer: int = r.s8()
+		var kk: int = r.s8()
+		if src >= SimWorld.SRC_NAMES.size():
+			r.fail()
+			return
+		deaths.append({"t": t, "cause": SimWorld.SRC_NAMES[src], "src": src, "killer": killer, "killer_kind": kk})
+	rs["fuel_lost"] = r.u16()
+	rs["fuel_gained"] = r.u16()
+	rs["fuel_drained"] = r.u16()
+	rs["scrap_earned"] = r.u32()
+	rs["interest"] = r.u16()
+	var ms := SimWorld.new_match_stats()
+	ms["kills"] = r.u32()
+	ms["player_kills"] = r.u16()
+	ms["ram_kills"] = r.u16()
+	ms["deaths"] = r.u16()
+	ms["dmg_dealt"] = float(r.u32())
+	ms["scrap_earned"] = r.u32()
+	ms["top_victim"] = r.s8()
+	ms["top_victim_n"] = r.u16()
+	ms["nemesis"] = r.s8()
+	ms["nemesis_n"] = r.u16()
+	v.round_stats = rs
+	v.match_stats = ms
+
+
+static func _get_vehicle(r: _Reader, with_stats: bool = false) -> SimVehicle:
 	var id: int = r.u8()
 	var peer: int = r.s32()
 	var v := SimVehicle.new(id, peer, Vector2.ZERO)
@@ -452,6 +587,12 @@ static func _get_vehicle(r: _Reader) -> SimVehicle:
 		tech.append(tid)
 	v.tech = tech
 	v.protect_ticks = r.u8()
+	v.invuln_ticks = r.u8()
+	if with_stats:
+		_get_stats(r, v)
+	else:
+		v.round_stats = {}  # not sent during combat: _commit_vehicles keeps the receiver's copy
+		v.match_stats = {}
 	if r.ok:
 		# Derived stats follow from cards + tech; weapons and hp are exactly as sent.
 		Cards.recompute(v, false, false)
@@ -503,10 +644,20 @@ static func _commit_vehicles(world: SimWorld, fresh: Array[SimVehicle]) -> void:
 			dst.weapon_slots = src.weapon_slots
 			dst.interest_cap = src.interest_cap
 			dst.protect_ticks = src.protect_ticks
-		elif i < cur.size():
-			cur[i] = src
+			dst.invuln_ticks = src.invuln_ticks
+			dst.contact_reduction = src.contact_reduction
+			dst.thorns = src.thorns
+			if not src.round_stats.is_empty():
+				dst.round_stats = src.round_stats
+				dst.match_stats = src.match_stats
 		else:
-			cur.append(src)
+			if src.round_stats.is_empty():
+				src.round_stats = SimWorld.new_round_stats(1)
+				src.match_stats = SimWorld.new_match_stats()
+			if i < cur.size():
+				cur[i] = src
+			else:
+				cur.append(src)
 	while cur.size() > fresh.size():
 		cur.pop_back()
 

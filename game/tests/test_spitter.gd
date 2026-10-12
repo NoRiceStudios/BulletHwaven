@@ -50,7 +50,8 @@ func test_spitters_spawn_from_round_three() -> void:
 	late.phase_ticks_left = 1800
 	for i in 1200:
 		late.step()
-	assert_gt(_spitters(late), 3, "spitters appear in round 3 (%d of %d)" % [_spitters(late), late.enemy_count])
+	assert_gt(_spitters(late), 1, "spitters appear in round 3 (%d of %d)" % [_spitters(late), late.enemy_count])
+	assert_true(_spitters(late) <= SimWorld.spitter_cap(3), "but never more than the alive cap")
 	assert_lt(_spitters(late), late.enemy_count / 2, "but stay a minority")
 
 

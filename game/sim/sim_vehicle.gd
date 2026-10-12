@@ -51,6 +51,15 @@ var weapon_slots: int = 2
 var interest_cap: int = 5
 var scrap_frac: float = 0.0  ## fractional scrap carried by scrap_mult
 var protect_ticks: int = 0  ## third-party protection: > 0 means damage taken is halved (set by a player kill)
+var invuln_ticks: int = 0  ## newbie protection: > 0 means untargetable and immune (after respawn and at combat start)
+var contact_reduction: float = 0.0  ## fraction of enemy contact damage ignored (spiked plating, berserker), 0..MAX
+var thorns: float = 0.0  ## fraction of enemy contact damage dealt back to the touching enemy (spiked plating)
+
+## Last combat round's numbers, for the workshop recap (see SimWorld.new_round_stats()). Reset at the
+## start of every combat, filled while it runs. Snapshots carry it only outside combat.
+var round_stats: Dictionary = {}
+## Whole-match numbers (see SimWorld.new_match_stats()). Snapshots carry it only outside combat.
+var match_stats: Dictionary = {}
 
 # AI scratch state (derived each tick; not part of the checksum).
 var target_kind: int = 0  ## 0 = none, 1 = enemy, 2 = vehicle
@@ -62,6 +71,11 @@ var orbit_dir: float = 1.0
 var retaliate_id: int = -1  ## vehicle id of the last player that hurt this one (return fire), -1 = none
 var retaliate_ticks: int = 0  ## ticks left for the return-fire memory
 var ram_damage: float = 0.0  ## per-tick damage dealt to touching enemies/vehicles ("charge")
+var kill_counts: Dictionary = {}  ## host-only: victim vehicle id -> player kills this round (diminishing rewards)
+var victim_counts: Dictionary = {}  ## host-only: victim vehicle id -> player kills this match
+var killed_by_counts: Dictionary = {}  ## host-only: killer vehicle id -> times it destroyed this vehicle (match)
+var last_hit_src: int = 0  ## host-only: source (SimWorld.SRC_*) and attacker of the latest damage taken
+var last_hit_attacker: int = -1
 
 
 func _init(p_id: int, p_peer_id: int, p_pos: Vector2) -> void:
@@ -72,6 +86,8 @@ func _init(p_id: int, p_peer_id: int, p_pos: Vector2) -> void:
 	orbit_dir = 1.0 if p_id % 2 == 0 else -1.0
 	Cards.recompute(self, true, false)
 	hp = max_hp
+	round_stats = SimWorld.new_round_stats(1)
+	match_stats = SimWorld.new_match_stats()
 
 
 func max_range() -> float:

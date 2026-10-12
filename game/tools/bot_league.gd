@@ -152,8 +152,9 @@ func _play(kind: String, p_seed: int, pols: Array) -> Dictionary:
 			if str(e["type"]) == "vehicle_destroyed":
 				var vi: int = int(e["owner"])
 				var vd: SimVehicle = w.vehicles[vi]
-				var pvp: bool = last_fuel[vi] - vd.fuel >= SimWorld.FUEL_LOSS_PVP
-				(stats[vi]["deaths"] as Array).append([w.tick, w.round, "pvp" if pvp else _cause(w, vd)])
+				var src: int = int(e.get("cause", -1))  # SimWorld.SRC_*: 0 mite, 1 boulder, 2 spitter, 3 acid, 4 ram, 5 shots
+				var cause: String = _cause(w, vd) if src < 0 else ["mite", "boulder", "spitter", "acid", "pvp", "pvp"][mini(src, 5)]
+				(stats[vi]["deaths"] as Array).append([w.tick, w.round, cause])
 		for i in n:
 			last_fuel[i] = w.vehicles[i].fuel
 

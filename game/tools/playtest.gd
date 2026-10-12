@@ -408,7 +408,7 @@ func _post(st: Dictionary, w: SimWorld) -> void:
 				ks[k3] = rel
 	if flipped:
 		# the final step also paid interest: solve interest = min((scrap_after - interest) / PER, cap)
-		var cap: int = me.interest_cap
+		var cap: int = w.interest_cap_for(me)
 		var interest: int = 0
 		for i in range(0, cap + 1):
 			if mini((me.scrap - i) / SimWorld.INTEREST_PER, cap) == i and not me.eliminated:
@@ -566,7 +566,8 @@ func _vehicle_dict(w: SimWorld, v: SimVehicle, full: bool) -> Dictionary:
 		d["scrap_mult"] = snappedf(v.scrap_mult, 0.01)
 		d["regen"] = snappedf(v.regen, 0.01)
 		d["weapon_slots"] = v.weapon_slots
-		d["interest_cap"] = v.interest_cap
+		d["interest_cap"] = w.interest_cap_for(v)
+		d["invulnerable"] = v.invuln_ticks > 0
 		d["ready"] = v.ready
 	return d
 
@@ -677,6 +678,7 @@ func _combat_dict(res: Dictionary, w: SimWorld) -> Dictionary:
 		"hp_series": st["hp_series"], "enemy_series": st["enemy_series"],
 		"enemy_peak": st["enemy_peak"], "enemy_peak_t": snappedf(float(int(st["enemy_peak_tick"]) - t0) / 30.0, 0.1),
 		"spitter_shots_fired": st["spits"],
+		"sim_stats": _sim_stats(w, me),
 		"deaths": st["deaths"], "respawns": st["respawns"],
 		"fuel_start": st["fuel0"], "fuel_end": me.fuel,
 		"scrap_start": st["scrap0"], "scrap_earned": int(st["scrap_pre_interest"]) - int(st["scrap0"]),
@@ -685,6 +687,29 @@ func _combat_dict(res: Dictionary, w: SimWorld) -> Dictionary:
 		"new_threats": firsts,
 		"opponent_deaths": _opp_deaths(w, st), "spectating": st["spectating"],
 	}
+
+
+## The sim's own exact round and match stats of the human rig (`round_stats` / `match_stats`), JSON friendly.
+func _sim_stats(w: SimWorld, me: SimVehicle) -> Dictionary:
+	var rs: Dictionary = me.round_stats.duplicate(true)
+	var tp: Dictionary = {}
+	for pid: Variant in (rs["taken_players"] as Dictionary):
+		var nm: String = w.vehicles[int(pid)].player_name if int(pid) < w.vehicles.size() else str(pid)
+		tp[nm] = snappedf(float((rs["taken_players"] as Dictionary)[pid]), 0.1)
+	rs["taken_players"] = tp
+	for k: String in rs["taken"]:
+		rs["taken"][k] = snappedf(float(rs["taken"][k]), 0.1)
+	rs["dealt"] = snappedf(float(rs["dealt"]), 0.1)
+	rs["dealt_players"] = snappedf(float(rs["dealt_players"]), 0.1)
+	for d: Dictionary in rs["deaths"]:
+		d["t"] = snappedf(float(d["t"]) / 30.0, 0.1)
+		d["killer_name"] = w.vehicles[int(d["killer"])].player_name if int(d["killer"]) >= 0 else ""
+	var ms: Dictionary = me.match_stats.duplicate(true)
+	ms["dmg_dealt"] = snappedf(float(ms["dmg_dealt"]), 0.1)
+	ms["top_victim_name"] = w.vehicles[int(ms["top_victim"])].player_name if int(ms["top_victim"]) >= 0 else ""
+	ms["nemesis_name"] = w.vehicles[int(ms["nemesis"])].player_name if int(ms["nemesis"]) >= 0 else ""
+	return {"round_stats": rs, "match_stats": ms, "fuel_drain_per_round": w.fuel_drain, "underdog": w.is_underdog(me),
+		"pvp_grace_ticks": w.pvp_grace_ticks}
 
 
 func _opp_deaths(w: SimWorld, st: Dictionary) -> Array:
@@ -743,7 +768,7 @@ func _summary(session: Dictionary, res: Dictionary, state: Dictionary, step: int
 	else:
 		L.append("DECISION POINT %d: workshop after round %d, next is round %d. %.0f s on the clock (replay stops when it opens). PvP %s." % [
 			step, w.round, w.round + 1, float(state["workshop_seconds_left"]),
-			"ON" if bool(state["pvp_enabled"]) else "off until round %d" % SimWorld.PVP_START_ROUND])
+			"ON" if bool(state["pvp_enabled"]) else "off until round %d (plus a %d s grace at its start)" % [SimWorld.PVP_START_ROUND, SimWorld.PVP_GRACE_TICKS / SimWorld.TICK_RATE]])
 	var flags: String = ""
 	if bool(you.get("is_leader", false)):
 		flags += "  [LEADER: bounty on you]"
@@ -769,7 +794,9 @@ func _summary(session: Dictionary, res: Dictionary, state: Dictionary, step: int
 		stats.append("scrap x%.2f" % me.scrap_mult)
 	if me.regen > 0.0:
 		stats.append("regen %s hp/s" % _num(me.regen))
-	stats.append("interest cap +%d" % me.interest_cap)
+	stats.append("interest 10%% of held scrap, capped at %d now (+%d per round)" % [w.interest_cap_for(me), SimWorld.INTEREST_CAP_PER_ROUND])
+	if w.fuel_drain > 0:
+		stats.append("FUEL DRAIN %d per round (only rig kills refuel you)" % w.fuel_drain)
 	L.append("STATS: " + ", ".join(stats))
 	L.append("TECH OWNED: " + (", ".join(me.tech) if not me.tech.is_empty() else "none"))
 
@@ -872,6 +899,7 @@ func _combat_lines(lc: Dictionary, w: SimWorld, stay: bool) -> PackedStringArray
 	for p2: Array in parts:
 		ds.append("%s %s" % [p2[0], _num(float(p2[1]))])
 	L.append("  damage taken: %s hp (approx. split: %s)" % [_num(float(lc["damage_taken"])), ", ".join(ds) if not ds.is_empty() else "none"])
+	L.append_array(_sim_stat_lines(lc["sim_stats"], w))
 	var hp: PackedStringArray = []
 	for e: Array in lc["hp_series"]:
 		hp.append("%ds:%d%%" % [e[0], e[1]])
@@ -901,6 +929,31 @@ func _combat_lines(lc: Dictionary, w: SimWorld, stay: bool) -> PackedStringArray
 		notes.append("%d acid shots fired" % int(lc["spitter_shots_fired"]))
 	if not notes.is_empty():
 		L.append("  notable: " + "; ".join(notes))
+	return L
+
+
+func _sim_stat_lines(ss: Dictionary, w: SimWorld) -> PackedStringArray:
+	var L: PackedStringArray = []
+	var rs: Dictionary = ss["round_stats"]
+	var tk: Dictionary = rs["taken"]
+	var tps: PackedStringArray = []
+	for nm: String in rs["taken_players"]:
+		tps.append("%s %s" % [nm, _num(float(rs["taken_players"][nm]))])
+	L.append("  EXACT damage taken (sim): mite %s, boulder %s, spitter contact %s, acid %s, rival rigs %s%s" % [
+		_num(float(tk["mite"])), _num(float(tk["boulder"])), _num(float(tk["spitter"])), _num(float(tk["acid"])), _num(float(tk["rival"])),
+		(" (" + ", ".join(tps) + ")") if not tps.is_empty() else ""])
+	L.append("  EXACT dealt %s hp (%s to rigs); kills %d aliens, %d rigs; fuel lost %d, stolen/gained %d, drained %d%s" % [
+		_num(float(rs["dealt"])), _num(float(rs["dealt_players"])), rs["kills"], rs["kills_players"], rs["fuel_lost"], rs["fuel_gained"],
+		rs["fuel_drained"], "; UNDERDOG (lowest fuel: loses 30% less per death)" if bool(ss["underdog"]) else ""])
+	var ds: PackedStringArray = []
+	for d: Dictionary in rs["deaths"]:
+		ds.append("%.0fs by %s%s" % [d["t"], d["cause"], (" " + str(d["killer_name"])) if str(d["killer_name"]) != "" else ""])
+	if not ds.is_empty():
+		L.append("  EXACT deaths: " + "; ".join(ds))
+	var ms: Dictionary = ss["match_stats"]
+	L.append("  MATCH so far: %d aliens, %d rigs (%d by ram), %d deaths, %s hp dealt, %d scrap earned; top victim %s, nemesis %s" % [
+		ms["kills"], ms["player_kills"], ms["ram_kills"], ms["deaths"], _num(float(ms["dmg_dealt"])), ms["scrap_earned"],
+		str(ms["top_victim_name"]) if str(ms["top_victim_name"]) != "" else "-", str(ms["nemesis_name"]) if str(ms["nemesis_name"]) != "" else "-"])
 	return L
 
 

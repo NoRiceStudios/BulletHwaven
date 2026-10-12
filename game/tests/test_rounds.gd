@@ -30,11 +30,13 @@ func _has_event(w: SimWorld, type: String) -> bool:
 	return false
 
 
+## Steps until `v` has respawned, then strips the respawn invulnerability so the test can hit it at once.
 func _respawn_wait(w: SimWorld, v: SimVehicle) -> void:
 	var guard: int = 0
 	while not v.alive and not v.eliminated and guard < 500:
 		w.step()
 		guard += 1
+	v.invuln_ticks = 0
 
 
 # ---------------------------------------------------------------- data tables
@@ -206,7 +208,7 @@ func test_interest() -> void:
 	_to_workshop(w)
 	assert_eq(w.vehicles[0].scrap, 47 + 4, "+1 per 10 held")
 	assert_eq(w.vehicles[1].scrap, 9, "under 10: nothing")
-	assert_eq(w.vehicles[2].scrap, 405, "capped at +5")
+	assert_eq(w.vehicles[2].scrap, 407, "capped at 5 + 2 x round (round 1)")
 	# Salvage tech raises the cap.
 	var s := _world(1)
 	var v: SimVehicle = s.vehicles[0]
@@ -215,7 +217,7 @@ func test_interest() -> void:
 	assert_eq(v.interest_cap, 10)
 	v.scrap = 400
 	_to_workshop(s)
-	assert_eq(v.scrap, 410)
+	assert_eq(v.scrap, 412)
 
 
 # ---------------------------------------------------------------- offers and picking
@@ -268,8 +270,8 @@ func test_pick_levels_up_duplicates_and_max_not_offered() -> void:
 		v.picked = false
 		w.apply_command(1, {"type": "pick_card", "value": 0})
 		assert_eq(int(v.cards.get("steel_plates", 0)), lvl, "duplicate raises the level")
-	assert_eq(v.max_hp, SimVehicle.MAX_HP + 3.0 * 40.0, "3 levels of steel plates")
-	assert_eq(v.armor, 3.0)
+	assert_eq(v.max_hp, SimVehicle.MAX_HP + 3.0 * 60.0, "3 levels of steel plates")
+	assert_eq(v.armor, 4.5)
 	# Maxed cards are never offered.
 	assert_false(Cards.is_offerable(v, "steel_plates"))
 	for i in 60:
@@ -442,8 +444,8 @@ func test_tech_changes_derived_stats() -> void:
 func test_card_effects() -> void:
 	var v := SimVehicle.new(0, 1, Vector2(100, 100))
 	Cards.grant(v, "steel_plates")
-	assert_eq(v.max_hp, 340.0)
-	assert_eq(v.armor, 1.0)
+	assert_eq(v.max_hp, 360.0)
+	assert_eq(v.armor, 1.5)
 	Cards.grant(v, "v8_engine")
 	assert_eq(v.speed, 1.1)
 	Cards.grant(v, "off_road_tyres")
@@ -451,7 +453,7 @@ func test_card_effects() -> void:
 	Cards.grant(v, "scrap_magnet")
 	assert_eq(v.scrap_mult, 1.15)
 	Cards.grant(v, "regenerator")
-	assert_eq(v.regen, 1.5)
+	assert_eq(v.regen, 2.5)
 	Cards.grant(v, "berserker")
 	assert_eq(v.contact_damage, 0.8)
 	assert_eq(v.ram_mult, 1.4)
@@ -559,11 +561,11 @@ func test_vulture_bonus_vs_weak_targets() -> void:
 func test_armor_reduces_hits() -> void:
 	var w := _world(2)
 	var v: SimVehicle = w.vehicles[0]
-	Cards.grant(v, "ablative_scrap")  # armour 2
-	assert_eq(v.armor, 2.0)
+	Cards.grant(v, "ablative_scrap")  # armour 3
+	assert_eq(v.armor, 3.0)
 	var hp: float = v.hp
 	w._damage_vehicle(v, 6.0, 1)
-	assert_eq(v.hp, hp - 4.0, "flat reduction")
+	assert_eq(v.hp, hp - 3.0, "flat reduction")
 	hp = v.hp
 	w._damage_vehicle(v, 1.0, 1)
 	assert_eq(v.hp, hp - 0.25, "never below 25%")
@@ -786,7 +788,10 @@ func test_elimination_and_game_over_two_players() -> void:
 		_respawn_wait(w, a)
 		assert_true(a.alive, "still in the game after %d deaths" % (i + 1))
 		assert_eq(w.phase, SimWorld.PHASE_COMBAT)
-	assert_eq(a.fuel, 10)
+	assert_gt(float(a.fuel), 0.0)
+	assert_lt(float(a.fuel), 100.0)
+	a.fuel = 10  # the last life
+	b.fuel = 100
 	w._damage_vehicle(a, 1.0e6, b.id)
 	assert_eq(a.fuel, 0)
 	assert_true(a.eliminated)
@@ -837,6 +842,7 @@ func test_both_eliminated_no_winner() -> void:
 	for v in w.vehicles:
 		v.fuel = 20
 		v.pos = Vector2(100, 100)
+	for v in w.vehicles:
 		w._damage_vehicle(v, 1.0e6, -1)
 	w.step()
 	assert_eq(w.phase, SimWorld.PHASE_GAME_OVER)
@@ -938,6 +944,7 @@ func test_snapshot_round_trip_of_round_state() -> void:
 	host.apply_command(2, {"type": "ready"})
 	host.step()
 	host.vehicles[0].fuel = 10
+	host.vehicles[0].invuln_ticks = 0  # combat-start protection would swallow the hit
 	host._damage_vehicle(host.vehicles[0], 1.0e6, -1)
 	host.step()
 	assert_true(Snapshot.apply(client, Snapshot.encode(host)))
@@ -984,21 +991,21 @@ func test_snapshot_rejects_bad_round_state() -> void:
 	assert_true(Snapshot.apply(client, good))
 	client = SimWorld.new(0)
 	client.add_vehicle(1, Vector2(1, 2))
-	# Tail: ... cards n=1, idx, level, tech n=0, protect_ticks.
+	# Tail (combat: no stats): ... cards n=1, idx, level, tech n=0, protect_ticks, invuln_ticks.
 	var n: int = good.size()
-	assert_eq(good[n - 5], 1, "one card")
+	assert_eq(good[n - 6], 1, "one card")
 	var bad_level: PackedByteArray = good.duplicate()
-	bad_level[n - 3] = 9
+	bad_level[n - 4] = 9
 	assert_false(Snapshot.apply(client, bad_level), "level out of range")
 	var zero_level: PackedByteArray = good.duplicate()
-	zero_level[n - 3] = 0
+	zero_level[n - 4] = 0
 	assert_false(Snapshot.apply(client, zero_level), "level 0")
 	var bad_card: PackedByteArray = good.duplicate()
-	bad_card[n - 4] = 200
+	bad_card[n - 5] = 200
 	assert_false(Snapshot.apply(client, bad_card), "card index out of range")
 	var bad_tech: PackedByteArray = good.duplicate()
-	bad_tech[n - 2] = 1
-	bad_tech[n - 1] = 250
+	bad_tech[n - 3] = 1
+	bad_tech[n - 2] = 250
 	bad_tech.append(0)
 	assert_false(Snapshot.apply(client, bad_tech), "tech index out of range")
 	var bad_phase: PackedByteArray = good.duplicate()

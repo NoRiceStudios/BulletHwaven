@@ -7,7 +7,7 @@ const NEAR_QUERY := 450.0
 const TURN_RATE := 3.2  ## rad/s
 const WALL_MARGIN := 100.0
 const SPEED_CIRCLE := 95.0
-const SPEED_KITE := 105.0
+const SPEED_KITE := 96.0
 const SPEED_CHARGE := 125.0
 const CHARGE_RAM_DAMAGE := 2.0
 
@@ -24,7 +24,8 @@ static func _target_valid(w: SimWorld, v: SimVehicle) -> bool:
 		var i: int = v.target_index
 		return i >= 0 and i < w.enemy_count and w.enemy_id[i] == v.target_id and w.enemy_hp[i] > 0.0
 	if v.target_kind == 2:
-		return w.vehicles[v.target_id].alive
+		var t: SimVehicle = w.vehicles[v.target_id]
+		return t.alive and t.invuln_ticks <= 0  # a rival that just respawned / combat start cannot be targeted
 	return false
 
 
@@ -47,20 +48,27 @@ static func _acquire(w: SimWorld, v: SimVehicle) -> void:
 	if v.retaliate_ticks > 0 and mode != "players_first" and w.pvp_enabled():
 		# Return fire: shoot back at the player that hurt us, if it is in range.
 		var attacker: SimVehicle = w.vehicles[v.retaliate_id]
-		if attacker.alive and v.pos.distance_squared_to(attacker.pos) <= rng_range * rng_range:
+		if attacker.alive and attacker.invuln_ticks <= 0 and v.pos.distance_squared_to(attacker.pos) <= rng_range * rng_range:
 			v.target_kind = 2
 			v.target_index = attacker.id
 			v.target_id = attacker.id
 			_refresh_target(w, v)
 			return
 	if mode == "players_first" and w.pvp_enabled():
+		# Prefer the marked leader (bounty), then the highest leader score in range (never the weakest rig),
+		# nearest among equals. Rivals under respawn / round-start protection cannot be targeted.
 		var best: SimVehicle = null
 		var best_d2: float = rng_range * rng_range
+		var best_score: int = -1
 		for o in w.vehicles:
-			if o.id == v.id or not o.alive:
+			if o.id == v.id or not o.alive or o.invuln_ticks > 0:
 				continue
 			var d2: float = v.pos.distance_squared_to(o.pos)
-			if d2 <= best_d2:
+			if d2 > rng_range * rng_range:
+				continue
+			var sc: int = w.leader_score(o) + (1000000 if o.peer_id == w.leader_peer else 0)
+			if sc > best_score or (sc == best_score and d2 < best_d2):
+				best_score = sc
 				best_d2 = d2
 				best = o
 		if best != null:
@@ -73,7 +81,11 @@ static func _acquire(w: SimWorld, v: SimVehicle) -> void:
 	if mode == "strongest":
 		idx = _strongest_in_range(w, v.pos, rng_range)
 	if idx < 0:
-		idx = _nearest_enemy(w, v.pos)
+		# Charge without berserker does not ram boulders: prefer anything else if it is around.
+		var skip: int = SimWorld.BOULDER if _avoids_boulders(v) else -1
+		idx = _nearest_enemy(w, v.pos, skip)
+		if idx < 0 and skip >= 0:
+			idx = _nearest_enemy(w, v.pos)
 	if idx >= 0:
 		v.target_kind = 1
 		v.target_index = idx
@@ -94,14 +106,19 @@ static func _strongest_in_range(w: SimWorld, p: Vector2, r: float) -> int:
 	return best
 
 
-static func _nearest_enemy(w: SimWorld, p: Vector2) -> int:
+## The charge doctrine rams whatever it targets; boulders are only worth it with the berserker card.
+static func _avoids_boulders(v: SimVehicle) -> bool:
+	return str(v.doctrine.get("drive", "circle")) == "charge" and not v.cards.has("berserker")
+
+
+static func _nearest_enemy(w: SimWorld, p: Vector2, skip_kind: int = -1) -> int:
 	var n: int = w.query_enemies(p, NEAR_QUERY, w.ai_buf)
 	var best: int = -1
 	var best_d2: float = INF
 	if n > 0:
 		for q in n:
 			var j: int = w.ai_buf[q]
-			if w.enemy_hp[j] <= 0.0:
+			if w.enemy_hp[j] <= 0.0 or w.enemy_kind[j] == skip_kind:
 				continue
 			var d2: float = p.distance_squared_to(w.enemy_pos[j])
 			if d2 < best_d2:
@@ -111,7 +128,7 @@ static func _nearest_enemy(w: SimWorld, p: Vector2) -> int:
 			return best
 	# Nothing nearby: linear fallback (cheap when the field is sparse).
 	for j in w.enemy_count:
-		if w.enemy_hp[j] <= 0.0:
+		if w.enemy_hp[j] <= 0.0 or w.enemy_kind[j] == skip_kind:
 			continue
 		var d2: float = p.distance_squared_to(w.enemy_pos[j])
 		if d2 < best_d2:
@@ -132,7 +149,10 @@ static func steer(w: SimWorld, v: SimVehicle) -> void:
 		var d: float = to_t.length()
 		var u: Vector2 = to_t / maxf(d, 0.001)
 		var tang: Vector2 = Vector2(-u.y, u.x) * v.orbit_dir
-		if drive == "charge":
+		var ram_ok: bool = true
+		if drive == "charge" and v.target_kind == 1 and w.enemy_kind[v.target_index] == SimWorld.BOULDER and _avoids_boulders(v):
+			ram_ok = false  # only boulders left: shoot them from a circle instead of ramming
+		if drive == "charge" and ram_ok:
 			desired = u
 			speed = SPEED_CHARGE
 			v.ram_damage = CHARGE_RAM_DAMAGE * v.ram_mult

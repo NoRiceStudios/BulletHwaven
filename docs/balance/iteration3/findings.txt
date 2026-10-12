@@ -1,0 +1,18 @@
+- **Upgrade value (solo):** `balanced` scores 15.3 vs 5.0 for `never_upgrade` (+10.3 rounds, x3.06).
+- **Solo policy ranking (score):** best `balanced_kite` (15.4), `balanced` (15.3), `greedy_damage` (14.6), `focus_flamer` (13.1); worst `random` (7.8), `balanced_charge` (6.6), `pvp_hunter` (6.5), `never_upgrade` (5.0).
+- **Dominant solo strategies (> balanced + 1.5 rounds):** none.
+- **Solo strategies far behind balanced (< -4 rounds, excluding baselines):** `tank` (-4.8), `speedster` (-6.9), `focus_shotgun` (-4.3), `tech_rush` (-4.5), `saver` (-7.2), `balanced_charge` (-8.7), `pvp_hunter` (-8.8).
+- **Pacing, solo:** 0 of 16 policies survive to the round cap in 50%+ of runs (-): the alien curve is too gentle for decent builds.
+- **Pacing, solo:** eliminated runs end at median round 10 (p10 6, p90 15); a rig has 5 lives (20 fuel each), see the fuel table.
+- **Weapon strength (solo score of the single-weapon focus policies):** `mg` 12.3, `shotgun` 11.0, `cannon` 12.0, `flamer` 13.1.
+- **Economy:** a `balanced` rig ends with 2926 unspent scrap on average (all 15 tech cost 2650 in total): scrap is a real (if mild) constraint.
+- **FFA policies winning significantly more than 25%:** `focus_cannon` (48%, avg place 1.74), `tech_rush` (46%, avg place 1.67), `balanced_kite` (62%, avg place 1.19).
+- **FFA policies winning significantly less than 25%:** `never_upgrade` (0%, avg place 3.77), `random` (3%, avg place 3.55), `focus_shotgun` (4%, avg place 2.82), `saver` (9%, avg place 2.38).
+- **Pacing, ffa:** 80% of matches are decided before the round cap; median length 16 rounds (p90 20).
+- **PvP share:** 52% of ffa vehicle losses were caused by another player (bots only attack players when `players_first`).
+- **Cards that significantly raise survival (random-policy lift, owned at round 5):** none detected.
+- **Cards that significantly lower it:** none detected.
+- **Cards almost never picked by any scored policy (<10% pick rate):** none.
+- **Tech that significantly raises survival (random-policy lift):** none detected.
+- **Tech that significantly lowers it:** none detected.
+- **Tech owned by fewer than 25% of players at the end:** `propulsion_2`, `propulsion_3`, `salvage_3`.
