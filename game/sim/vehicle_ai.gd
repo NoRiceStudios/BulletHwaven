@@ -114,7 +114,7 @@ static func _nearest_enemy(w: SimWorld, p: Vector2) -> int:
 ## Turns the heading toward the doctrine's desired direction (rate limited) and sets vel.
 static func steer(w: SimWorld, v: SimVehicle) -> void:
 	var drive: String = v.doctrine.get("drive", "circle")
-	var rng_range: float = v.max_range()
+	var rng_range: float = maxf(v.engage_range(), 40.0)
 	var desired: Vector2 = Vector2.ZERO
 	var speed: float = SPEED_CIRCLE
 	v.ram_damage = 0.0
@@ -126,7 +126,7 @@ static func steer(w: SimWorld, v: SimVehicle) -> void:
 		if drive == "charge":
 			desired = u
 			speed = SPEED_CHARGE
-			v.ram_damage = CHARGE_RAM_DAMAGE
+			v.ram_damage = CHARGE_RAM_DAMAGE * v.ram_mult
 		elif drive == "kite":
 			var want: float = rng_range * 0.9
 			var k: float = clampf((d - want) / (rng_range * 0.4), -1.0, 1.0)
@@ -150,10 +150,11 @@ static func steer(w: SimWorld, v: SimVehicle) -> void:
 		desired = Vector2.from_angle(v.heading)
 	desired += _wall_push(v.pos) * 2.5
 	var diff: float = angle_difference(v.heading, desired.angle())
-	var max_turn: float = TURN_RATE * SimWorld.DT
+	v.ram_damage += v.contact_damage
+	var max_turn: float = TURN_RATE * v.turn_rate * SimWorld.DT
 	v.heading = wrapf(v.heading + clampf(diff, -max_turn, max_turn), -PI, PI)
 	var slow: float = 1.0 - 0.35 * minf(absf(diff) / 0.6, 1.0)
-	v.vel = Vector2.from_angle(v.heading) * speed * slow
+	v.vel = Vector2.from_angle(v.heading) * speed * v.speed * slow
 
 
 ## 0 in the open field, pointing inward (magnitude up to ~1 per axis) near walls.

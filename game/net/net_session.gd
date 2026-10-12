@@ -22,11 +22,14 @@ const SNAPSHOT_EVERY := 2  ## ticks
 const MAX_PENDING_EVENTS := SimWorld.MAX_EVENTS
 const MAX_COMMANDS_PER_SEC := 20
 
-## Allow-list of client commands: type -> permitted values.
+## Allow-list of client commands with a fixed set of string values: type -> permitted values.
 const COMMANDS := {
 	"set_drive": ["circle", "kite", "charge"],
 	"set_target": ["nearest", "strongest", "players_first"],
 }
+## Commands without a value (any "value" key is dropped).
+const VALUELESS_COMMANDS: PackedStringArray = ["reroll", "ready"]
+const OFFER_SLOTS := Cards.OFFER_COUNT  ## pick_card takes an offer index 0..OFFER_SLOTS-1
 
 enum Mode { NONE, SOLO, HOST, CLIENT }
 
@@ -139,18 +142,43 @@ func send_command(cmd: Dictionary) -> void:
 				_rpc_command.rpc_id(1, clean)
 
 
-## Returns a sanitised copy ({"type", "value"}) if `cmd` is an allowed command, else {}.
+## Returns a sanitised copy ({"type"} or {"type", "value"}) if `cmd` is an allowed command, else {}.
+## pick_card takes an integral number 0..2 (an int or a whole float, since JSON / RPC may deliver
+## either; returned as int); buy_tech takes a known tech id; reroll and ready take no value.
 static func validate_command(cmd: Variant) -> Dictionary:
 	if typeof(cmd) != TYPE_DICTIONARY:
 		return {}
 	var d: Dictionary = cmd
 	var t: Variant = d.get("type")
-	var v: Variant = d.get("value")
-	if typeof(t) != TYPE_STRING or typeof(v) != TYPE_STRING:
+	if typeof(t) != TYPE_STRING:
 		return {}
 	var type_s: String = t
+	if type_s.length() > 32:
+		return {}
+	var v: Variant = d.get("value")
+	if VALUELESS_COMMANDS.has(type_s):
+		return {"type": type_s}
+	if type_s == "pick_card":
+		var idx: int = -1
+		if typeof(v) == TYPE_INT:
+			idx = v
+		elif typeof(v) == TYPE_FLOAT:
+			var f: float = v
+			if is_finite(f) and f == floorf(f) and f >= 0.0 and f < float(OFFER_SLOTS):
+				idx = int(f)
+		if idx < 0 or idx >= OFFER_SLOTS:
+			return {}
+		return {"type": type_s, "value": idx}
+	if typeof(v) != TYPE_STRING:
+		return {}
 	var value_s: String = v
-	if type_s.length() > 32 or value_s.length() > 32 or not COMMANDS.has(type_s):
+	if value_s.length() > 32:
+		return {}
+	if type_s == "buy_tech":
+		if not Tech.has(value_s):
+			return {}
+		return {"type": type_s, "value": value_s}
+	if not COMMANDS.has(type_s):
 		return {}
 	var allowed: Array = COMMANDS[type_s]
 	if not allowed.has(value_s):
@@ -242,6 +270,7 @@ func _spawn_vehicle_for(peer_id: int) -> SimVehicle:
 			var fresh := SimVehicle.new(old.id, peer_id, spawn_position(i))
 			fresh.heading = (SimWorld.ARENA.get_center() - fresh.pos).angle()
 			world.vehicles[i] = fresh
+			world.prepare_vehicle(fresh)
 			_departed.erase(old.id)
 			return fresh
 	if world.vehicles.size() >= MAX_VEHICLES:
@@ -272,6 +301,8 @@ func _on_peer_disconnected(id: int) -> void:
 			v.target_kind = 0
 			if _pending_events.size() < MAX_PENDING_EVENTS:
 				_pending_events.append({"type": "vehicle_destroyed", "pos": v.pos, "owner": v.id, "kind": -1})
+		v.eliminated = true  # a departed player is out of the round loop (no respawn, no ready needed)
+		v.offers = []
 		v.peer_id = 0  # no longer addressable by commands
 		_departed[v.id] = true
 	peer_left.emit(id)

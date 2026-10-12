@@ -3,31 +3,35 @@ extends RefCounted
 ## Compact binary world snapshot (host -> clients). See docs/architecture.md ("Net contract").
 ##
 ## Layout (little endian):
-##   header   21 B  version, flags, tick, next_enemy_id, counts, enemy id base
-##   vehicles variable (a few dozen bytes each, incl. doctrine strings and weapons)
+##   header   30 B  version, flags, tick, next_enemy_id, counts, enemy id base,
+##                   phase, round, phase_ticks_left, winner_peer
+##   vehicles variable (about 150 B each: doctrine strings, weapons, fuel / flags, offers, cards, tech)
 ##   events   7 B each  type, owner, kind, pos (u16 x2, 1/32 px, offset by POS_ORIGIN)
 ##   enemies  8 B each  id offset u16, x u16, y u16 (1/32 px), packed u16:
 ##                      kind 2 bits | hp 4 bits (1..15 of max) | speed 3 bits (0..7 of kind speed) | heading 7 bits
 ##   projs   13 B each  x u16, y u16 (1/32 px, offset), vx i16, vy i16 (px/s), owner i8, ttl u8 (1/200 s), damage u8 (1/4)
 ##
 ## Positions are quantized to 1/32 px (max error POS_ERROR). Enemy velocity is quantized to
-## 1/7 of the kind's speed and 128 headings; enemy hp to 1/15 of the kind's max hp.
+## 1/7 of the kind's speed and 128 headings; enemy hp to 1/15 of the kind's max hp (for the
+## current round, SimWorld.enemy_max_hp). Card and tech ids are table indices (Cards.DEFS / Tech.DEFS).
+## Projectile pierce / splash are not sent: the client world is passive.
 
-const VERSION := 1
+const VERSION := 2
 const FLAG_WIDE_IDS := 1  ## enemy ids spread over more than 65535: ids are sent as u32 deltas from 0
 
 const POS_SCALE := 32.0
 const POS_ORIGIN := 64.0  ## added to projectile/event coordinates (they may leave the arena slightly)
 const POS_ERROR := 1.0 / 64.0
 
-const HEADER_BYTES := 21
+const HEADER_BYTES := 30
 const ENEMY_BYTES := 8
 const WIDE_ENEMY_BYTES := 10
 const PROJ_BYTES := 13
 const EVENT_BYTES := 7
 
 const MAX_VEHICLES := 64  ## vehicle ids travel as u8 / i8 owners, keep well below 127
-const EVENT_TYPES: PackedStringArray = ["fire", "hit", "kill", "vehicle_destroyed"]
+const EVENT_TYPES: PackedStringArray = ["fire", "hit", "kill", "vehicle_destroyed", "retreat", "respawn"]
+const MAX_ROUND := 65535
 const SPEED_STEPS := 7
 const HEADING_STEPS := 128
 const HP_STEPS := 15
@@ -70,6 +74,10 @@ static func encode(world: SimWorld, p_events: Array[Dictionary] = []) -> PackedB
 	sp.put_u16(n_enemy)
 	sp.put_u16(n_proj)
 	sp.put_u32(id_min)
+	sp.put_u8(clampi(world.phase, 0, SimWorld.PHASE_GAME_OVER))
+	sp.put_u16(clampi(world.round, 1, MAX_ROUND))
+	sp.put_u16(clampi(world.phase_ticks_left, 0, 65535))
+	sp.put_32(world.winner_peer)
 
 	for vi in n_veh:
 		_put_vehicle(sp, world.vehicles[vi])
@@ -99,7 +107,7 @@ static func encode(world: SimWorld, p_events: Array[Dictionary] = []) -> PackedB
 		var ang: int = 0
 		if spd > 0:
 			ang = roundi(vel.angle() / TAU * HEADING_STEPS) & (HEADING_STEPS - 1)
-		var hpl: int = clampi(ceili(world.enemy_hp[i] / SimWorld.ENEMY_HP[kind] * HP_STEPS), 1, HP_STEPS)
+		var hpl: int = clampi(ceili(world.enemy_hp[i] / SimWorld.enemy_max_hp(kind, world.round) * HP_STEPS), 1, HP_STEPS)
 		var packed: int = (kind & 3) | (hpl << 2) | (spd << 6) | (ang << 9)
 		if wide:
 			out.encode_u32(o, world.enemy_id[i])
@@ -139,7 +147,11 @@ static func apply(world: SimWorld, bytes: PackedByteArray) -> bool:
 	var n_enemy: int = r.u16()
 	var n_proj: int = r.u16()
 	var id_base: int = r.u32()
-	if not r.ok or n_veh > MAX_VEHICLES:
+	var phase: int = r.u8()
+	var round_n: int = r.u16()
+	var phase_left: int = r.u16()
+	var winner: int = r.s32()
+	if not r.ok or n_veh > MAX_VEHICLES or phase > SimWorld.PHASE_GAME_OVER or round_n < 1:
 		return false
 	var wide: bool = (flags & FLAG_WIDE_IDS) != 0
 
@@ -199,7 +211,7 @@ static func apply(world: SimWorld, bytes: PackedByteArray) -> bool:
 		if spd > 0:
 			var speed: float = SimWorld.ENEMY_SPEED[kind] * float(spd) / SPEED_STEPS
 			e_vel[i] = Vector2.from_angle(float(ang) * TAU / HEADING_STEPS) * speed
-		e_hp[i] = SimWorld.ENEMY_HP[kind] * float(hpl) / HP_STEPS
+		e_hp[i] = SimWorld.enemy_max_hp(kind, round_n) * float(hpl) / HP_STEPS
 
 	var p_pos := PackedVector2Array()
 	var p_vel := PackedVector2Array()
@@ -211,6 +223,13 @@ static func apply(world: SimWorld, bytes: PackedByteArray) -> bool:
 	p_ttl.resize(n_proj)
 	p_dmg.resize(n_proj)
 	p_owner.resize(n_proj)
+	var p_pierce := PackedByteArray()
+	var p_splash := PackedFloat32Array()
+	var p_last := PackedInt32Array()
+	p_pierce.resize(n_proj)
+	p_splash.resize(n_proj)
+	p_last.resize(n_proj)
+	p_last.fill(-1)
 	for i in n_proj:
 		p_pos[i] = Vector2(
 			float(data.decode_u16(o)) / POS_SCALE - POS_ORIGIN,
@@ -224,6 +243,10 @@ static func apply(world: SimWorld, bytes: PackedByteArray) -> bool:
 	# Commit.
 	world.tick = tick
 	world.next_enemy_id = next_id
+	world.phase = phase
+	world.round = round_n
+	world.phase_ticks_left = phase_left
+	world.winner_peer = winner
 	_commit_vehicles(world, vehicles)
 	world.events = events
 	world.enemy_id = e_id
@@ -236,6 +259,9 @@ static func apply(world: SimWorld, bytes: PackedByteArray) -> bool:
 	world.proj_ttl = p_ttl
 	world.proj_damage = p_dmg
 	world.proj_owner = p_owner
+	world.proj_pierce = p_pierce
+	world.proj_splash = p_splash
+	world.proj_last = p_last
 	world.rebuild_derived()
 	return true
 
@@ -296,7 +322,44 @@ static func _put_vehicle(sp: StreamPeerBuffer, v: SimVehicle) -> void:
 		sp.put_u16(int(w.get("cooldown_ticks", 0)))
 		sp.put_u16(int(w.get("cooldown", 0)))
 		sp.put_float(float(w.get("aim", 0.0)))
+		sp.put_u8(clampi(int(w.get("pellets", 1)), 0, 255))
+		sp.put_float(float(w.get("spread", 0.0)))
+		sp.put_u8(clampi(int(w.get("pierce", 0)), 0, 255))
+		sp.put_float(float(w.get("splash", 0.0)))
+		sp.put_float(float(w.get("speed", 0.0)))
 		wn += 1
+	sp.put_u16(clampi(v.fuel, 0, 65535))
+	sp.put_u16(clampi(v.respawn_ticks, 0, 65535))
+	sp.put_u8((1 if v.eliminated else 0) | (2 if v.ready else 0) | (4 if v.picked else 0))
+	sp.put_u16(clampi(v.reroll_cost, 0, 65535))
+	sp.put_float(v.scrap_frac)
+	var offer_ix: Array[int] = []
+	for oid in v.offers:
+		var oi: int = Cards.index_of(oid)
+		if oi >= 0 and offer_ix.size() < 255:
+			offer_ix.append(oi)
+	sp.put_u8(offer_ix.size())
+	for oi in offer_ix:
+		sp.put_u8(oi)
+	var card_ix: Array[int] = []
+	var card_lv: Array[int] = []
+	for cid: String in v.cards:
+		var ci: int = Cards.index_of(cid)
+		if ci >= 0 and card_ix.size() < 255:
+			card_ix.append(ci)
+			card_lv.append(clampi(int(v.cards[cid]), 1, Cards.MAX_LEVEL))
+	sp.put_u8(card_ix.size())
+	for k in card_ix.size():
+		sp.put_u8(card_ix[k])
+		sp.put_u8(card_lv[k])
+	var tech_ix: Array[int] = []
+	for tid in v.tech:
+		var ti: int = Tech.index_of(tid)
+		if ti >= 0 and tech_ix.size() < 255:
+			tech_ix.append(ti)
+	sp.put_u8(tech_ix.size())
+	for ti in tech_ix:
+		sp.put_u8(ti)
 
 
 static func _get_vehicle(r: _Reader) -> SimVehicle:
@@ -332,9 +395,53 @@ static func _get_vehicle(r: _Reader) -> SimVehicle:
 		var cdt: int = r.u16()
 		var cd: int = r.u16()
 		var aim: float = r.f32()
+		var pellets: int = r.u8()
+		var spread: float = r.f32()
+		var pierce: int = r.u8()
+		var splash: float = r.f32()
+		var wspeed: float = r.f32()
 		if not r.ok:
 			return v
-		v.weapons.append({"kind": kind, "damage": dmg, "range": rng, "cooldown_ticks": cdt, "cooldown": cd, "aim": aim})
+		v.weapons.append({
+			"kind": kind, "damage": dmg, "range": rng, "cooldown_ticks": cdt, "cooldown": cd, "aim": aim,
+			"pellets": pellets, "spread": spread, "pierce": pierce, "splash": splash, "speed": wspeed,
+		})
+	v.fuel = r.u16()
+	v.respawn_ticks = r.u16()
+	var bits: int = r.u8()
+	v.eliminated = (bits & 1) != 0
+	v.ready = (bits & 2) != 0
+	v.picked = (bits & 4) != 0
+	v.reroll_cost = r.u16()
+	v.scrap_frac = r.f32()
+	var offers: Array[String] = []
+	var no: int = r.u8()
+	for i in no:
+		var oid: String = Cards.id_at(r.u8())
+		if oid == "":
+			r.fail()
+		offers.append(oid)
+	v.offers = offers
+	var cards := {}
+	var nc: int = r.u8()
+	for i in nc:
+		var cid: String = Cards.id_at(r.u8())
+		var lvl: int = r.u8()
+		if cid == "" or lvl < 1 or lvl > Cards.MAX_LEVEL:
+			r.fail()
+		cards[cid] = lvl
+	v.cards = cards
+	var tech: Array[String] = []
+	var nt: int = r.u8()
+	for i in nt:
+		var tid: String = Tech.id_at(r.u8())
+		if tid == "":
+			r.fail()
+		tech.append(tid)
+	v.tech = tech
+	if r.ok:
+		# Derived stats follow from cards + tech; weapons and hp are exactly as sent.
+		Cards.recompute(v, false, false)
 	return v
 
 
@@ -360,6 +467,26 @@ static func _commit_vehicles(world: SimWorld, fresh: Array[SimVehicle]) -> void:
 			dst.target_id = src.target_id
 			dst.target_pos = src.target_pos
 			dst.ram_damage = src.ram_damage
+			dst.fuel = src.fuel
+			dst.respawn_ticks = src.respawn_ticks
+			dst.eliminated = src.eliminated
+			dst.ready = src.ready
+			dst.picked = src.picked
+			dst.reroll_cost = src.reroll_cost
+			dst.scrap_frac = src.scrap_frac
+			dst.offers = src.offers
+			dst.cards = src.cards
+			dst.tech = src.tech
+			dst.armor = src.armor
+			dst.speed = src.speed
+			dst.turn_rate = src.turn_rate
+			dst.scrap_mult = src.scrap_mult
+			dst.regen = src.regen
+			dst.contact_damage = src.contact_damage
+			dst.ram_mult = src.ram_mult
+			dst.vulture = src.vulture
+			dst.weapon_slots = src.weapon_slots
+			dst.interest_cap = src.interest_cap
 		elif i < cur.size():
 			cur[i] = src
 		else:
@@ -377,6 +504,9 @@ class _Reader:
 
 	func _init(p_bytes: PackedByteArray) -> void:
 		bytes = p_bytes
+
+	func fail() -> void:
+		ok = false
 
 	func has(n: int) -> bool:
 		return ok and pos + n <= bytes.size()

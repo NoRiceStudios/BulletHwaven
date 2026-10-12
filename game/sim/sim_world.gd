@@ -27,13 +27,48 @@ const PROJECTILE_SPEED := 400.0  # px/s
 const PROJECTILE_RADIUS := 2.0
 const MUZZLE_OFFSET := 16.0
 const SPREAD := 0.04  # radians, uniform +-
-const PVP_KILL_SCRAP := 10
+const SPLASH_FRACTION := 0.5  # splash damage as a fraction of the direct hit
+const PVP_KILL_SCRAP := 15  # bounty for destroying another player's vehicle
 
 const SPAWN_RATE_START := 1.5  # enemies / s
-const SPAWN_RATE_RAMP := 0.5  # added every SPAWN_RAMP_INTERVAL seconds
+const SPAWN_RATE_RAMP := 0.5  # added every SPAWN_RAMP_INTERVAL seconds of the combat phase
 const SPAWN_RAMP_INTERVAL := 10.0
 const BOULDER_CHANCE := 0.1
 const SPAWN_INSET := 8.0
+
+# Round loop (docs/architecture.md, "Round loop contract").
+const PHASE_COMBAT := 0
+const PHASE_WORKSHOP := 1
+const PHASE_GAME_OVER := 2
+
+const COMBAT_TICKS := 1800  # 60 s
+const COMBAT_TICKS_EARLY := 1200  # 40 s, rounds 1 and 2
+const EARLY_ROUNDS := 2
+const WORKSHOP_TICKS := 750  # 25 s
+const FAST_COMBAT_TICKS := 120  # world.fast_rounds (tests, screenshots)
+const FAST_WORKSHOP_TICKS := 45
+
+const START_FUEL := 100
+const FUEL_LOSS := 20  # destroyed by aliens
+const FUEL_LOSS_PVP := 30  # destroyed by another player
+const RESPAWN_TICKS := 90  # 3 s
+const INTEREST_PER := 10  # +1 scrap per this much scrap held at the end of a round
+const REROLL_COST_START := 2
+const RETREAT_EVENT_CAP := 150  # at most this many "retreat" events per round end
+
+# Per-round enemy scaling (round 1 = x1).
+const HP_SCALE_PER_ROUND := 0.12
+const SPAWN_SCALE_PER_ROUND := 0.10
+const BOULDER_CHANCE_PER_ROUND := 0.025
+const BOULDER_CHANCE_MAX := 0.4
+const DAMAGE_SCALE_PER_ROUND := 0.03
+
+# Armour: flat reduction per hit with a floor; per touching enemy per tick it counts for much less.
+const ARMOR_MIN_FRACTION := 0.25
+const CONTACT_ARMOR_FACTOR := 0.04
+
+const SPAWN_SPOT_CLEARANCE := 90.0  # no vehicle closer than this to a respawn spot
+const SPAWN_SPOT_ENEMY_CLEARANCE := 70.0
 
 const HASH_CELL := 32.0
 const STALE_MARGIN := 10.0  # enemies move < this per tick, hash is one move old
@@ -43,6 +78,20 @@ var tick: int = 0
 var seed: int = 0
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 var vehicles: Array[SimVehicle] = []
+
+# Round loop state.
+var phase: int = PHASE_COMBAT
+@warning_ignore("shadowed_global_identifier")
+var round: int = 1
+var phase_ticks_left: int = COMBAT_TICKS_EARLY
+var winner_peer: int = -1  ## peer id of the winner once phase == PHASE_GAME_OVER (-1 = none / solo loss)
+## Shortens combat and workshop (tests, screenshots). Set it right after construction: at tick 0 it
+## also resets the running combat timer.
+var fast_rounds: bool = false:
+	set(value):
+		fast_rounds = value
+		if tick == 0 and phase == PHASE_COMBAT and round == 1:
+			phase_ticks_left = combat_duration(1)
 
 var enemy_count: int = 0
 var enemy_id: PackedInt32Array = PackedInt32Array()
@@ -57,6 +106,9 @@ var proj_vel: PackedVector2Array = PackedVector2Array()  # px/s
 var proj_ttl: PackedFloat32Array = PackedFloat32Array()  # seconds
 var proj_damage: PackedFloat32Array = PackedFloat32Array()
 var proj_owner: PackedInt32Array = PackedInt32Array()  # vehicle id, -1 = alien
+var proj_pierce: PackedByteArray = PackedByteArray()  # extra enemies the projectile may pass through
+var proj_splash: PackedFloat32Array = PackedFloat32Array()  # splash radius on enemy hit, 0 = none
+var proj_last: PackedInt32Array = PackedInt32Array()  # id of the last enemy pierced (not hit twice), -1 = none
 
 var events: Array[Dictionary] = []
 
@@ -70,6 +122,7 @@ var ai_buf: PackedInt32Array = PackedInt32Array()
 var _hash: SpatialHash
 var _spawn_accum: float = 0.0
 var _query_buf: PackedInt32Array = PackedInt32Array()
+var _splash_buf: PackedInt32Array = PackedInt32Array()
 var _av_pos: PackedVector2Array = PackedVector2Array()  # alive vehicle positions (enemy phase)
 var _av_idx: PackedInt32Array = PackedInt32Array()
 var _contact: PackedFloat32Array = PackedFloat32Array()
@@ -79,6 +132,7 @@ func _init(p_seed: int) -> void:
 	seed = p_seed
 	rng.seed = p_seed
 	_hash = SpatialHash.new(ARENA, HASH_CELL)
+	phase_ticks_left = combat_duration(1)
 
 
 # ---------------------------------------------------------------- public API
@@ -87,7 +141,16 @@ func add_vehicle(peer_id: int, pos: Vector2) -> SimVehicle:
 	var v := SimVehicle.new(vehicles.size(), peer_id, pos)
 	v.heading = (ARENA.get_center() - pos).angle()
 	vehicles.append(v)
+	prepare_vehicle(v)
 	return v
+
+
+## Initialises a vehicle that joined (or took over a departed slot) mid-game: fuel and, during the
+## workshop, a fresh set of card offers. NetSession calls this after replacing a slot.
+func prepare_vehicle(v: SimVehicle) -> void:
+	v.fuel = START_FUEL
+	if phase == PHASE_WORKSHOP:
+		v.offers = Cards.roll_offers(rng, v)
 
 
 func get_vehicle_for_peer(peer_id: int) -> SimVehicle:
@@ -97,18 +160,87 @@ func get_vehicle_for_peer(peer_id: int) -> SimVehicle:
 	return null
 
 
+## Applies a (pre-validated) command from `peer_id`. Card / tech / ready commands only work in the
+## workshop; set_drive and set_target work in every phase. Unknown or illegal commands are ignored.
 func apply_command(peer_id: int, cmd: Dictionary) -> void:
 	var v: SimVehicle = get_vehicle_for_peer(peer_id)
 	if v == null:
 		return
-	var value: String = str(cmd.get("value", ""))
-	match str(cmd.get("type", "")):
+	var type: String = str(cmd.get("type", ""))
+	match type:
 		"set_drive":
+			var value: String = str(cmd.get("value", ""))
 			if value in ["circle", "kite", "charge"]:
 				v.doctrine["drive"] = value
 		"set_target":
-			if value in ["nearest", "strongest", "players_first"]:
-				v.doctrine["target"] = value
+			var value2: String = str(cmd.get("value", ""))
+			if value2 in ["nearest", "strongest", "players_first"]:
+				v.doctrine["target"] = value2
+		"pick_card":
+			if _can_shop(v) and not v.picked:
+				var idx: int = _integral(cmd.get("value"))
+				if idx >= 0 and idx < v.offers.size() and Cards.grant(v, v.offers[idx]):
+					v.picked = true
+					v.offers = []
+		"reroll":
+			if _can_shop(v) and not v.picked and v.scrap >= v.reroll_cost:
+				v.scrap -= v.reroll_cost
+				v.reroll_cost += 1
+				v.offers = Cards.roll_offers(rng, v)
+		"buy_tech":
+			if _can_shop(v):
+				Tech.buy(v, str(cmd.get("value", "")))
+		"ready":
+			if _can_shop(v):
+				v.ready = true
+
+
+func _can_shop(v: SimVehicle) -> bool:
+	return phase == PHASE_WORKSHOP and not v.eliminated
+
+
+## `x` as an int if it is an int or an integral float, else -1.
+static func _integral(x: Variant) -> int:
+	if typeof(x) == TYPE_INT:
+		return x
+	if typeof(x) == TYPE_FLOAT:
+		var f: float = x
+		if is_finite(f) and f == floorf(f) and absf(f) < 1.0e9:
+			return int(f)
+	return -1
+
+
+# ---------------------------------------------------------------- round scaling
+
+static func enemy_hp_mult(r: int) -> float:
+	return 1.0 + HP_SCALE_PER_ROUND * float(maxi(r - 1, 0))
+
+
+static func spawn_rate_mult(r: int) -> float:
+	return 1.0 + SPAWN_SCALE_PER_ROUND * float(maxi(r - 1, 0))
+
+
+static func boulder_chance(r: int) -> float:
+	return minf(BOULDER_CHANCE + BOULDER_CHANCE_PER_ROUND * float(maxi(r - 1, 0)), BOULDER_CHANCE_MAX)
+
+
+static func enemy_damage_mult(r: int) -> float:
+	return 1.0 + DAMAGE_SCALE_PER_ROUND * float(maxi(r - 1, 0))
+
+
+## Full hp of an enemy of `kind` spawned in round `r` (snapshots encode hp relative to this).
+static func enemy_max_hp(kind: int, r: int) -> float:
+	return ENEMY_HP[kind] * enemy_hp_mult(r)
+
+
+func combat_duration(r: int) -> int:
+	if fast_rounds:
+		return FAST_COMBAT_TICKS
+	return COMBAT_TICKS_EARLY if r <= EARLY_ROUNDS else COMBAT_TICKS
+
+
+func workshop_duration() -> int:
+	return FAST_WORKSHOP_TICKS if fast_rounds else WORKSHOP_TICKS
 
 
 ## Adds an enemy and returns its stable id (or -1 if the cap is reached).
@@ -121,12 +253,12 @@ func spawn_enemy(kind: int, pos: Vector2) -> int:
 	enemy_kind.append(kind)
 	enemy_pos.append(pos)
 	enemy_vel.append(Vector2.ZERO)
-	enemy_hp.append(ENEMY_HP[kind])
+	enemy_hp.append(enemy_max_hp(kind, round))
 	enemy_count += 1
 	return id
 
 
-func spawn_projectile(pos: Vector2, vel: Vector2, ttl: float, damage: float, owner: int) -> void:
+func spawn_projectile(pos: Vector2, vel: Vector2, ttl: float, damage: float, owner: int, pierce: int = 0, splash: float = 0.0) -> void:
 	if proj_count >= MAX_PROJECTILES:
 		return
 	proj_pos.append(pos)
@@ -134,6 +266,9 @@ func spawn_projectile(pos: Vector2, vel: Vector2, ttl: float, damage: float, own
 	proj_ttl.append(ttl)
 	proj_damage.append(damage)
 	proj_owner.append(owner)
+	proj_pierce.append(clampi(pierce, 0, 255))
+	proj_splash.append(splash)
+	proj_last.append(-1)
 	proj_count += 1
 
 
@@ -145,19 +280,49 @@ func query_enemies(center: Vector2, radius: float, out: PackedInt32Array) -> int
 
 func step() -> void:
 	events.clear()
+	match phase:
+		PHASE_COMBAT:
+			_step_combat()
+		PHASE_WORKSHOP:
+			_step_workshop()
+	tick += 1
+
+
+func _step_combat() -> void:
+	_update_respawns()
 	_update_enemies()
 	_update_vehicles()
 	_update_projectiles()
 	_compact_enemies()
 	_spawn_tick()
 	_hash.rebuild(enemy_pos, enemy_count)
-	tick += 1
+	if _check_game_over():
+		return
+	phase_ticks_left -= 1
+	if phase_ticks_left <= 0:
+		_begin_workshop()
+
+
+func _step_workshop() -> void:
+	if _check_game_over():
+		return
+	phase_ticks_left -= 1
+	var need: int = 0
+	var ready_n: int = 0
+	for v in vehicles:
+		if v.eliminated:
+			continue
+		need += 1
+		if v.ready:
+			ready_n += 1
+	if phase_ticks_left <= 0 or (need > 0 and ready_n == need):
+		_begin_combat()
 
 
 func checksum() -> int:
 	var ctx := HashingContext.new()
 	ctx.start(HashingContext.HASH_SHA256)
-	var head := PackedInt64Array([tick, enemy_count, proj_count, vehicles.size()])
+	var head := PackedInt64Array([tick, enemy_count, proj_count, vehicles.size(), phase, round, phase_ticks_left, winner_peer, next_enemy_id])
 	ctx.update(head.to_byte_array())
 	var vf := PackedFloat64Array()
 	for v in vehicles:
@@ -175,11 +340,45 @@ func checksum() -> int:
 		vf.append(float(v.kills))
 		vf.append(float(str(v.doctrine.get("drive", "")).hash()))
 		vf.append(float(str(v.doctrine.get("target", "")).hash()))
+		vf.append(float(v.fuel))
+		vf.append(float(v.respawn_ticks))
+		vf.append(1.0 if v.eliminated else 0.0)
+		vf.append(1.0 if v.ready else 0.0)
+		vf.append(1.0 if v.picked else 0.0)
+		vf.append(float(v.reroll_cost))
+		vf.append(v.scrap_frac)
+		vf.append(v.armor)
+		vf.append(v.speed)
+		vf.append(v.turn_rate)
+		vf.append(v.scrap_mult)
+		vf.append(v.regen)
+		vf.append(v.contact_damage)
+		vf.append(v.ram_mult)
+		vf.append(v.vulture)
+		vf.append(float(v.weapon_slots))
+		vf.append(float(v.interest_cap))
+		vf.append(float(v.offers.size()))
+		for oid in v.offers:
+			vf.append(float(Cards.index_of(oid)))
+		vf.append(float(v.cards.size()))
+		for cid: String in v.cards:
+			vf.append(float(Cards.index_of(cid)))
+			vf.append(float(v.cards[cid]))
+		vf.append(float(v.tech.size()))
+		for tid in v.tech:
+			vf.append(float(Tech.index_of(tid)))
 		for wp in v.weapons:
+			vf.append(float(str(wp["kind"]).hash()))
 			vf.append(float(wp["damage"]))
 			vf.append(float(wp["range"]))
 			vf.append(float(wp["cooldown"]))
+			vf.append(float(wp["cooldown_ticks"]))
 			vf.append(float(wp["aim"]))
+			vf.append(float(wp.get("pellets", 1)))
+			vf.append(float(wp.get("spread", 0.0)))
+			vf.append(float(wp.get("pierce", 0)))
+			vf.append(float(wp.get("splash", 0.0)))
+			vf.append(float(wp.get("speed", 0.0)))
 	for part: PackedByteArray in [
 		vf.to_byte_array(),
 		enemy_id.to_byte_array(),
@@ -192,6 +391,9 @@ func checksum() -> int:
 		proj_ttl.to_byte_array(),
 		proj_damage.to_byte_array(),
 		proj_owner.to_byte_array(),
+		proj_pierce,
+		proj_splash.to_byte_array(),
+		proj_last.to_byte_array(),
 	]:
 		if part.size() > 0:  # HashingContext rejects empty updates
 			ctx.update(part)
@@ -203,6 +405,15 @@ func checksum() -> int:
 func rebuild_derived() -> void:
 	enemy_count = enemy_id.size()
 	proj_count = proj_pos.size()
+	if proj_pierce.size() != proj_count:
+		proj_pierce.resize(proj_count)
+	if proj_splash.size() != proj_count:
+		proj_splash.resize(proj_count)
+	if proj_last.size() != proj_count:
+		var old: int = proj_last.size()
+		proj_last.resize(proj_count)
+		for i in range(old, proj_count):
+			proj_last[i] = -1
 	_hash.rebuild(enemy_pos, enemy_count)
 
 
@@ -212,6 +423,140 @@ func _emit(type: String, pos: Vector2, owner: int, kind: int) -> void:
 	if events.size() >= MAX_EVENTS:
 		return
 	events.append({"type": type, "pos": pos, "owner": owner, "kind": kind})
+
+
+# ---------------------------------------------------------------- round loop
+
+## Counts down respawn timers of destroyed (not eliminated) vehicles.
+func _update_respawns() -> void:
+	for v in vehicles:
+		if v.alive or v.eliminated:
+			continue
+		if v.respawn_ticks > 0:
+			v.respawn_ticks -= 1
+		if v.respawn_ticks <= 0:
+			_respawn(v)
+
+
+func _respawn(v: SimVehicle) -> void:
+	v.pos = _find_spawn_spot(v)
+	v.vel = Vector2.ZERO
+	v.hp = v.max_hp
+	v.alive = true
+	v.respawn_ticks = 0
+	v.target_kind = 0
+	v.heading = (ARENA.get_center() - v.pos).angle()
+	_emit("respawn", v.pos, v.id, -1)
+
+
+## First of the 8 ellipse slots (starting at the vehicle's own) that is clear of vehicles and
+## enemies; if none is, the slot farthest from the other vehicles. No rng, fully deterministic.
+func _find_spawn_spot(v: SimVehicle) -> Vector2:
+	var c: Vector2 = ARENA.get_center()
+	var best: Vector2 = c
+	var best_d: float = -1.0
+	for k in 8:
+		var a: float = float((v.id + k) % 8) * TAU / 8.0
+		var p: Vector2 = c + Vector2(cos(a) * 480.0, sin(a) * 240.0)
+		var nearest: float = INF
+		for o in vehicles:
+			if o != v and o.alive:
+				nearest = minf(nearest, o.pos.distance_to(p))
+		var clear: bool = nearest >= SPAWN_SPOT_CLEARANCE
+		if clear and enemy_count > 0:
+			clear = query_enemies(p, SPAWN_SPOT_ENEMY_CLEARANCE, ai_buf) == 0
+		if clear:
+			return p
+		if nearest > best_d:
+			best_d = nearest
+			best = p
+	return best
+
+
+## Combat -> workshop: aliens retreat (one "retreat" event per enemy, thinned to at most
+## RETREAT_EVENT_CAP, with the enemy's kind), projectiles vanish, vehicles stop, interest is paid
+## and every player gets fresh card offers. Destroyed vehicles respawn at once.
+func _begin_workshop() -> void:
+	_compact_enemies()
+	var stride: int = maxi(1, ceili(float(enemy_count) / float(RETREAT_EVENT_CAP)))
+	for i in range(0, enemy_count, stride):
+		_emit("retreat", enemy_pos[i], -1, enemy_kind[i])
+	_clear_field()
+	phase = PHASE_WORKSHOP
+	phase_ticks_left = workshop_duration()
+	for v in vehicles:
+		v.vel = Vector2.ZERO
+		v.target_kind = 0
+		v.ram_damage = 0.0
+		v.ready = false
+		v.picked = false
+		v.reroll_cost = REROLL_COST_START
+		v.offers = []
+		if v.eliminated:
+			continue
+		if not v.alive:
+			_respawn(v)
+		v.scrap += mini(v.scrap / INTEREST_PER, v.interest_cap)
+		v.offers = Cards.roll_offers(rng, v)
+
+
+## Workshop -> combat: the next round starts, vehicles are repaired, unused offers are dropped.
+func _begin_combat() -> void:
+	round += 1
+	phase = PHASE_COMBAT
+	phase_ticks_left = combat_duration(round)
+	_spawn_accum = 0.0
+	for v in vehicles:
+		v.offers = []
+		v.ready = false
+		v.picked = false
+		if v.alive and not v.eliminated:
+			v.hp = v.max_hp
+		for w in v.weapons:
+			w["cooldown"] = 0
+
+
+## Ends the game when at most one player is left in a multiplayer game (winner = the survivor),
+## or when the only player is eliminated in solo. Returns true if the game is over.
+func _check_game_over() -> bool:
+	var total: int = vehicles.size()
+	if total == 0:
+		return false
+	var remaining: int = 0
+	var last: SimVehicle = null
+	for v in vehicles:
+		if not v.eliminated:
+			remaining += 1
+			last = v
+	var over: bool = (total >= 2 and remaining <= 1) or (total == 1 and remaining == 0)
+	if not over:
+		return false
+	phase = PHASE_GAME_OVER
+	phase_ticks_left = 0
+	winner_peer = last.peer_id if (total >= 2 and remaining == 1) else -1
+	for v in vehicles:
+		v.vel = Vector2.ZERO
+		v.offers = []
+	return true
+
+
+func _clear_field() -> void:
+	enemy_id.resize(0)
+	enemy_kind.resize(0)
+	enemy_pos.resize(0)
+	enemy_vel.resize(0)
+	enemy_hp.resize(0)
+	enemy_count = 0
+	proj_pos.resize(0)
+	proj_vel.resize(0)
+	proj_ttl.resize(0)
+	proj_damage.resize(0)
+	proj_owner.resize(0)
+	proj_pierce.resize(0)
+	proj_splash.resize(0)
+	proj_last.resize(0)
+	proj_count = 0
+	_hash.rebuild(enemy_pos, 0)
 
 
 # ---------------------------------------------------------------- enemies
@@ -311,7 +656,7 @@ func _update_enemies() -> void:
 				np = vp + dv2 * (rr2 / dl3)
 				vel = Vector2.ZERO
 				var vidx: int = _av_idx[k]
-				_contact[vidx] += ENEMY_CONTACT_DAMAGE[kind]
+				_contact[vidx] += _contact_hit(kind, vehicles[vidx].armor)
 				var ram: float = vehicles[vidx].ram_damage
 				if ram > 0.0 and not killed:
 					_hit_enemy(i, ram, vidx)
@@ -324,7 +669,13 @@ func _update_enemies() -> void:
 
 	for vidx in vehicles.size():
 		if _contact[vidx] > 0.0:
-			_damage_vehicle(vehicles[vidx], _contact[vidx], -1)
+			_damage_vehicle(vehicles[vidx], _contact[vidx], -1, false)
+
+
+## Contact damage per tick of one touching enemy after the vehicle's armour.
+func _contact_hit(kind: int, armor: float) -> float:
+	var d: float = ENEMY_CONTACT_DAMAGE[kind] * enemy_damage_mult(round)
+	return maxf(d - armor * CONTACT_ARMOR_FACTOR, d * ARMOR_MIN_FRACTION)
 
 
 ## Applies damage to an enemy; credits the kill (event, scrap, kills) on death.
@@ -339,7 +690,10 @@ func _hit_enemy(j: int, dmg: float, killer: int) -> void:
 	_emit("kill", enemy_pos[j], killer, kind)
 	if killer >= 0 and killer < vehicles.size():
 		var kv: SimVehicle = vehicles[killer]
-		kv.scrap += ENEMY_SCRAP[kind]
+		kv.scrap_frac += float(ENEMY_SCRAP[kind]) * kv.scrap_mult
+		var whole: int = int(kv.scrap_frac)
+		kv.scrap += whole
+		kv.scrap_frac -= float(whole)
 		kv.kills += 1
 
 
@@ -368,8 +722,8 @@ func _compact_enemies() -> void:
 func _spawn_tick() -> void:
 	if not spawning_enabled:
 		return
-	var secs: float = float(tick) * DT
-	var rate: float = SPAWN_RATE_START + SPAWN_RATE_RAMP * floorf(secs / SPAWN_RAMP_INTERVAL)
+	var secs: float = float(combat_duration(round) - phase_ticks_left) * DT  # seconds into this round
+	var rate: float = (SPAWN_RATE_START + SPAWN_RATE_RAMP * floorf(secs / SPAWN_RAMP_INTERVAL)) * spawn_rate_mult(round)
 	_spawn_accum += rate * DT
 	while _spawn_accum >= 1.0:
 		_spawn_accum -= 1.0
@@ -385,7 +739,7 @@ func _spawn_tick() -> void:
 				pos = Vector2(ARENA.position.x + SPAWN_INSET, ARENA.position.y + t * ARENA.size.y)
 			_:
 				pos = Vector2(ARENA.end.x - SPAWN_INSET, ARENA.position.y + t * ARENA.size.y)
-		var kind: int = BOULDER if rng.randf() < BOULDER_CHANCE else MITE
+		var kind: int = BOULDER if rng.randf() < boulder_chance(round) else MITE
 		spawn_enemy(kind, pos)
 
 
@@ -397,6 +751,8 @@ func _update_vehicles() -> void:
 	for v in vehicles:
 		if not v.alive:
 			continue
+		if v.regen > 0.0 and v.hp < v.max_hp:
+			v.hp = minf(v.hp + v.regen * DT, v.max_hp)
 		VehicleAI.update_target(self, v)
 		VehicleAI.steer(self, v)
 		v.pos += v.vel * DT
@@ -436,9 +792,13 @@ func _resolve_vehicle_contacts() -> void:
 				_damage_vehicle(va, vb.ram_damage, vb.id)
 
 
-func _damage_vehicle(v: SimVehicle, dmg: float, attacker: int) -> void:
+## Applies damage to a vehicle (armour first unless `use_armor` is false). On destruction: fuel
+## loss, a respawn timer (or elimination at 0 fuel) and, for a player kill, kill count and bounty.
+func _damage_vehicle(v: SimVehicle, dmg: float, attacker: int, use_armor: bool = true) -> void:
 	if not v.alive:
 		return
+	if use_armor and v.armor > 0.0:
+		dmg = maxf(dmg - v.armor, dmg * ARMOR_MIN_FRACTION)
 	v.hp -= dmg
 	if v.hp > 0.0:
 		return
@@ -446,8 +806,16 @@ func _damage_vehicle(v: SimVehicle, dmg: float, attacker: int) -> void:
 	v.alive = false
 	v.vel = Vector2.ZERO
 	v.target_kind = 0
+	v.ram_damage = 0.0
 	_emit("vehicle_destroyed", v.pos, v.id, -1)
-	if attacker >= 0 and attacker != v.id and attacker < vehicles.size():
+	var by_player: bool = attacker >= 0 and attacker != v.id and attacker < vehicles.size()
+	v.fuel = maxi(v.fuel - (FUEL_LOSS_PVP if by_player else FUEL_LOSS), 0)
+	if v.fuel <= 0:
+		v.eliminated = true
+		v.respawn_ticks = 0
+	else:
+		v.respawn_ticks = RESPAWN_TICKS
+	if by_player:
 		var av: SimVehicle = vehicles[attacker]
 		av.kills += 1
 		av.scrap += PVP_KILL_SCRAP
@@ -455,6 +823,7 @@ func _damage_vehicle(v: SimVehicle, dmg: float, attacker: int) -> void:
 
 func _fire_weapons(v: SimVehicle) -> void:
 	var has_target: bool = v.target_kind != 0
+	var weak: bool = has_target and v.vulture > 0.0 and _target_is_weak(v)
 	for w in v.weapons:
 		var cd: int = w["cooldown"]
 		if cd > 0:
@@ -462,20 +831,41 @@ func _fire_weapons(v: SimVehicle) -> void:
 			w["cooldown"] = cd
 		if not has_target:
 			continue
+		var speed: float = float(w.get("speed", PROJECTILE_SPEED))
 		var dist: float = v.pos.distance_to(v.target_pos)
-		var lead: Vector2 = v.target_pos + v.target_vel * (dist / PROJECTILE_SPEED)
+		var lead: Vector2 = v.target_pos + v.target_vel * (dist / speed)
 		var to: Vector2 = lead - v.pos
 		var ang: float = to.angle()
 		w["aim"] = ang
 		if cd > 0 or dist > float(w["range"]) or proj_count >= MAX_PROJECTILES:
 			continue
-		var fire_ang: float = ang + rng.randf_range(-SPREAD, SPREAD)
-		var dir: Vector2 = Vector2.from_angle(fire_ang)
-		var muzzle: Vector2 = v.pos + dir * MUZZLE_OFFSET
-		var ttl: float = float(w["range"]) / PROJECTILE_SPEED + 0.05
-		spawn_projectile(muzzle, dir * PROJECTILE_SPEED, ttl, float(w["damage"]), v.id)
+		var spread: float = float(w.get("spread", SPREAD))
+		var pellets: int = int(w.get("pellets", 1))
+		var pierce: int = int(w.get("pierce", 0))
+		var splash: float = float(w.get("splash", 0.0))
+		var dmg: float = float(w["damage"])
+		if weak:
+			dmg *= 1.0 + v.vulture
+		var ttl: float = float(w["range"]) / speed + 0.05
+		var muzzle: Vector2 = v.pos + Vector2.from_angle(ang) * MUZZLE_OFFSET
+		for p in pellets:
+			var dir: Vector2 = Vector2.from_angle(ang + rng.randf_range(-spread, spread))
+			spawn_projectile(muzzle, dir * speed, ttl, dmg, v.id, pierce, splash)
 		w["cooldown"] = int(w["cooldown_ticks"])
-		_emit("fire", muzzle, v.id, 0)
+		_emit("fire", muzzle, v.id, Cards.weapon_kind_index(str(w["kind"])))
+
+
+## Vulture: is the current target under 30% hp?
+func _target_is_weak(v: SimVehicle) -> bool:
+	if v.target_kind == 1:
+		var i: int = v.target_index
+		if i < 0 or i >= enemy_count:
+			return false
+		return enemy_hp[i] < Cards.VULTURE_HP_FRACTION * enemy_max_hp(enemy_kind[i], round)
+	if v.target_kind == 2 and v.target_id >= 0 and v.target_id < vehicles.size():
+		var t: SimVehicle = vehicles[v.target_id]
+		return t.alive and t.hp < Cards.VULTURE_HP_FRACTION * t.max_hp
+	return false
 
 
 # ---------------------------------------------------------------- projectiles
@@ -515,13 +905,14 @@ func _update_projectiles() -> void:
 		var best_t: float = 2.0
 		var hit_enemy: int = -1
 		var hit_vehicle: int = -1
+		var last_id: int = proj_last[i]
 
 		if owner >= 0:
 			var reach: float = step_v.length() * 0.5 + MAX_ENEMY_RADIUS + PROJECTILE_RADIUS
 			var cnt: int = _hash.query_circle(p0 + step_v * 0.5, reach, enemy_pos, _query_buf, STALE_MARGIN)
 			for q in cnt:
 				var j: int = _query_buf[q]
-				if enemy_hp[j] <= 0.0:
+				if enemy_hp[j] <= 0.0 or enemy_id[j] == last_id:
 					continue
 				var t: float = _segment_circle_t(p0, step_v, enemy_pos[j], ENEMY_RADIUS[enemy_kind[j]] + PROJECTILE_RADIUS)
 				if t >= 0.0 and t < best_t:
@@ -544,9 +935,16 @@ func _update_projectiles() -> void:
 			_damage_vehicle(hv, dmg, owner)
 			remove = true
 		elif hit_enemy >= 0:
-			_emit("hit", p0 + step_v * best_t, owner, enemy_kind[hit_enemy])
+			var hit_pos: Vector2 = p0 + step_v * best_t
+			_emit("hit", hit_pos, owner, enemy_kind[hit_enemy])
 			_hit_enemy(hit_enemy, dmg, owner)
-			remove = true
+			if proj_splash[i] > 0.0:
+				_splash_damage(hit_pos, proj_splash[i], dmg * SPLASH_FRACTION, owner, hit_enemy)
+			if proj_pierce[i] > 0:
+				proj_pierce[i] -= 1
+				proj_last[i] = enemy_id[hit_enemy]
+			else:
+				remove = true
 		elif ttl <= 0.0 or p1.x < a_lo.x or p1.y < a_lo.y or p1.x > a_hi.x or p1.y > a_hi.y:
 			remove = true
 
@@ -557,6 +955,9 @@ func _update_projectiles() -> void:
 			proj_ttl[i] = proj_ttl[n]
 			proj_damage[i] = proj_damage[n]
 			proj_owner[i] = proj_owner[n]
+			proj_pierce[i] = proj_pierce[n]
+			proj_splash[i] = proj_splash[n]
+			proj_last[i] = proj_last[n]
 		else:
 			proj_pos[i] = p1
 			proj_ttl[i] = ttl
@@ -567,4 +968,16 @@ func _update_projectiles() -> void:
 		proj_ttl.resize(n)
 		proj_damage.resize(n)
 		proj_owner.resize(n)
+		proj_pierce.resize(n)
+		proj_splash.resize(n)
+		proj_last.resize(n)
 		proj_count = n
+
+
+## Damages every living enemy within `radius` of `center` except index `skip`.
+func _splash_damage(center: Vector2, radius: float, dmg: float, owner: int, skip: int) -> void:
+	var cnt: int = _hash.query_circle(center, radius, enemy_pos, _splash_buf, STALE_MARGIN)
+	for q in cnt:
+		var j: int = _splash_buf[q]
+		if j != skip:
+			_hit_enemy(j, dmg, owner)
