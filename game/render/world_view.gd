@@ -10,7 +10,8 @@ const SNAP_DIST := 48.0  ## px, farther jumps (respawn, snapshot correction) sna
 const MAX_LEAD := 0.1  ## s, never extrapolate further than this past the last tick
 const TRAIL_STEP := 3.0  ## px of travel between tyre-track stamps
 const SHOT_EFFECT_TICKS := 10  ## screenshot mode: transient effects from the last N ticks
-const WORKSHOP_CAM_LIFT := 92.0  ## px: in the workshop the camera shows the camped rig near the top
+const WORKSHOP_CAM_LIFT := 56.0  ## px: in the workshop the camped rig sits between the recap and the cards
+const SPECTATE_CAM_LIFT := 46.0  ## the same for the watched rig in the spectator workshop
 const CAM_EASE := 4.0  ## 1/s, easing of that lift
 
 var world: SimWorld = null
@@ -51,6 +52,22 @@ var _ring: Node2D
 ## world.tick at which PvP last switched on (-1 = not seen): the HUD's "PVP ON" banner.
 var pvp_on_tick: int = -1
 var _pvp_prev: bool = false
+## Match log for the information UI (kill feed, workshop recap), filled from world events once per
+## sim tick (and by prime() in screenshot mode), so it works the same on host and clients:
+## kill_log: player kills {tick, round, killer, victim, weapon}; wreck_log: rigs destroyed
+## {tick, round, id, cause, killer}; drain_log: fuel drained at a workshop {tick, round, id, amount}.
+var kill_log: Array[Dictionary] = []
+var wreck_log: Array[Dictionary] = []
+var drain_log: Array[Dictionary] = []
+const LOG_CAP := 96
+## Spectator mode (local rig eliminated): vehicle id picked with Tab / arrows (-1 = auto: the
+## nearest fight, else the leader). The auto choice is re-evaluated every SPECTATE_RECHECK ticks.
+var spectate_id: int = -1
+const SPECTATE_RECHECK := 90
+const ELIM_HOLD_TICKS := 90  ## after the local rig is eliminated: 3 s on the wreck before spectating
+const FIGHT_DIST := 300.0
+var _auto_id: int = -1
+var _auto_tick: int = -100000
 
 var _vehicle_nodes: Dictionary = {}  # vehicle id -> RigView
 var _veh_disp: Dictionary = {}  # vehicle id -> Vector3(x, y, heading)
@@ -158,6 +175,12 @@ func set_world(w: SimWorld, peer: int) -> void:
 	_effects.clear()
 	_shake = 0.0
 	pvp_on_tick = -1
+	kill_log.clear()
+	wreck_log.clear()
+	drain_log.clear()
+	spectate_id = -1
+	_auto_id = -1
+	_auto_tick = -100000
 	_pvp_prev = w != null and w.pvp_enabled()
 	_hud.world = w
 	_hud.local_peer = peer
@@ -172,7 +195,7 @@ static func record_tick(w: SimWorld) -> Dictionary:
 	var veh: Array = []
 	for v in w.vehicles:
 		veh.append([v.id, v.pos, v.heading, v.alive])
-	return {"tick": w.tick, "events": w.events.duplicate(), "vehicles": veh, "pvp": w.pvp_enabled()}
+	return {"tick": w.tick, "round": w.round, "events": w.events.duplicate(), "vehicles": veh, "pvp": w.pvp_enabled()}
 
 
 ## Screenshot mode: replays recorded ticks so the frame shows the match's history (persistent goo,
@@ -191,7 +214,7 @@ func prime(history: Array) -> void:
 		for vd: Array in h["vehicles"]:
 			if vd[3]:
 				_trail(vd[0], vd[1], vd[2], age if age < EffectsLayer.LIFE[EffectsLayer.Kind.DUST] else -1.0)
-		_consume_events(h["events"], age, last_tick - int(h["tick"]) < SHOT_EFFECT_TICKS)
+		_consume_events(h["events"], age, last_tick - int(h["tick"]) < SHOT_EFFECT_TICKS, int(h["tick"]), int(h.get("round", world.round)))
 	_last_tick = world.tick
 	_veh_trail.clear()
 
@@ -200,7 +223,7 @@ func _process(delta: float) -> void:
 	if world == null:
 		return
 	if world.tick != _last_tick:
-		_consume_events(world.events, 0.0, true)
+		_consume_events(world.events, 0.0, true, world.tick, world.round)
 		_last_tick = world.tick
 		_tick_age = 0.0
 		var pvp: bool = world.pvp_enabled()
@@ -361,8 +384,9 @@ func _draw_halos() -> void:
 
 # ---------------------------------------------------------------- events
 
-func _consume_events(events: Array, age: float, transient: bool) -> void:
+func _consume_events(events: Array, age: float, transient: bool, tick: int = -1, rnd: int = 0) -> void:
 	for e: Dictionary in events:
+		_log_event(e, tick, rnd)
 		var pos: Vector2 = e.get("pos", Vector2.ZERO)
 		var owner: int = int(e.get("owner", -1))
 		var kind: int = int(e.get("kind", -1))
@@ -397,6 +421,30 @@ func _consume_events(events: Array, age: float, transient: bool) -> void:
 					_effects.spawn(EffectsLayer.Kind.EXPLOSION, pos + Vector2(9, -6), 0.0, age + 0.12, h + 9)
 					if age < 0.05 and not frozen and _on_screen(pos):
 						_shake = 1.0
+
+
+## Books kills, wrecks and fuel drains for the UI (feed, recap). `tick` / `rnd`: when it happened.
+func _log_event(e: Dictionary, tick: int, rnd: int) -> void:
+	var type: String = str(e.get("type", ""))
+	var log: Array[Dictionary]
+	var entry: Dictionary = {"tick": tick, "round": rnd}
+	match type:
+		"kill":
+			if int(e.get("kind", 0)) >= 0 or not e.has("victim"):
+				return
+			entry.merge({"killer": int(e.get("owner", -1)), "victim": int(e["victim"]), "weapon": int(e.get("weapon", -1))})
+			log = kill_log
+		"vehicle_destroyed":
+			entry.merge({"id": int(e.get("owner", -1)), "cause": int(e.get("cause", -1)), "killer": int(e.get("killer", -1))})
+			log = wreck_log
+		"drain":
+			entry.merge({"id": int(e.get("owner", -1)), "amount": int(e.get("kind", 0))})
+			log = drain_log
+		_:
+			return
+	log.append(entry)
+	if log.size() > LOG_CAP:
+		log.remove_at(0)
 
 
 func _muzzle_flash(vehicle_id: int, muzzle: Vector2, kind: int, age: float) -> void:
@@ -439,20 +487,132 @@ func _on_screen(p: Vector2) -> bool:
 	return Rect2(_camera.position - half, half * 2.0).grow(24.0).has_point(p)
 
 
-## Where the local rig is drawn, in viewport pixels (UI vignettes centre on it).
+## Where the local rig (or the spectated one) is drawn, in viewport pixels (UI vignettes centre on it).
 func local_screen_pos() -> Vector2:
 	var vs: Vector2 = get_viewport_rect().size
 	if world == null:
 		return vs / 2.0
-	var v: SimVehicle = world.get_vehicle_for_peer(local_peer)
+	var v: SimVehicle = focus_vehicle()
 	if v == null:
 		return vs / 2.0
+	return screen_pos(v)
+
+
+## Where vehicle `v` is drawn, in viewport pixels (may be off-screen).
+func screen_pos(v: SimVehicle) -> Vector2:
 	var d: Vector3 = _vehicle_display(v)
 	return (get_viewport().get_canvas_transform() * Gfx.snap(Vector2(d.x, d.y))).floor()
 
 
+# ---------------------------------------------------------------- spectator
+
+## True while the local rig is eliminated and the match goes on with others (spectator mode). The
+## camera stays on the wreck for ELIM_HOLD_TICKS first (the HUD shows ELIMINATED meanwhile).
+func spectating() -> bool:
+	if world == null or attract or world.phase == SimWorld.PHASE_GAME_OVER:
+		return false
+	var me: SimVehicle = world.get_vehicle_for_peer(local_peer)
+	if me == null or not me.eliminated or spectate_candidates().is_empty():
+		return false
+	return world.tick - last_wreck_tick(me.id) >= ELIM_HOLD_TICKS
+
+
+## Tick of the latest "vehicle_destroyed" of vehicle `id` seen (very old if none).
+func last_wreck_tick(id: int) -> int:
+	for i in range(wreck_log.size() - 1, -1, -1):
+		if int(wreck_log[i]["id"]) == id:
+			return int(wreck_log[i]["tick"])
+	return -(1 << 30)
+
+
+## Rigs still in the game, other than the local one (in vehicle order).
+func spectate_candidates() -> Array[SimVehicle]:
+	var out: Array[SimVehicle] = []
+	if world == null:
+		return out
+	for v in world.vehicles:
+		if not v.eliminated and v.peer_id != local_peer:
+			out.append(v)
+	return out
+
+
+## The rig the camera follows: the local one, or the spectated one when eliminated.
+func focus_vehicle() -> SimVehicle:
+	if world == null:
+		return null
+	if spectating():
+		return spectated()
+	return world.get_vehicle_for_peer(local_peer)
+
+
+## The rig being watched in spectator mode (manual pick, else the auto choice).
+func spectated() -> SimVehicle:
+	var cands: Array[SimVehicle] = spectate_candidates()
+	if cands.is_empty():
+		return null
+	for v in cands:
+		if v.id == spectate_id:
+			return v
+	spectate_id = -1
+	var cur: SimVehicle = null
+	for v in cands:
+		if v.id == _auto_id:
+			cur = v
+	if cur == null or absi(world.tick - _auto_tick) >= SPECTATE_RECHECK:
+		cur = _auto_pick(cands)
+		_auto_id = cur.id
+		_auto_tick = world.tick
+	return cur
+
+
+## Auto camera: one side of the closest rival pair within FIGHT_DIST (the leader, else the higher
+## score), else the bounty leader, else the best score.
+func _auto_pick(cands: Array[SimVehicle]) -> SimVehicle:
+	var best_d: float = FIGHT_DIST
+	var pair: Array[SimVehicle] = []
+	for i in cands.size():
+		for j in range(i + 1, cands.size()):
+			var a: SimVehicle = cands[i]
+			var b: SimVehicle = cands[j]
+			if not a.alive or not b.alive:
+				continue
+			var d: float = a.pos.distance_to(b.pos)
+			if d < best_d:
+				best_d = d
+				pair = [a, b]
+	var pool: Array[SimVehicle] = pair if not pair.is_empty() else cands
+	var top: SimVehicle = pool[0]
+	for v in pool:
+		if v.peer_id == world.leader_peer:
+			return v
+		if world.leader_score(v) > world.leader_score(top):
+			top = v
+	return top
+
+
+## Tab / arrows: step through the remaining rigs (dir +1 / -1); leaves auto mode.
+func cycle_spectate(dir: int) -> void:
+	var cands: Array[SimVehicle] = spectate_candidates()
+	if cands.is_empty():
+		return
+	var cur: SimVehicle = spectated()
+	var i: int = cands.find(cur)
+	spectate_id = cands[posmod(i + dir, cands.size())].id
+
+
+## Back to the automatic camera.
+func spectate_auto() -> void:
+	spectate_id = -1
+	_auto_tick = -100000
+
+
+## Selects a rig to watch by vehicle id (spectator panel clicks).
+func spectate_vehicle(id: int) -> void:
+	spectate_id = id
+
+
 func _update_camera(k: float) -> void:
-	var v: SimVehicle = world.get_vehicle_for_peer(local_peer)
+	var v: SimVehicle = focus_vehicle()
 	if v == null:
 		if attract:
 			var t: float = float(world.tick) / float(SimWorld.TICK_RATE)
@@ -465,7 +625,7 @@ func _update_camera(k: float) -> void:
 		return
 	var d: Vector3 = _vehicle_display(v)
 	var half := get_viewport_rect().size / 2.0
-	var lift: float = WORKSHOP_CAM_LIFT if world.phase == SimWorld.PHASE_WORKSHOP else 0.0
+	var lift: float = (SPECTATE_CAM_LIFT if spectating() else WORKSHOP_CAM_LIFT) if world.phase == SimWorld.PHASE_WORKSHOP else 0.0
 	_cam_lift = lerpf(_cam_lift, lift, k)
 	var c := Vector2(d.x, d.y + _cam_lift)
 	c.x = clampf(c.x, SimWorld.ARENA.position.x + half.x, SimWorld.ARENA.end.x - half.x)
@@ -480,7 +640,7 @@ func _update_camera(k: float) -> void:
 func _draw_ring() -> void:
 	if world == null or attract:
 		return
-	var v: SimVehicle = world.get_vehicle_for_peer(local_peer)
+	var v: SimVehicle = focus_vehicle()
 	if v == null or not v.alive:
 		return
 	var rv: RigView = _vehicle_nodes.get(v.id)
@@ -500,7 +660,7 @@ func _draw_ring() -> void:
 		_ring.draw_rect(Rect2(p + Vector2(0, 1), Vector2.ONE), Color(Gfx.OUTLINE, 0.25))
 
 
-## Driver names in paint colour## Driver names in paint colour and hp ticks over rival rigs (readability, design doc section 11c).
+## Driver names in paint colour and hp ticks over rival rigs (readability, design doc section 11c).
 func _draw_labels() -> void:
 	if world == null or attract:
 		return

@@ -4,6 +4,12 @@ extends Control
 ## winner (or "YOUR CONVOY IS LOST" in solo, with the round reached), per-rig standings and the
 ## buttons. Restart and quit are callables set by main.gd: the host (and solo) gets a rematch /
 ## restart (NetSession.rematch()), clients see `waiting_text`; everyone can leave to the menu.
+## Multiplayer: LAN-night awards from `match_stats` as manila tags either side of the standings
+## (playtest round 1 #11).
+
+const AWARD_W := 122.0
+const AWARD_H := 34.0
+const AWARD_TINTS: Array[Color] = [Color("#e8dcc4"), Color("#f0b090"), Color("#d6ad30"), Color("#a3a8b0"), Color("#c9a227"), Color("#d8673e")]
 
 var world: SimWorld = null
 var local_peer: int = 1
@@ -69,6 +75,8 @@ func _draw() -> void:
 	var cx: float = floorf(vs.x / 2.0)
 	var n: int = world.vehicles.size()
 	var r := Rect2(cx - 130, 22, 260, 112 + n * 9)
+	if not solo:
+		_draw_awards(r)
 	UiKit.plate(self, r)
 	UiKit.hazard_band(self, Rect2(r.position.x + 5, r.position.y + 5, r.size.x - 10, 5))
 
@@ -148,3 +156,78 @@ func _draw() -> void:
 		var tr := Rect2(floorf(cx - tw / 2.0), r.end.y + 4, tw, 9)
 		UiKit.tape(self, tr, Color("#e8dcc4"))
 		PixelFont.draw(self, t, Vector2(tr.position.x + 6, tr.position.y + 2), Gfx.INK)
+
+
+# ---------------------------------------------------------------- awards (#11)
+
+## Award list from match_stats: [{title, id (vehicle), big (stencil line), small, paint}] (only
+## awards someone actually earned; ties go to the higher standing).
+func awards() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	var order: Array[SimVehicle] = UiKit.standings(world)
+	var specs: Array = [  # [title, stat key, text format]
+		["TOP HIVE KILLER", "kills", "%d ALIENS SQUASHED"],
+		["MOST PLAYER KILLS", "player_kills", "%d RIGS WRECKED"],
+		["RAM KING", "ram_kills", "%d KILLS BY RAMMING"],
+		["SCRAP BARON", "scrap_earned", "%d SCRAP HAULED"],
+		["MOST DEATHS", "deaths", "WRECKED %d TIMES"],
+	]
+	for sp: Array in specs:
+		var best: SimVehicle = null
+		var best_n: float = 0.0
+		for v in order:
+			var x: float = float(v.match_stats.get(sp[1], 0))
+			if x > best_n:
+				best_n = x
+				best = v
+		if best != null:
+			out.append({"title": sp[0], "id": best.id, "small": sp[2] % roundi(best_n)})
+	# nemesis: the most lopsided grudge (same killer, same victim)
+	var nem_v: SimVehicle = null
+	var nem_n: int = 1
+	for v in order:
+		var k: int = int(v.match_stats.get("nemesis_n", 0))
+		if k > nem_n and UiKit.vehicle_by_id(world, int(v.match_stats.get("nemesis", -1))) != null:
+			nem_n = k
+			nem_v = v
+	if nem_v != null:
+		out.append({"title": "NEMESIS", "id": int(nem_v.match_stats["nemesis"]), "victim": nem_v.id, "small": "X%d" % nem_n})
+	return out
+
+
+func _draw_awards(panel: Rect2) -> void:
+	var list: Array[Dictionary] = awards()
+	if list.is_empty():
+		return
+	var per_side: int = ceili(float(list.size()) / 2.0)
+	for i in list.size():
+		var left: bool = i < per_side
+		var k: int = i if left else i - per_side
+		var x: float = panel.position.x - AWARD_W - 10.0 if left else panel.end.x + 10.0
+		var y: float = panel.position.y + 4.0 + k * (AWARD_H + 11.0)
+		_award_card(list[i], Rect2(x, y, AWARD_W, AWARD_H), AWARD_TINTS[i % AWARD_TINTS.size()], (i % 2) * 2 - 1)
+
+
+## One manila award tag: tape title, a paint stripe, the driver's name stencilled, the stat.
+func _award_card(a: Dictionary, r: Rect2, tint: Color, tilt: int) -> void:
+	var v: SimVehicle = UiKit.vehicle_by_id(world, int(a["id"]))
+	if v == null:
+		return
+	UiKit.paper(self, r)
+	draw_rect(Rect2(r.position.x + 1, r.position.y + 1, 4, r.size.y - 2), UiKit.bar_color(v.color_index))
+	draw_rect(Rect2(r.position.x + 5, r.position.y + 1, 1, r.size.y - 2), Color(Gfx.OUTLINE, 0.5))
+	UiKit.tape_label(self, str(a["title"]), r.get_center().x + float(tilt) * 4.0, r.position.y - 4, tint)
+	var x0: float = r.position.x + 10.0
+	var nm: String = UiKit.player_name(v)
+	if a.has("victim"):  # NEMESIS: killer > victim xN
+		var vv: SimVehicle = UiKit.vehicle_by_id(world, int(a["victim"]))
+		PixelFont.draw_big(self, nm, Vector2(x0, r.position.y + 10), Gfx.INK)
+		var x: float = PixelFont.draw(self, "HAUNTED", Vector2(x0, r.position.y + 22), Gfx.INK_RED)
+		x = UiKit.arrow_glyph(self, Vector2(x + 3, r.position.y + 22), Gfx.INK) + 3.0
+		x = PixelFont.draw(self, UiKit.player_name(vv) if vv else "?", Vector2(x, r.position.y + 22), Gfx.INK)
+		PixelFont.draw(self, " " + str(a["small"]), Vector2(x, r.position.y + 22), Gfx.INK_RED)
+	else:
+		PixelFont.draw_big(self, nm, Vector2(x0, r.position.y + 10), Gfx.INK)
+		PixelFont.draw(self, str(a["small"]), Vector2(x0, r.position.y + 22), Gfx.INK_RED)
+	if v.peer_id == local_peer:
+		PixelFont.draw(self, "YOU", Vector2(r.end.x - 4 - PixelFont.width("YOU"), r.position.y + 11), Gfx.INK_RED)

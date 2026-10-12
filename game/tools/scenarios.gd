@@ -21,6 +21,17 @@ extends RefCounted
 ## - "pvp_on"       (about 380 ticks) fast rounds up to the start of round 4: the PVP ON banner.
 ## - "rig_kill"     (about 60 ticks) a rival rig blowing up next to yours (explosion and debris).
 ##
+## Information UI review scenarios (playtest round 1 #2, #5, #10, #11), five named rigs (LAN_NIGHT):
+## - "recap"        (about 160 ticks) workshop after round 8: wrecked by boulders and acid, KITE hint,
+##                  interest x/cap, UNDERDOG badge, the fuel-drain notice.
+## - "recap_pvp"    (about 160 ticks) the same, but DUNE RAT hunted you down with its cannon.
+## - "scouting"     = recap; use --hover / --click on a convoy row for the dossier.
+## - "combat_feed"  (about 160 ticks) round 6: kill feed lines and off-screen rival arrows.
+## - "pvp_grace"    (about 90 ticks) start of round 4: the PvP grace countdown.
+## - "spectator"    (about 120 ticks) you are eliminated: the camera follows the nearest fight.
+## - "spectator_ws" (about 160 ticks) the workshop seen by an eliminated player.
+## - "awards"       (about 120 ticks) game over with LAN-night awards.
+##
 ## UI scenarios (main.gd also builds the menu from ui_state()):
 ## - "menu"     the attract battlefield (eight rigs, one per paint) behind the main menu.
 ## - "join"     the join screen with two fake discovered hosts (one in a match).
@@ -30,7 +41,16 @@ extends RefCounted
 ## - "waiting"  gameover_mp seen by the loser (a client): waiting for the host's rematch.
 
 const NAMES: PackedStringArray = ["skirmish", "horde", "workshop", "gameover", "gameover_mp", "eliminated",
-	"menu", "join", "lobby", "pause", "rematch", "waiting", "rig_growth", "late_round", "pvp_on", "rig_kill"]
+	"menu", "join", "lobby", "pause", "rematch", "waiting", "rig_growth", "late_round", "pvp_on", "rig_kill",
+	"recap", "recap_pvp", "scouting", "combat_feed", "pvp_grace", "spectator", "spectator_ws", "awards"]
+## Info-UI line-up: [name, paint, GROWTH_BUILDS index, drive, target, extra tech].
+const LAN_NIGHT: Array = [
+	["MAD MAREK", 0, 6, "circle", "nearest", ["ballistics_1"]],
+	["DUNE RAT", 2, 3, "kite", "players_first", ["ballistics_1", "ballistics_2", "electronics_1", "salvage_1"]],
+	["SANDY", 3, 2, "charge", "nearest", ["propulsion_1"]],
+	["NIGHTCRAWLER", 7, 7, "circle", "strongest", []],
+	["LIMEADE", 6, 1, "kite", "nearest", ["salvage_1"]],
+]
 ## rig_growth line-up: [engineering tier, {card: level}] per paint (weapon cards in mount order).
 const GROWTH_BUILDS: Array = [
 	[0, {}],
@@ -91,6 +111,28 @@ static func build(name: String, p_seed: int) -> SimWorld:
 			return w4
 		"rig_kill":
 			return _rig_kill(p_seed)
+		"recap", "recap_pvp", "scouting":
+			var c: Vector2 = SimWorld.ARENA.get_center()
+			var w5: SimWorld = _lan_night(p_seed, [c, c + Vector2(260, -150), c + Vector2(-300, 160), c + Vector2(330, 200), c + Vector2(-380, -170)])
+			w5.fast_rounds = true
+			w5.round = 8
+			_scatter(w5, 120, 0.12, 0.08, 120.0, 600.0)
+			return w5
+		"combat_feed", "pvp_grace", "spectator", "spectator_ws", "awards":
+			var c2: Vector2 = SimWorld.ARENA.get_center()
+			var spots: Array = [c2, Vector2(140, 110), Vector2(1170, 640), Vector2(1200, 320), c2 + Vector2(120, -80)]
+			if name == "spectator" or name == "spectator_ws":
+				spots = [c2 + Vector2(-380, 150), c2 + Vector2(40, -20), c2 + Vector2(170, 40), Vector2(170, 130), Vector2(1130, 610)]
+			var w6: SimWorld = _lan_night(p_seed, spots)
+			w6.round = 4 if name == "pvp_grace" else (11 if name == "awards" else 6)
+			w6.fast_rounds = name == "spectator_ws"
+			w6.phase_ticks_left = w6.combat_duration(w6.round)
+			if name == "pvp_grace":
+				w6.pvp_grace_ticks = SimWorld.PVP_GRACE_TICKS
+			if name == "spectator" or name == "spectator_ws":
+				_knock_out(w6.vehicles[0])
+			_scatter(w6, 300, 0.12, 0.07, 110.0, 700.0)
+			return w6
 	return null
 
 
@@ -129,7 +171,7 @@ static func ui_state(name: String) -> Dictionary:
 				"info": "HOSTING ON PORT 24680 - FRIENDS FIND YOU UNDER JOIN LAN GAME"}
 		"pause":
 			return {"screen": "pause", "solo": false}
-		"rematch":
+		"rematch", "awards":
 			return {"game_over": "host"}
 		"waiting":
 			return {"game_over": "client", "local_peer": 2}
@@ -139,6 +181,9 @@ static func ui_state(name: String) -> Dictionary:
 static func step(name: String, w: SimWorld) -> void:
 	if name == "rematch" or name == "waiting":
 		name = "gameover_mp"
+	if name in ["recap", "recap_pvp", "scouting", "combat_feed", "pvp_grace", "spectator", "spectator_ws", "awards"]:
+		_step_info(name, w)
+		return
 	if name == "rig_growth":
 		w.tick += 1  # parked: only the clock runs (nitro flicker, ring)
 		return
@@ -476,3 +521,133 @@ static func replay_apply(w: SimWorld, v: SimVehicle, cmd: Dictionary) -> String:
 				return "%s -> ok (unchanged)" % label
 			return "%s -> IGNORED (invalid value)" % label
 	return "%s -> IGNORED (unknown command)" % label
+
+
+# ================================================================ information UI scenarios
+
+## Five named rigs with builds, doctrines, some tech and kills (DUNE RAT leads).
+static func _lan_night(p_seed: int, spots: Array) -> SimWorld:
+	var w := SimWorld.new(p_seed)
+	var kills: PackedInt32Array = [64, 96, 70, 55, 40]
+	for i in LAN_NIGHT.size():
+		var d: Array = LAN_NIGHT[i]
+		var v: SimVehicle = w.add_vehicle(i + 1, spots[i], d[0], d[1])
+		var b: Array = GROWTH_BUILDS[d[2]]
+		for t: String in d[5]:
+			v.tech.append(t)
+		_outfit(v, b[0], b[1])
+		w.apply_command(v.peer_id, {"type": "set_drive", "value": d[3]})
+		w.apply_command(v.peer_id, {"type": "set_target", "value": d[4]})
+		v.kills = kills[i]
+		v.scrap = 40 + 23 * i
+		v.fuel = [62, 78, 55, 47, 70][i]
+	return w
+
+
+static func _knock_out(v: SimVehicle) -> void:
+	v.fuel = 0
+	v.eliminated = true
+	v.alive = false
+	v.hp = 0.0
+	v.respawn_ticks = 0
+
+
+## A player kill line for the feed / recap (events only: the sim state is untouched).
+static func _feed_kill(w: SimWorld, killer: int, victim: int, weapon: int) -> void:
+	w.events.append({"type": "kill", "pos": w.vehicles[victim].pos, "owner": killer, "kind": -1, "victim": victim, "weapon": weapon})
+
+
+static func _step_info(name: String, w: SimWorld) -> void:
+	var was: int = w.phase
+	w.step()
+	match name:
+		"recap", "recap_pvp", "scouting":
+			if w.phase == SimWorld.PHASE_COMBAT and name == "recap_pvp" and w.phase_ticks_left == 60:
+				_feed_kill(w, 1, 0, Cards.weapon_kind_index("cannon"))
+			if w.phase == SimWorld.PHASE_WORKSHOP and was == SimWorld.PHASE_COMBAT:
+				_stage_recap(w, name == "recap_pvp")
+		"combat_feed", "spectator":
+			var at: Dictionary = {30: [1, 2, 2], 80: [0, 4, SimWorld.WEAPON_RAM], 112: [3, 1, 1], 150: [4, 3, 0]}
+			if name == "spectator":
+				at = {40: [1, 0, 2], 95: [2, 4, SimWorld.WEAPON_RAM]}
+			if at.has(w.tick):
+				var k: Array = at[w.tick]
+				_feed_kill(w, k[0], k[1], k[2])
+		"spectator_ws":
+			if w.tick == 60:
+				_feed_kill(w, 1, 0, Cards.weapon_kind_index("cannon"))
+			if w.phase == SimWorld.PHASE_WORKSHOP and was == SimWorld.PHASE_COMBAT:
+				_stage_out(w)
+		"awards":
+			if w.tick == 100:
+				_stage_awards(w)
+
+
+## Workshop after round 8: the local rig was wrecked (boulders and acid, or DUNE RAT's cannon) and has
+## the least fuel; the rivals have shopped and readied.
+static func _stage_recap(w: SimWorld, pvp: bool) -> void:
+	w.phase_ticks_left = 19 * SimWorld.TICK_RATE + 12
+	var me: SimVehicle = w.vehicles[0]
+	var rs: Dictionary = me.round_stats
+	rs["round"] = w.round  # the scenario jumped straight to round 8
+	if pvp:
+		rs["taken"] = {"mite": 28.0, "boulder": 46.0, "spitter": 0.0, "acid": 17.0, "rival": 352.0}
+		rs["taken_players"] = {1: 301.0, 3: 51.0}
+		rs["deaths"] = [{"t": 830, "cause": "player", "src": SimWorld.SRC_PLAYER, "killer": 1, "killer_kind": -1},
+			{"t": 1712, "cause": "player", "src": SimWorld.SRC_PLAYER, "killer": 1, "killer_kind": -1}]
+		rs["kills"] = 38
+		rs["kills_players"] = 1
+		rs["fuel_lost"] = 51
+		rs["fuel_gained"] = 10
+		me.doctrine = {"drive": "circle", "target": "nearest"}
+	else:
+		rs["taken"] = {"mite": 26.0, "boulder": 268.0, "spitter": 0.0, "acid": 126.0, "rival": 0.0}
+		rs["deaths"] = [{"t": 1712, "cause": "boulder", "src": SimWorld.SRC_BOULDER, "killer": -1, "killer_kind": SimWorld.BOULDER}]
+		rs["kills"] = 47
+		rs["fuel_lost"] = 20
+	rs["scrap_earned"] = 61 + int(rs.get("interest", 0))
+	me.fuel = 31
+	for i in range(1, w.vehicles.size()):
+		var o: SimVehicle = w.vehicles[i]
+		if not o.picked and not o.offers.is_empty():
+			w.apply_command(o.peer_id, {"type": "pick_card", "value": 0})
+		if i % 2 == 1:
+			w.apply_command(o.peer_id, {"type": "ready"})
+
+
+## Spectator workshop: the local rig ran dry this round (its recap and match so far).
+static func _stage_out(w: SimWorld) -> void:
+	w.phase_ticks_left = 17 * SimWorld.TICK_RATE + 5
+	var me: SimVehicle = w.vehicles[0]
+	var rs: Dictionary = SimWorld.new_round_stats(w.round)
+	rs["taken"] = {"mite": 61.0, "boulder": 84.0, "spitter": 12.0, "acid": 39.0, "rival": 236.0}
+	rs["taken_players"] = {1: 236.0}
+	rs["deaths"] = [{"t": 1188, "cause": "player", "src": SimWorld.SRC_PLAYER, "killer": 1, "killer_kind": -1}]
+	rs["kills"] = 22
+	rs["fuel_lost"] = 21
+	rs["scrap_earned"] = 34
+	me.round_stats = rs
+	me.match_stats = {"kills": 287, "player_kills": 2, "ram_kills": 0, "deaths": 6, "dmg_dealt": 5400.0,
+		"scrap_earned": 744, "top_victim": 4, "top_victim_n": 1, "nemesis": 1, "nemesis_n": 3}
+	for i in range(1, w.vehicles.size()):
+		var o: SimVehicle = w.vehicles[i]
+		o.match_stats["player_kills"] = [0, 6, 2, 3, 1][i]
+		if i % 2 == 0:
+			w.apply_command(o.peer_id, {"type": "ready"})
+
+
+## Round 11: DUNE RAT is the last rig standing; everyone's match stats for the awards.
+static func _stage_awards(w: SimWorld) -> void:
+	var stats: Array = [  # kills, player kills, ram kills, deaths, scrap, nemesis id, nemesis n
+		[412, 3, 0, 7, 1180, 1, 3], [388, 9, 1, 2, 1420, -1, 0], [455, 2, 4, 5, 990, 3, 2],
+		[301, 5, 0, 6, 1050, 1, 2], [270, 1, 0, 9, 860, 1, 4]]
+	for i in w.vehicles.size():
+		var v: SimVehicle = w.vehicles[i]
+		var st: Array = stats[i]
+		v.match_stats = {"kills": st[0], "player_kills": st[1], "ram_kills": st[2], "deaths": st[3], "dmg_dealt": 0.0,
+			"scrap_earned": st[4], "top_victim": -1, "top_victim_n": 0, "nemesis": st[5], "nemesis_n": st[6]}
+		v.kills = st[0] + st[1]
+		if i != 1:
+			_knock_out(v)
+	w.phase = SimWorld.PHASE_GAME_OVER
+	w.winner_peer = w.vehicles[1].peer_id

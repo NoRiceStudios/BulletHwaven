@@ -2,12 +2,22 @@ class_name Hud
 extends Control
 ## Combat HUD in the mock-up style (riveted plates, 3x5 font, stencil headings): round, phase
 ## timer, hp and fuel, scrap; the hive; doctrine; round-start / workshop-start banners; the
-## respawn countdown and the ELIMINATED state. Reads the local player's vehicle only, so it works
-## the same for host, client and solo. Workshop and game over have their own overlays.
+## respawn countdown (with what wrecked you) and the ELIMINATED state. Information UI from playtest
+## round 1 (#2, #5): a kill feed of player kills under the hive plate, off-screen rival arrows at the
+## screen edge, the PvP grace countdown, a fuel-drain warning before camp, and spectator mode once
+## the local rig is eliminated (Tab / Left / Right cycle the watched rig, live standings). Reads sim
+## state and the WorldView logs only, so it works the same for host, client and solo. Workshop and
+## game over have their own overlays.
 
 const BANNER_TICKS := 75  ## how long a phase-start banner stays up (sim ticks)
 const PVP_BANNER_TICKS := 105  ## the full-width PVP ON banner (#11)
 const LOW_HP := 0.3  ## below this hp fraction the screen edges pulse red (#12)
+const FEED_TICKS := 210  ## a kill feed line stays this long (7 s)
+const FEED_MAX := 4
+const DRAIN_WARN_TICKS := 12 * SimWorld.TICK_RATE  ## warn about the camp fuel drain this long before it
+const FEED_BG := Color(0.1, 0.07, 0.07, 0.78)
+
+var _panels: Array[Rect2] = []  ## HUD rects drawn this frame (rival arrows stay clear of them)
 
 var world: SimWorld = null
 var local_peer: int = 1
@@ -24,6 +34,25 @@ func _process(_delta: float) -> void:
 	queue_redraw()
 
 
+## Spectator keys: Tab / Right next rig, Shift+Tab / Left previous, Home or A back to auto.
+func _unhandled_input(event: InputEvent) -> void:
+	if view == null or not view.spectating() or not (event is InputEventKey) or not event.is_pressed() or event.is_echo():
+		return
+	var k := event as InputEventKey
+	match k.keycode:
+		KEY_TAB:
+			view.cycle_spectate(-1 if k.shift_pressed else 1)
+		KEY_RIGHT:
+			view.cycle_spectate(1)
+		KEY_LEFT:
+			view.cycle_spectate(-1)
+		KEY_HOME, KEY_A:
+			view.spectate_auto()
+		_:
+			return
+	get_viewport().set_input_as_handled()
+
+
 ## Ticks since the current phase started (from the sim's own timers, so it also works after a
 ## snapshot or in screenshot mode).
 static func phase_elapsed(w: SimWorld) -> int:
@@ -38,23 +67,37 @@ static func phase_elapsed(w: SimWorld) -> int:
 func _draw() -> void:
 	if world == null:
 		return
+	_panels.clear()
 	var vs: Vector2 = get_viewport_rect().size
-	var v: SimVehicle = world.get_vehicle_for_peer(local_peer)
+	var me: SimVehicle = world.get_vehicle_for_peer(local_peer)
+	var spec: bool = view != null and view.spectating()
+	var elim_recent: bool = me != null and me.eliminated and not spec
+	var v: SimVehicle = view.focus_vehicle() if spec else me
 	if world.phase == SimWorld.PHASE_COMBAT:
-		var dead: bool = v != null and not v.alive and not v.eliminated
-		if v != null and v.eliminated:
+		var dead: bool = me != null and not me.alive and not me.eliminated
+		if me != null and me.eliminated and (elim_recent or not spec):
 			draw_rect(Rect2(Vector2.ZERO, vs), Color(0.08, 0.05, 0.06, 0.45))
 		elif dead:
 			_dim(vs, view.local_screen_pos() if view else vs / 2.0)
-		elif v != null and v.alive and v.hp / v.max_hp < LOW_HP:
-			_low_hp(vs, v.hp / v.max_hp)
+		elif me != null and me.alive and me.hp / me.max_hp < LOW_HP:
+			_low_hp(vs, me.hp / me.max_hp)
 		_draw_status(v)
 		_draw_hive(vs)
 		_draw_doctrine(v, vs)
-		if v != null and v.eliminated:
+		var watching: bool = spec and not elim_recent
+		if watching:
+			_draw_spectating(vs, v)
+			_draw_standings(v)
+		elif me != null and not me.eliminated:
+			_draw_drain_warning(me)
+		_draw_feed(vs)
+		_draw_grace(vs, watching)
+		if v != null and (watching or not (me != null and me.eliminated)):
+			_draw_rival_arrows(vs, v)
+		if me != null and me.eliminated and not watching:
 			_draw_eliminated(vs)
 		elif dead:
-			_draw_respawn(v, vs)
+			_draw_respawn(me, vs)
 	var pv: int = world.tick - view.pvp_on_tick if view != null and view.pvp_on_tick >= 0 else -1
 	if world.phase == SimWorld.PHASE_COMBAT and pv >= 0 and pv < PVP_BANNER_TICKS:
 		_pvp_banner(vs, pv)
@@ -66,10 +109,20 @@ func _draw() -> void:
 			_banner(vs, "HIVE RETREATS", "MAKE CAMP - %s ON THE CLOCK" % UiKit.clock(world.workshop_duration()), el, 112.0)
 
 
+func _last_wreck(v: SimVehicle) -> Dictionary:
+	if view == null:
+		return {}
+	for i in range(view.wreck_log.size() - 1, -1, -1):
+		if int(view.wreck_log[i]["id"]) == v.id:
+			return view.wreck_log[i]
+	return {}
+
+
 # ---------------------------------------------------------------- combat panels
 
 func _draw_status(v: SimVehicle) -> void:
 	var r := Rect2(6, 6, 150, 46)
+	_panels.append(r)
 	UiKit.plate(self, r)
 	var x0: float = r.position.x + 6.0
 	PixelFont.draw(self, "ROUND %d" % world.round, Vector2(x0, 11), Gfx.UI_TEXT, Gfx.UI_SHADOW)
@@ -104,6 +157,7 @@ func _draw_hive(vs: Vector2) -> void:
 	var l2 := ("HIVE HP +%s" % UiKit.pct(boost)) if boost > 0.001 else "HIVE HP BASE"
 	var pw: float = maxf(PixelFont.width(l1), PixelFont.width(l2)) + 14.0
 	UiKit.plate(self, Rect2(vs.x - pw - 6, 6, pw, 25))
+	_panels.append(Rect2(vs.x - pw - 6, 6, pw, 25))
 	PixelFont.draw(self, l1, Vector2(vs.x - pw + 1, 11), Gfx.GLOW[3], Gfx.UI_SHADOW)
 	PixelFont.draw(self, l2, Vector2(vs.x - pw + 1, 20), Gfx.UI_DIM, Gfx.UI_SHADOW)
 
@@ -114,6 +168,7 @@ func _draw_doctrine(v: SimVehicle, vs: Vector2) -> void:
 	var doc := "DOCTRINE: %s  /  TARGET: %s" % [str(v.doctrine["drive"]), str(v.doctrine["target"]).replace("_", " ")]
 	var dw: float = PixelFont.width(doc) + 14.0
 	UiKit.plate(self, Rect2(6, vs.y - 22, dw, 16))
+	_panels.append(Rect2(6, vs.y - 22, dw, 16))
 	PixelFont.draw(self, doc, Vector2(13, vs.y - 16), Gfx.UI_TEXT, Gfx.UI_SHADOW)
 
 
@@ -127,23 +182,244 @@ func _dim(vs: Vector2, center: Vector2) -> void:
 
 func _draw_respawn(v: SimVehicle, vs: Vector2) -> void:
 	var cx: float = floorf(vs.x / 2.0)
-	var r := Rect2(cx - 70, 92, 140, 48)
+	var r := Rect2(cx - 84, 92, 168, 57)
 	UiKit.plate(self, r)
 	UiKit.center_big(self, "RIG DESTROYED", cx, r.position.y + 6, Gfx.FIRE[4], Gfx.OUTLINE)
+	_wreck_cause(v, cx, r.position.y + 17)
 	var secs: float = float(maxi(v.respawn_ticks, 0)) / float(SimWorld.TICK_RATE)
-	UiKit.center_text(self, "BACK ON THE ROAD IN %.1f" % secs, cx, r.position.y + 18, Gfx.UI_TEXT, Gfx.UI_SHADOW)
-	UiKit.bar(self, Rect2(r.position.x + 10, r.position.y + 27, r.size.x - 20, 5),
+	UiKit.center_text(self, "BACK ON THE ROAD IN %.1f" % secs, cx, r.position.y + 27, Gfx.UI_TEXT, Gfx.UI_SHADOW)
+	UiKit.bar(self, Rect2(r.position.x + 10, r.position.y + 36, r.size.x - 20, 5),
 		1.0 - float(v.respawn_ticks) / float(SimWorld.RESPAWN_TICKS), Gfx.FIRE[3])
-	UiKit.center_text(self, "FUEL LEFT %d" % maxi(v.fuel, 0), cx, r.position.y + 36, Gfx.UI_BAD if v.fuel <= 40 else Gfx.UI_DIM, Gfx.UI_SHADOW)
+	UiKit.center_text(self, "FUEL LEFT %d" % maxi(v.fuel, 0), cx, r.position.y + 45, Gfx.UI_BAD if v.fuel <= 40 else Gfx.UI_DIM, Gfx.UI_SHADOW)
+
+
+## "WRECKED BY <cause>" centred at (cx, y): the rival's name in its paint and the weapon, or the alien.
+func _wreck_cause(v: SimVehicle, cx: float, y: float) -> void:
+	var e: Dictionary = _last_wreck(v)
+	if e.is_empty():
+		return
+	var cause: int = int(e["cause"])
+	var killer: SimVehicle = UiKit.vehicle_by_id(world, int(e["killer"]))
+	if killer == null or cause < SimWorld.SRC_RAM:
+		var what: String = UiKit.CAUSE_TEXT.get(SimWorld.SRC_NAMES[clampi(cause, 0, SimWorld.SRC_NAMES.size() - 1)], "THE HIVE") if cause >= 0 else "THE HIVE"
+		UiKit.center_text(self, "WRECKED BY %s" % what, cx, y, Gfx.UI_BAD, Gfx.UI_SHADOW)
+		return
+	var weapon: String = UiKit.weapon_long(Recap.killer_weapon(view, v.id, killer.id, int(e["round"])))
+	var pre := "WRECKED BY "
+	var post: String = (" - %s" % weapon) if weapon != "" else ""
+	var nm: String = UiKit.player_name(killer)
+	var w: float = PixelFont.width(pre) + PixelFont.width(nm) + PixelFont.width(post)
+	var x: float = floorf(cx - w / 2.0)
+	x = PixelFont.draw(self, pre, Vector2(x, y), Gfx.UI_BAD, Gfx.UI_SHADOW)
+	x = UiKit.paint_text(self, nm, Vector2(x, y), killer.color_index)
+	PixelFont.draw(self, post, Vector2(x, y), Gfx.FIRE[4] if weapon == "RAMMED" else Gfx.UI_TEXT, Gfx.UI_SHADOW)
 
 
 func _draw_eliminated(vs: Vector2) -> void:
 	var cx: float = floorf(vs.x / 2.0)
-	var r := Rect2(cx - 92, 92, 184, 44)
+	var me: SimVehicle = world.get_vehicle_for_peer(local_peer)
+	var cause: bool = me != null and not _last_wreck(me).is_empty()
+	var r := Rect2(cx - 92, 92, 184, 54 if cause else 44)
 	UiKit.plate(self, r)
 	UiKit.hazard_frame(self, r.grow(-3.0), 2.0)
 	UiKit.center_big(self, "ELIMINATED", cx, r.position.y + 9, Gfx.UI_BAD, Gfx.OUTLINE, 2)
 	UiKit.center_text(self, "OUT OF FUEL - WATCHING THE OTHERS", cx, r.position.y + 30, Gfx.UI_TEXT, Gfx.UI_SHADOW)
+	if cause:
+		_wreck_cause(me, cx, r.position.y + 40)
+
+
+# ---------------------------------------------------------------- kill feed, rivals, grace, drain
+
+## Player kills under the hive plate, newest on top: KILLER > VICTIM WEAPON (rams in fire colour).
+## Lines with the watched / local rig get a hazard edge. Alien kills are never listed.
+func _draw_feed(vs: Vector2) -> void:
+	if view == null:
+		return
+	var me: SimVehicle = view.focus_vehicle()
+	var y: float = 34.0
+	var shown: int = 0
+	for i in range(view.kill_log.size() - 1, -1, -1):
+		var e: Dictionary = view.kill_log[i]
+		var age: int = world.tick - int(e["tick"])
+		if age >= FEED_TICKS or int(e["round"]) != world.round:
+			break
+		if age < 0:
+			continue
+		var kv: SimVehicle = UiKit.vehicle_by_id(world, int(e["killer"]))
+		var vv: SimVehicle = UiKit.vehicle_by_id(world, int(e["victim"]))
+		if kv == null or vv == null:
+			continue
+		if age > FEED_TICKS - 15 and (age / 3) % 2 == 0:
+			y += 11.0
+			shown += 1
+			continue
+		var weapon: int = int(e["weapon"])
+		var wt: String = "RAMMED" if weapon == SimWorld.WEAPON_RAM else UiKit.weapon_short(weapon)
+		var kn: String = UiKit.player_name(kv)
+		var vn: String = UiKit.player_name(vv)
+		var w: float = PixelFont.width(kn) + 5.0 + 6.0 + 5.0 + PixelFont.width(vn) + 6.0 + PixelFont.width(wt) + 12.0
+		var r := Rect2(vs.x - 6.0 - w, y, w, 10)
+		var mine: bool = me != null and (kv == me or vv == me)
+		draw_rect(r, Gfx.OUTLINE)
+		draw_rect(r.grow(-1.0), FEED_BG if not mine else Color(0.22, 0.13, 0.08, 0.9))
+		draw_rect(Rect2(r.position + Vector2(1, 1), Vector2(2, r.size.y - 2)), UiKit.bar_color(kv.color_index))
+		if mine:
+			UiKit.outline_rect(self, r, Gfx.HAZARD)
+		var x: float = r.position.x + 6.0
+		x = UiKit.paint_text(self, kn, Vector2(x, y + 3), kv.color_index) + 4.0
+		x = UiKit.arrow_glyph(self, Vector2(x, y + 3), Gfx.UI_TEXT, Gfx.UI_SHADOW) + 5.0
+		x = UiKit.paint_text(self, vn, Vector2(x, y + 3), vv.color_index) + 6.0
+		PixelFont.draw(self, wt, Vector2(x, y + 3), Gfx.FIRE[4] if weapon == SimWorld.WEAPON_RAM else Gfx.UI_DIM, Gfx.UI_SHADOW)
+		_panels.append(r)
+		y += 11.0
+		shown += 1
+		if shown >= FEED_MAX:
+			break
+
+
+## An arrow at the screen edge for every rival rig that is off-screen: paint colour, tiny hp and fuel
+## pips behind it, smaller and fainter the farther away it is. Kept clear of the HUD plates.
+func _draw_rival_arrows(vs: Vector2, focus: SimVehicle) -> void:
+	if view == null or world.vehicles.size() < 2:
+		return
+	var screen := Rect2(Vector2.ZERO, vs)
+	var inset := Rect2(Vector2(9, 9), vs - Vector2(18, 18))
+	var c: Vector2 = vs / 2.0
+	for r: SimVehicle in world.vehicles:
+		if r == focus or r.eliminated or not r.alive or r.peer_id == local_peer:
+			continue
+		var sp: Vector2 = view.screen_pos(r)
+		if screen.grow(-4.0).has_point(sp):
+			continue
+		var d: Vector2 = sp - c
+		if d.length_squared() < 1.0:
+			continue
+		var dir: Vector2 = d.normalized()
+		var t: float = INF
+		if absf(dir.x) > 0.001:
+			t = minf(t, ((inset.end.x if dir.x > 0.0 else inset.position.x) - c.x) / dir.x)
+		if absf(dir.y) > 0.001:
+			t = minf(t, ((inset.end.y if dir.y > 0.0 else inset.position.y) - c.y) / dir.y)
+		var p: Vector2 = _clear_of_panels(c + dir * t, inset)
+		var dist: float = focus.pos.distance_to(r.pos) if focus != null else 600.0
+		var far: float = clampf((dist - 340.0) / 700.0, 0.0, 1.0)
+		var size: float = roundf(lerpf(11.0, 7.0, far))
+		var col: Color = UiKit.bar_color(r.color_index)
+		var a: float = lerpf(1.0, 0.75, far)
+		# hp / fuel gauge on a dark tag on the inward side of the arrow
+		var pc: Vector2 = (p - dir * (size + 9.0)).floor()
+		var pr := Rect2(pc - Vector2(9, 4), Vector2(18, 8))
+		draw_rect(pr, Color(Gfx.OUTLINE, 0.85 * a))
+		UiKit.outline_rect(self, pr, Color(col.darkened(0.3), a))
+		draw_rect(Rect2(pr.position + Vector2(2, 2), Vector2(floorf(14.0 * clampf(r.hp / r.max_hp, 0.0, 1.0)), 2)), Color(col, a))
+		draw_rect(Rect2(pr.position + Vector2(2, 5), Vector2(floorf(14.0 * clampf(float(r.fuel) / float(SimWorld.START_FUEL), 0.0, 1.0)), 1)), Color(Gfx.FIRE[3], a))
+		UiKit.pointer(self, p.floor() + Vector2(0.5, 0.5), dir, size, Color(col, 1.0))
+		if r.peer_id == world.leader_peer:
+			var s := Vector2(Gfx.TEX_SKULL.get_size())
+			var sp2: Vector2 = pc - Vector2(s.x / 2.0, s.y + 6.0) if pc.y > vs.y / 2.0 or pc.y > 30.0 else pc + Vector2(-s.x / 2.0, 6.0)
+			draw_texture(Gfx.TEX_SKULL, sp2.floor(), Color(1, 1, 1, a))
+
+
+## Moves an edge point out of any HUD plate (to the nearest free side, still inside `bounds`).
+func _clear_of_panels(p: Vector2, bounds: Rect2) -> Vector2:
+	for pass_i in 3:
+		var hit: Rect2 = Rect2()
+		var found: bool = false
+		for r in _panels:
+			if r.grow(12.0).has_point(p):
+				hit = r.grow(12.0)
+				found = true
+				break
+		if not found:
+			return p
+		var cands: Array[Vector2] = [Vector2(p.x, hit.end.y + 1.0), Vector2(p.x, hit.position.y - 1.0),
+			Vector2(hit.end.x + 1.0, p.y), Vector2(hit.position.x - 1.0, p.y)]
+		var best: Vector2 = p
+		var best_d: float = INF
+		for q in cands:
+			if bounds.has_point(q) and q.distance_to(p) < best_d:
+				best_d = q.distance_to(p)
+				best = q
+		p = best
+	return p
+
+
+## PvP grace (round PVP_START_ROUND): a hazard-framed countdown at the top until rivals may shoot.
+func _draw_grace(vs: Vector2, below: bool) -> void:
+	if world.phase != SimWorld.PHASE_COMBAT or world.pvp_grace_ticks <= 0:
+		return
+	var cx: float = floorf(vs.x / 2.0)
+	var secs: int = ceili(float(world.pvp_grace_ticks) / float(SimWorld.TICK_RATE))
+	var title := "PVP IN %d" % secs
+	var r := Rect2(cx - 60, 40.0 if below else 6.0, 120, 27)
+	UiKit.plate(self, r)
+	UiKit.hazard_frame(self, r.grow(-2.0), 2.0)
+	var hot: bool = secs <= 3 and (world.tick / 5) % 2 == 0
+	UiKit.center_big(self, title, cx, r.position.y + 6, Gfx.UI_BAD if hot else Gfx.FIRE[4], Gfx.OUTLINE)
+	UiKit.center_text(self, "RIVALS HOLD FIRE - FOR NOW", cx, r.position.y + 16, Gfx.UI_DIM, Gfx.UI_SHADOW)
+	_panels.append(r)
+
+
+## Late rounds of a multiplayer game: a tape under the status plate before camp drains fuel.
+func _draw_drain_warning(v: SimVehicle) -> void:
+	if world.vehicles.size() < 2 or v.eliminated:
+		return
+	var drain: int = SimWorld.fuel_drain_for_round(world.round)
+	if drain <= 0 or world.phase_ticks_left > DRAIN_WARN_TICKS:
+		return
+	var text := "CAMP DRAINS %d FUEL - KILLS REFUEL" % drain
+	var r := Rect2(6, 55, PixelFont.width(text) + 10.0, 9)
+	UiKit.tape(self, r, Color("#f0b090"))
+	PixelFont.draw(self, text, Vector2(r.position.x + 5, r.position.y + 2), Gfx.INK)
+	_panels.append(r)
+
+
+# ---------------------------------------------------------------- spectator
+
+## Top centre: whom the camera follows, and the keys to switch.
+func _draw_spectating(vs: Vector2, v: SimVehicle) -> void:
+	if v == null:
+		return
+	var cx: float = floorf(vs.x / 2.0)
+	var nm: String = UiKit.player_name(v)
+	var w: float = maxf(PixelFont.width_big(nm) + PixelFont.width("SPECTATING") + 30.0, 150.0)
+	var r := Rect2(cx - floorf(w / 2.0), 6, w, 27)
+	UiKit.plate(self, r)
+	var x0: float = cx - floorf((PixelFont.width("SPECTATING") + 6.0 + PixelFont.width_big(nm)) / 2.0)
+	var x: float = PixelFont.draw(self, "SPECTATING", Vector2(x0, r.position.y + 7), Gfx.UI_DIM, Gfx.UI_SHADOW) + 6.0
+	UiKit.paint_big(self, nm, Vector2(x, r.position.y + 6), v.color_index)
+	var auto: bool = view.spectate_id < 0
+	var keys: String = ("AUTO CAM - " if auto else "") + "TAB  < >  SWITCH RIG"
+	UiKit.center_text(self, keys, cx, r.position.y + 17, Gfx.UI_DIM, Gfx.UI_SHADOW)
+	_panels.append(r)
+
+
+## Live standings under the status plate while spectating (fuel, kills; the watched rig marked).
+func _draw_standings(watched: SimVehicle) -> void:
+	var rows: Array[SimVehicle] = UiKit.standings(world)
+	var r := Rect2(6, 56, 150, 16 + rows.size() * 8)
+	UiKit.plate(self, r)
+	_panels.append(r)
+	PixelFont.draw(self, "STANDINGS", r.position + Vector2(6, 5), Gfx.UI_DIM, Gfx.UI_SHADOW)
+	PixelFont.draw(self, "FUEL  KILLS", Vector2(r.end.x - 6 - PixelFont.width("FUEL  KILLS"), r.position.y + 5), Gfx.UI_DIM, Gfx.UI_SHADOW)
+	var y: float = r.position.y + 14.0
+	for i in rows.size():
+		var o: SimVehicle = rows[i]
+		var out: bool = o.eliminated
+		if o == watched:
+			draw_rect(Rect2(r.position.x + 3, y - 2, r.size.x - 6, 9), Color(1.0, 0.8, 0.5, 0.12))
+			UiKit.arrow_glyph(self, Vector2(r.position.x + 4, y), Gfx.HAZARD)
+		PixelFont.draw(self, str(i + 1), Vector2(r.position.x + 12, y), Gfx.UI_DIM if out else Gfx.UI_TEXT, Gfx.UI_SHADOW)
+		UiKit.swatch(self, Rect2(r.position.x + 18, y - 1, 7, 7), o.color_index)
+		if out:
+			PixelFont.draw(self, UiKit.player_name(o), Vector2(r.position.x + 28, y), Gfx.UI_DIM, Gfx.UI_SHADOW)
+		else:
+			UiKit.paint_text(self, UiKit.player_name(o), Vector2(r.position.x + 28, y), o.color_index)
+		var ft: String = "OUT" if out else str(maxi(o.fuel, 0))
+		PixelFont.draw(self, ft, Vector2(r.end.x - 34 - PixelFont.width(ft), y), Gfx.UI_DIM if out else Gfx.FIRE[3], Gfx.UI_SHADOW)
+		var kt := str(o.kills)
+		PixelFont.draw(self, kt, Vector2(r.end.x - 6 - PixelFont.width(kt), y), Gfx.UI_DIM if out else Gfx.UI_TEXT, Gfx.UI_SHADOW)
+		y += 8.0
 
 
 ## Pulsing warm-red edge bands (banded, dithered pixel style) while the rig is nearly wrecked.

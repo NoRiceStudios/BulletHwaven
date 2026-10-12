@@ -193,6 +193,8 @@ static func fx_lines(fx: Dictionary) -> PackedStringArray:
 			"rate": out.append("%s%s FIRE RATE" % [sgn, pct(m)])
 			"slots": out.append("%s%s WEAPON SLOT" % [sgn, num(m)])
 			"interest": out.append("%s%s INTEREST CAP" % [sgn, num(m)])
+			"creduce": out.append("%s%s ALIEN CONTACT DMG" % ["-" if a >= 0.0 else "+", pct(m)])
+			"thorns": out.append("%s%s THORNS" % [sgn, pct(m)])
 			_: out.append("%s %s" % [k.to_upper(), num(a)])
 	return out
 
@@ -255,3 +257,119 @@ static func tech_name(id: String) -> String:
 
 static func tech_lines(id: String) -> PackedStringArray:
 	return fx_lines(Tech.def(id).get("fx", {}))
+
+
+# ---------------------------------------------------------------- information UI (playtest #2, #5, #10, #11)
+
+## Short weapon names by `Cards.WEAPON_KINDS` index (kill feed); SimWorld.WEAPON_RAM = a ram.
+const WEAPON_SHORT: PackedStringArray = ["MG", "SCATTER", "CANNON", "FLAMER", "RAM"]
+## Damage sources of `round_stats.taken` in display order, with labels and bar colours: camouflaged
+## mites and boulders in their desert tones, spitters and their acid in the hive's glow (the only
+## cold colour, as in the art); rivals use their paint.
+const TAKEN_KEYS: PackedStringArray = ["boulder", "mite", "spitter", "acid"]
+const TAKEN_LABELS := {"boulder": "BOULDER RAMS", "mite": "MITE BITES", "spitter": "SPITTER BITES", "acid": "ACID"}
+const TAKEN_SHORT := {"boulder": "BOULDERS", "mite": "MITES", "spitter": "SPITTERS", "acid": "ACID"}
+const TAKEN_COLORS := {"boulder": Color("#c99c6b"), "mite": Color("#8e6145"), "spitter": Color("#1fa3a3"), "acid": Color("#4fe0d4")}
+## Death cause (SimWorld.SRC_NAMES) -> "WRECKED BY ..." wording.
+const CAUSE_TEXT := {"mite": "MITES", "boulder": "A BOULDER", "spitter": "A SPITTER", "acid": "ACID", "ram": "A RAM", "player": "A RIVAL"}
+
+
+static func weapon_short(kind: int) -> String:
+	return WEAPON_SHORT[kind] if kind >= 0 and kind < WEAPON_SHORT.size() else "?"
+
+
+## Weapon name for the recap ("SIEGE CANNON", "RAMMED").
+static func weapon_long(kind: int) -> String:
+	if kind == SimWorld.WEAPON_RAM:
+		return "RAMMED"
+	if kind >= 0 and kind < Cards.WEAPON_KINDS.size():
+		return card_name(Cards.WEAPON_KINDS[kind])
+	return ""
+
+
+## Tiny 6x5 right arrow ("killer -> victim"); returns the x after it.
+static func arrow_glyph(ci: CanvasItem, pos: Vector2, col: Color, shadow: Color = Color(0, 0, 0, 0)) -> float:
+	var p: Vector2 = pos.floor()
+	if shadow.a > 0.0:
+		arrow_glyph(ci, p + Vector2.ONE, shadow)
+	ci.draw_rect(Rect2(p + Vector2(0, 2), Vector2(5, 1)), col)
+	for d: Vector2 in [Vector2(3, 0), Vector2(4, 1), Vector2(5, 2), Vector2(4, 3), Vector2(3, 4)]:
+		ci.draw_rect(Rect2(p + d, Vector2.ONE), col)
+	return p.x + 6.0
+
+
+## `n` of `max_n` level pips (4x3, framed) starting at `pos`; returns the x after them.
+static func pips(ci: CanvasItem, pos: Vector2, n: int, max_n: int, on: Color, off: Color = Gfx.UI_PLATE_DARK) -> float:
+	var x: float = pos.x
+	for k in max_n:
+		var pr := Rect2(x + 1, pos.y + 1, 4, 3)
+		ci.draw_rect(pr.grow(1.0), Gfx.OUTLINE)
+		ci.draw_rect(pr, on if k < n else off)
+		x += 5.0
+	return x + 1.0
+
+
+## Rigs ranked for standings: still in the game first, then by fuel, kills and scrap.
+static func standings(w: SimWorld) -> Array[SimVehicle]:
+	var out: Array[SimVehicle] = w.vehicles.duplicate()
+	out.sort_custom(func(a: SimVehicle, b: SimVehicle) -> bool:
+		if a.eliminated != b.eliminated:
+			return not a.eliminated
+		if a.peer_id == w.winner_peer or b.peer_id == w.winner_peer:
+			return a.peer_id == w.winner_peer
+		if a.fuel != b.fuel:
+			return a.fuel > b.fuel
+		if a.kills != b.kills:
+			return a.kills > b.kills
+		return a.id < b.id)
+	return out
+
+
+static func vehicle_by_id(w: SimWorld, id: int) -> SimVehicle:
+	return w.vehicles[id] if id >= 0 and id < w.vehicles.size() else null
+
+
+## Pixel-crisp filled triangle pointing along `dir` (unit), tip at `tip`, `size` px long, with a 1px
+## dark outline (off-screen rival arrows).
+static func pointer(ci: CanvasItem, tip: Vector2, dir: Vector2, size: float, col: Color) -> void:
+	var side := Vector2(-dir.y, dir.x)
+	var base: Vector2 = tip - dir * size
+	var a: Vector2 = tip
+	var b: Vector2 = base + side * size * 0.62
+	var c: Vector2 = base - side * size * 0.62
+	var lo := Vector2(floorf(minf(a.x, minf(b.x, c.x))) - 1.0, floorf(minf(a.y, minf(b.y, c.y))) - 1.0)
+	var hi := Vector2(ceilf(maxf(a.x, maxf(b.x, c.x))) + 1.0, ceilf(maxf(a.y, maxf(b.y, c.y))) + 1.0)
+	var inside: Dictionary = {}
+	for y in range(int(lo.y), int(hi.y) + 1):
+		for x in range(int(lo.x), int(hi.x) + 1):
+			var p := Vector2(x + 0.5, y + 0.5)
+			if _in_tri(p, a, b, c):
+				inside[Vector2i(x, y)] = true
+	for k: Vector2i in inside:
+		for o: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			if not inside.has(k + o):
+				ci.draw_rect(Rect2(Vector2(k + o), Vector2.ONE), Gfx.OUTLINE)
+	for k: Vector2i in inside:
+		ci.draw_rect(Rect2(Vector2(k), Vector2.ONE), col)
+	# top-left light: a brighter rim on the pixels facing up / left
+	for k: Vector2i in inside:
+		if not inside.has(k + Vector2i(0, -1)) or not inside.has(k + Vector2i(-1, 0)):
+			ci.draw_rect(Rect2(Vector2(k), Vector2.ONE), col.lightened(0.3))
+
+
+static func _in_tri(p: Vector2, a: Vector2, b: Vector2, c: Vector2) -> bool:
+	var d1: float = (p - b).cross(a - b)
+	var d2: float = (p - c).cross(b - c)
+	var d3: float = (p - a).cross(c - a)
+	var neg: bool = d1 < 0.0 or d2 < 0.0 or d3 < 0.0
+	var pos: bool = d1 > 0.0 or d2 > 0.0 or d3 > 0.0
+	return not (neg and pos)
+
+
+## Manila scrap tag (awards, notices): paper with a dark rim and a drop shadow.
+static func paper(ci: CanvasItem, r: Rect2) -> void:
+	ci.draw_rect(Rect2(r.position + Vector2(2, 2), r.size), Color(0.08, 0.05, 0.06, 0.45))
+	ci.draw_rect(r, Gfx.OUTLINE)
+	ci.draw_rect(r.grow(-1.0), Color("#e6dcc4"))
+	ci.draw_rect(Rect2(r.position + Vector2(1, 1), Vector2(r.size.x - 2, 1)), Gfx.BONE_LIGHT)
+	ci.draw_rect(Rect2(r.position.x + 1, r.end.y - 2, r.size.x - 2, 1), Color("#c9bc9e"))
