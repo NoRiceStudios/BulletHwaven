@@ -23,7 +23,7 @@ A multiplayer **PvPvE auto-battler survivor**. AI-driven, scrap-welded war rigs 
 |---|---|
 | [`game/`](game/) | Godot 4.7 project: `sim/` (deterministic simulation), `net/` (LAN multiplayer), `render/`, `tools/`, `tests/` |
 | [`docs/architecture.md`](docs/architecture.md) | Tech stack decision and the layer and API contract |
-| [`scripts/`](scripts/) | `setup-godot.sh` (installs the pinned Godot), `test.sh`, `shot.sh`, `lan-smoke.sh`, `export.sh` (release builds) |
+| [`scripts/`](scripts/) | `setup-godot.sh` (installs the pinned Godot), `test.sh`, `shot.sh`, `lan-smoke.sh`, `input-test.sh` (real X11 mouse/keyboard end-to-end test), `export.sh` (release builds) |
 | [`docs/game-design.md`](docs/game-design.md) | Game design document: core loop, vehicle grid, draft and tech tree, AI doctrine, enemy variety, PvP, meta progression, art direction |
 | [`art/samples/`](art/samples/) | Art-style samples: mock-up screenshots (day/night), sprite sheet, biome tiles, palette |
 | [`tools/artgen/`](tools/artgen/) | Python generator that draws the sample art procedurally from the master palette |

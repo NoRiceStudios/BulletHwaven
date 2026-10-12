@@ -19,6 +19,19 @@ jobs:
         run: scripts/test.sh
       - name: LAN smoke test
         run: scripts/lan-smoke.sh
+      - name: Real-input test (X11 mouse and keyboard)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb python3-xlib libgl1-mesa-dri
+          scripts/input-test.sh "$RUNNER_TEMP/input-test"
+      - name: Upload input-test screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: input-test-screenshots
+          path: ${{ runner.temp }}/input-test/*.png
+          retention-days: 7
+          if-no-files-found: ignore
 
   build:
     needs: test
