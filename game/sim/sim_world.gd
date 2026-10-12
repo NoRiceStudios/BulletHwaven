@@ -92,9 +92,9 @@ const PHASE_GAME_OVER := 2
 const COMBAT_TICKS := 1800  # 60 s
 const COMBAT_TICKS_EARLY := 1200  # 40 s, rounds 1 and 2
 const EARLY_ROUNDS := 2
-const WORKSHOP_TICKS := 750  # 25 s
+const WORKSHOP_TICKS := 2700  # 90 s (90 * TICK_RATE)
 const FAST_COMBAT_TICKS := 120  # world.fast_rounds (tests, screenshots)
-const FAST_WORKSHOP_TICKS := 45
+const FAST_WORKSHOP_TICKS := 162  # scaled with the workshop: 45 * 90 / 25
 
 const START_FUEL := 100
 const FUEL_LOSS := 20  # destroyed by aliens

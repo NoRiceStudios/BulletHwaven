@@ -42,7 +42,7 @@
 ```
 ┌─ MATCH (8 players, ~20–25 min, ~14 rounds) ───────────────────────────┐
 │                                                                        │
-│  [ CONVOY PHASE ~75 s ]  ──►  [ WORKSHOP ~25 s ]  ──►  next round      │
+│  [ CONVOY PHASE ~75 s ]  ──►  [ WORKSHOP ~90 s ]  ──►  next round      │
 │   AI drives & fights           Draft 1 of 3 cards (free)                │
 │   Collect scrap                Spend scrap: tech tree / rerolls         │
 │   Use 1–2 active abilities     Place modules on the chassis grid        │

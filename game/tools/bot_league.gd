@@ -429,7 +429,7 @@ func _report() -> void:
 		var decisive: int = ffa_matches.filter(func(m: Dictionary) -> bool: return bool(m["gameover"])).size()
 		var lens: Array = ffa_matches.map(func(m: Dictionary) -> float: return float(m["rounds"]))
 		var mins: Array = ffa_matches.map(func(m: Dictionary) -> float: return float(m["ticks"]) / 30.0 / 60.0)
-		md.append("%d matches, %d decided before the cap (%s%%). Game length: mean %s rounds, median %s, p90 %s; mean %s min of bot play time (workshops skipped as soon as every bot is ready; add about 25 s per round for human shopping). Fair win rate is 25%%." % [
+		md.append("%d matches, %d decided before the cap (%s%%). Game length: mean %s rounds, median %s, p90 %s; mean %s min of bot play time (workshops skipped as soon as every bot is ready; add up to 90 s per round for human shopping). Fair win rate is 25%%." % [
 			ffa_matches.size(), decisive, _f(100.0 * decisive / maxf(ffa_matches.size(), 1), 0), _f(_mean(lens), 1), _f(_pct(lens, 0.5), 0),
 			_f(_pct(lens, 0.9), 0), _f(_mean(mins), 1)])
 		md.append("")
