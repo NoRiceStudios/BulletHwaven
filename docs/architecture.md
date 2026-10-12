@@ -54,6 +54,15 @@ Skeleton gameplay: vehicles drive themselves according to their doctrine; weapon
 - `Snapshot` (`net/snapshot.gd`): `static func encode(world: SimWorld) -> PackedByteArray`, `static func apply(world: SimWorld, bytes: PackedByteArray)`. Positions quantized, events included.
 - `LanDiscovery` (`net/lan_discovery.gd`): the host broadcasts a UDP beacon on port 24681 once per second; clients emit `host_found(address: String, info: Dictionary)`.
 
+Net details (as built):
+- `NetSession` names itself `"NetSession"` and must sit at the same node path on every peer, because RPCs match by path.
+- Extras: `player_count()`, `stop()`, signals `connection_failed` and `disconnected`.
+- Client commands are validated against an allow-list and rate-limited to 20 per second per peer.
+- `Snapshot.encode(world, events_override := [])` carries the events accumulated since the last snapshot. `Snapshot.apply()` returns `false` and leaves the world untouched on malformed data.
+- Size: about 8 bytes per enemy, 13 per projectile, 7 per event and about 110 per vehicle (about 8.4 kB at 1,000 enemies, sent every 2 ticks).
+- `world.events` holds only the latest tick's events, so render must consume them once per sim tick, not once per frame.
+- `LanDiscovery` also emits `host_lost`.
+
 ## Entry point and command line
 
 `main.tscn` / `main.gd` parse `OS.get_cmdline_user_args()`:
