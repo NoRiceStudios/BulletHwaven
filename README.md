@@ -2,7 +2,7 @@
 
 A multiplayer **PvPvE auto-battler survivor**. AI-driven, scrap-welded war rigs fight alien hordes, and each other, on a desert planet. Steer the battle through roguelike upgrade drafts, a tech tree and **AI doctrine**: the last convoy standing wins.
 
-> Status: pre-production. The game design and art direction are drafted, and sample art exists. Engine and tech stack are not chosen yet.
+> Status: pre-production. The design and art direction are drafted; the Godot 4 project skeleton is being built (see [`docs/architecture.md`](docs/architecture.md)).
 
 | Day | Night |
 |---|---|
@@ -12,9 +12,26 @@ A multiplayer **PvPvE auto-battler survivor**. AI-driven, scrap-welded war rigs 
 
 | Path | What's in it |
 |---|---|
+| [`game/`](game/) | Godot 4.7 project: `sim/` (deterministic simulation), `net/` (LAN multiplayer), `render/`, `tools/`, `tests/` |
+| [`docs/architecture.md`](docs/architecture.md) | Tech stack decision and the layer and API contract |
+| [`scripts/`](scripts/) | `setup-godot.sh` (installs the pinned Godot), `test.sh`, `shot.sh`, `lan-smoke.sh` |
 | [`docs/game-design.md`](docs/game-design.md) | Game design document: core loop, vehicle grid, draft and tech tree, AI doctrine, enemy variety, PvP, meta progression, art direction |
 | [`art/samples/`](art/samples/) | Art-style samples: mock-up screenshots (day/night), sprite sheet, biome tiles, palette |
 | [`tools/artgen/`](tools/artgen/) | Python generator that draws the sample art procedurally from the master palette |
+
+## Running the game
+
+Install [Godot 4.7.2](https://godotengine.org/download) (or run `scripts/setup-godot.sh` on Linux), then:
+
+```bash
+godot --path game                         # solo
+godot --path game -- --host               # host a LAN game
+godot --path game -- --join=192.168.1.20  # join a LAN game
+scripts/test.sh                           # headless tests
+scripts/shot.sh <scenario> <seed> <ticks> out.png   # screenshot a scenario
+```
+
+Or open `game/project.godot` in the Godot editor.
 
 ## Art-style samples
 

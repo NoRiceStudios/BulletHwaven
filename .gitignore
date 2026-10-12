@@ -2,3 +2,8 @@ __pycache__/
 *.pyc
 .venv/
 .DS_Store
+# Godot
+game/.godot/
+*.translation
+export_presets.cfg
+build/

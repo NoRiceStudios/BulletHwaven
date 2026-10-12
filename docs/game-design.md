@@ -368,7 +368,7 @@ The aliens look like **plausible desert ecology**, not like classic sci-fi monst
 ## 13. Open design questions (for the next step)
 1. **Real-time vs. async as the main mode:** I recommend async first, but it changes the marketing ("battle royale" vs. "auto-battler").
 2. **Session length:** 20–25 min is a guess. Mobile would point to ~12 min with 8 rounds.
-3. **Platform and controls:** PC/Steam first, or mobile too? This affects how complex the grid building and doctrine UI can be.
+3. **Platform and controls:** *Decided:* PC first, published on Steam (Windows, Linux, Steam Deck), built in Godot 4. See [`architecture.md`](architecture.md). Still open: whether a mobile version follows, which would limit how complex the grid building and doctrine UI can be.
 4. **Hands-off level:** should active abilities stay optional, or be removed entirely for a pure idle feel?
 5. **Monetisation:** cosmetics only (recommended, since it's PvP) or something else?
 6. **Tone:** the art direction (section 11) points to rough and atmospheric. How much dark humour fits alongside it (names like "Old Grandmother Saltjaw", vehicle trophies)?
