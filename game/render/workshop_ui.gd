@@ -539,11 +539,10 @@ func _draw_ready(v: SimVehicle, vs: Vector2) -> void:
 	var ready_n: int = 0
 	var need: int = 0
 	for o in world.vehicles:
-		var col: Color = UiKit.player_color(o)
-		draw_rect(Rect2(r.position.x + 6, y, 5, 5), col)
-		UiKit.outline_rect(self, Rect2(r.position.x + 5, y - 1, 7, 7), Gfx.OUTLINE)
-		var nm: String = UiKit.player_name(o) + (" (YOU)" if o == v else "")
-		PixelFont.draw(self, nm, Vector2(r.position.x + 15, y), col if o != v else Gfx.UI_TEXT, Gfx.UI_SHADOW)
+		UiKit.swatch(self, Rect2(r.position.x + 5, y - 1, 7, 7), o.color_index)
+		var nx: float = UiKit.paint_text(self, UiKit.player_name(o), Vector2(r.position.x + 15, y), o.color_index)
+		if o == v:
+			PixelFont.draw(self, "(YOU)", Vector2(nx + 3, y), Gfx.UI_TEXT, Gfx.UI_SHADOW)
 		var st: String = "OUT" if o.eliminated else ("READY" if o.ready else "TINKERING")
 		var sc: Color = Gfx.UI_DIM if o.eliminated else (Gfx.HAZARD if o.ready else Gfx.UI_DIM)
 		PixelFont.draw(self, st, Vector2(r.end.x - 6 - PixelFont.width(st), y), sc, Gfx.UI_SHADOW)

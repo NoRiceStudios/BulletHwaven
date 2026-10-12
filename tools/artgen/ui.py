@@ -7,13 +7,16 @@
 - hazard():       8x8 hazard-stripe tile (READY button).
 - steel_plate():  riveted steel plate 9-patch (CRT housing, buttons).
 - vignette():     banded, dithered darkness with a clear pool in the middle (workshop camp light).
+- logo():         the title: "BULLET" + "HWAVEN" spray-stencilled on a welded scrap sign.
+- splat():        paint splat (near-white, tinted at runtime): the colour picker's swatches.
 """
 
 import numpy as np
 
 from palette import BONE, BRASS, FIRE, HAZARD, LEATHER, OUTLINE, RUST, SAND, STEEL, TYRE
-from pixel import (Canvas, bayer, circle, line, outline, paint, pixels, poly, rect, rgb, shift,
+from pixel import (Canvas, bayer, blob, circle, line, outline, paint, pixels, poly, rect, rgb, shift,
                    value_noise)
+from sprites import rivets, weather, weld
 
 STENCIL_CHARS = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:!-'./+%"
 STENCIL_CELL = 6
@@ -350,4 +353,109 @@ def vignette(w=1280, h=720, clear=78.0, steps=(0.0, 0.28, 0.5, 0.66, 0.76)):
     cv = Canvas(w, h)
     cv.rgb[:] = rgb("#140e12")
     cv.a = a.astype(np.float32)
+    return cv
+
+
+# ---------------------------------------------------------------- title logo and paint splat
+
+def _stencil_mask(word, scale):
+    """Mask of `word` in the stencil font at an integer scale (1 cell gap between glyphs)."""
+    rows = [_S[ch].split("|") for ch in word]
+    w = sum(len(r[0]) + 1 for r in rows) - 1
+    m = np.zeros((STENCIL_H * scale, w * scale), bool)
+    x = 0
+    for r in rows:
+        for ry, row in enumerate(r):
+            for rx, c in enumerate(row):
+                if c == "#":
+                    m[ry * scale:(ry + 1) * scale, (x + rx) * scale:(x + rx + 1) * scale] = True
+        x += len(r[0]) + 1
+    return m
+
+
+def _spray(cv, m, ramp, seed):
+    """Spray-paints mask `m`: ragged edges, overspray specks, drips and chipped paint."""
+    H, W = m.shape
+    rng = np.random.default_rng(seed)
+    edge = m & ~(shift(m, 1, 0) & shift(m, -1, 0) & shift(m, 0, 1) & shift(m, 0, -1))
+    body = m & ~(edge & (rng.random((H, W)) < 0.12))
+    near = (shift(m, 1, 0) | shift(m, -1, 0) | shift(m, 0, 1) | shift(m, 0, -1)
+            | shift(m, 2, 0) | shift(m, 0, 2) | shift(m, -2, 0) | shift(m, 0, -2)) & ~m
+    specks = near & (rng.random((H, W)) < 0.09)
+    # drips run down from a few bottom edges
+    bottom = m & ~shift(m, 0, -1)
+    ys, xs = np.nonzero(bottom)
+    drips = np.zeros_like(m)
+    for i in rng.choice(len(xs), size=max(1, len(xs) // 26), replace=False):
+        x, y, n = xs[i], ys[i], int(rng.integers(3, 10))
+        drips[y:min(H, y + n), x] = True
+        if y + n < H:
+            drips[y + n - 1:min(H, y + n + 1), x:min(W, x + 2)] = True
+    paint_m = body | drips
+    n = value_noise(H, W, 6, seed)
+    ra = np.array([rgb(c) for c in ramp])
+    lvl = np.clip((n * (len(ramp) - 0.01) + bayer(H, W) * 0.6 - 0.3).astype(int), 0, len(ramp) - 1)
+    cv.put(paint_m, ra[lvl])
+    cv.put(specks, ra[max(0, len(ramp) - 2)], alpha=0.55)
+    # chipped paint shows the metal through
+    chips = body & (value_noise(H, W, 3, seed + 7) > 0.86) & (rng.random((H, W)) < 0.5)
+    cv.put(chips, RUST[2])
+
+
+def logo(seed=21):
+    W, H = 316, 62
+    cv = Canvas(W, H)
+    rng = np.random.default_rng(seed)
+    # two mismatched sheets, welded, with a cut-off corner and a bent lower edge
+    left = poly(W, H, [(3, 6), (176, 2), (178, 57), (8, 59), (1, 32)])
+    right = poly(W, H, [(176, 4), (306, 1), (314, 10), (311, 56), (178, 58)])
+    paint(cv, left, RUST[:4], base=1, noise=0.45, seed=seed, depth=2)
+    paint(cv, right, STEEL[:4], base=1, noise=0.4, seed=seed + 1, depth=2)
+    sheet = left | right
+    weather(cv, sheet, seed, holes=0, dents=6, scratches=14, streaks=10)
+    weld(cv, [(177, 4), (178, 57)])
+    rivets(cv, [(7, 10), (170, 7), (8, 53), (171, 52), (183, 8), (306, 7), (184, 52), (305, 51)]
+           + [(40 + 33 * i, 6 - i // 3) for i in range(4)] + [(214 + 30 * i, 5) for i in range(3)])
+    # the words, stencilled across the seam
+    scale = 4
+    a = _stencil_mask("BULLET", scale)
+    b = _stencil_mask("HWAVEN", scale)
+    gap = 10
+    tw = a.shape[1] + gap + b.shape[1]
+    x0, y0 = (W - tw) // 2, 15
+    ma = np.zeros((H, W), bool)
+    mb = np.zeros((H, W), bool)
+    ma[y0:y0 + a.shape[0], x0:x0 + a.shape[1]] = a
+    xb = x0 + a.shape[1] + gap
+    mb[y0:y0 + b.shape[0], xb:xb + b.shape[1]] = b
+    _spray(cv, ma & sheet, BONE[3:], seed + 3)
+    _spray(cv, mb & sheet, FIRE[3:6], seed + 4)
+    # bullet holes punched through sheet and paint, lit from the top-left
+    for _ in range(9):
+        cx, cy = rng.uniform(12, W - 12), rng.uniform(10, H - 10)
+        rim = circle(W, H, cx, cy, 2.4) & sheet
+        cv.put(rim & ~shift(rim, -1, -1), STEEL[4])
+        cv.put(rim & ~shift(rim, 1, 1), RUST[0])
+        hole = circle(W, H, cx, cy, 1.3)
+        cv.a[hole] = 0
+    outline(cv, OUTLINE)
+    return cv
+
+
+def splat(seed=4):
+    """16x16 paint splat in light greys (tinted by the game): a blob with spatters and one drip."""
+    N2 = 16
+    cv = Canvas(N2, N2)
+    rng = np.random.default_rng(seed)
+    m = blob(N2, N2, 7.5, 7.0, 5.2, 4.8, rough=0.25, seed=seed, cell=3)
+    for _ in range(5):
+        a = rng.uniform(0, 2 * np.pi)
+        d = rng.uniform(5.5, 7.0)
+        m |= circle(N2, N2, 7.5 + np.cos(a) * d, 7.0 + np.sin(a) * d, rng.uniform(0.6, 1.2))
+    m |= rect(N2, N2, 9, 10, 9, 14)
+    m |= rect(N2, N2, 9, 14, 10, 14)
+    ramp = ["#8a8a8a", "#b4b4b4", "#dcdcdc", "#ffffff"]
+    paint(cv, m, ramp, base=2, noise=0.2, seed=seed)
+    cv.put(circle(N2, N2, 5.5, 5.0, 1.2) & m, "#ffffff")
+    outline(cv, OUTLINE)
     return cv

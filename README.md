@@ -33,14 +33,25 @@ A multiplayer **PvPvE auto-battler survivor**. AI-driven, scrap-welded war rigs 
 Install [Godot 4.7.2](https://godotengine.org/download) (or run `scripts/setup-godot.sh` on Linux), then:
 
 ```bash
-godot --path game                         # solo
-godot --path game -- --host               # host a LAN game
+godot --path game                         # main menu: solo, host / join a LAN game, driver profile
+godot --path game -- --solo               # straight into a solo game
+godot --path game -- --host               # host a LAN game that starts at once (late joiners welcome)
 godot --path game -- --join=192.168.1.20  # join a LAN game
+godot --path game -- --fast               # short rounds (4 s combat), for quick testing
 scripts/test.sh                           # headless tests
-scripts/shot.sh <scenario> <seed> <ticks> out.png   # screenshot a scenario
+scripts/shot.sh <scenario> <seed> <ticks> out.png   # screenshot a scenario (also: menu, join, lobby, pause, rematch, waiting)
 ```
 
 Or open `game/project.godot` in the Godot editor.
+
+### Controls
+
+- **Menu:** mouse, or arrow keys and Enter. Click the name field to type your driver name; pick one of 8 paint colours. The profile is saved to `user://profile.cfg`.
+- **LAN:** *Host LAN game* opens a lobby (shown to others under *Join LAN game*, or join by IP). Players ready up; the host starts when everyone is ready, or forces the start.
+- **Combat:** `1` / `2` / `3` drive circle / kite / charge; `Q` / `W` / `E` target nearest / strongest / players first.
+- **Workshop:** `1` / `2` / `3` pick a card, `R` reroll, `Space` ready; click tech nodes to build.
+- **Esc:** pause (solo) or the in-match menu (LAN: the match keeps running): resume or leave to the menu.
+- **Game over:** `Enter` restart (solo) or rematch (host); clients wait for the host. `Esc` leaves to the menu.
 
 ## Builds
 

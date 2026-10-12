@@ -16,6 +16,15 @@ const CAM_EASE := 4.0  ## 1/s, easing of that lift
 
 var world: SimWorld = null
 var local_peer: int = 1
+## Menu backdrop: with no local rig the camera drifts slowly over the arena (driven by world.tick,
+## so screenshots are deterministic) instead of staying put.
+var attract: bool = false
+## HUD, workshop and game over overlays (hidden behind the menus).
+var ui_visible: bool = true:
+	set(value):
+		ui_visible = value
+		if _hud_layer != null:
+			_hud_layer.visible = value
 ## Screenshot mode: no extrapolation, easing or effect ageing; the frame shows the sim state as is.
 var frozen: bool = false:
 	set(value):
@@ -33,6 +42,7 @@ var _halos: Node2D
 var _labels: Node2D
 var _camera: Camera2D
 var _hud: Hud
+var _hud_layer: CanvasLayer
 var workshop: WorkshopUi
 var game_over: GameOverUi
 var _cam_lift: float = 0.0
@@ -106,6 +116,8 @@ func _ready() -> void:
 
 	var hud_layer := CanvasLayer.new()
 	hud_layer.layer = 10
+	hud_layer.visible = ui_visible
+	_hud_layer = hud_layer
 	add_child(hud_layer)
 	_hud = Hud.new()
 	_hud.view = self
@@ -413,6 +425,14 @@ func local_screen_pos() -> Vector2:
 func _update_camera(k: float) -> void:
 	var v: SimVehicle = world.get_vehicle_for_peer(local_peer)
 	if v == null:
+		if attract:
+			var t: float = float(world.tick) / float(SimWorld.TICK_RATE)
+			var half := get_viewport_rect().size / 2.0
+			var c: Vector2 = SimWorld.ARENA.get_center() + Vector2(sin(t * 0.045) * 300.0, sin(t * 0.032 + 1.3) * 170.0)
+			c.x = clampf(c.x, SimWorld.ARENA.position.x + half.x, SimWorld.ARENA.end.x - half.x)
+			c.y = clampf(c.y, SimWorld.ARENA.position.y + half.y, SimWorld.ARENA.end.y - half.y)
+			_camera.position = Gfx.snap(c)
+			_camera.force_update_scroll()
 		return
 	var d: Vector3 = _vehicle_display(v)
 	var half := get_viewport_rect().size / 2.0
@@ -425,19 +445,18 @@ func _update_camera(k: float) -> void:
 	_camera.force_update_scroll()
 
 
-## Paint-coloured tags and hp ticks over rival rigs (readability, design doc section 11c).
+## Driver names in paint colour and hp ticks over rival rigs (readability, design doc section 11c).
 func _draw_labels() -> void:
-	if world == null:
+	if world == null or attract:
 		return
 	for v in world.vehicles:
 		if v.peer_id == local_peer or not v.alive:
 			continue
 		var d: Vector3 = _vehicle_display(v)
 		var p: Vector2 = Gfx.snap(Vector2(d.x, d.y))
-		var idx: int = Gfx.player_index(v)
-		var tag: String = Gfx.PLAYER_NAMES[idx]
+		var tag: String = UiKit.player_name(v)
 		var top: float = p.y - 36.0
-		PixelFont.draw(_labels, tag, Vector2(p.x - floorf(PixelFont.width(tag) / 2.0), top), Gfx.PLAYER_COLORS[idx], Gfx.OUTLINE)
+		UiKit.paint_text(_labels, tag, Vector2(p.x - floorf(PixelFont.width(tag) / 2.0), top), v.color_index)
 		var bw: float = 20.0
 		_labels.draw_rect(Rect2(p.x - bw / 2.0 - 1.0, top + 7.0, bw + 2.0, 3.0), Gfx.OUTLINE)
-		_labels.draw_rect(Rect2(p.x - bw / 2.0, top + 8.0, floorf(bw * clampf(v.hp / v.max_hp, 0.0, 1.0)), 1.0), Gfx.PLAYER_COLORS[idx])
+		_labels.draw_rect(Rect2(p.x - bw / 2.0, top + 8.0, floorf(bw * clampf(v.hp / v.max_hp, 0.0, 1.0)), 1.0), UiKit.bar_color(v.color_index))

@@ -2,13 +2,17 @@ class_name GameOverUi
 extends Control
 ## Game over screen (phase == PHASE_GAME_OVER): the frozen field behind a dark vignette, the
 ## winner (or "YOUR CONVOY IS LOST" in solo, with the round reached), per-rig standings and the
-## restart / quit hint. Restart and quit are callables set by main.gd (restart only in solo).
+## buttons. Restart and quit are callables set by main.gd: the host (and solo) gets a rematch /
+## restart (NetSession.rematch()), clients see `waiting_text`; everyone can leave to the menu.
 
 var world: SimWorld = null
 var local_peer: int = 1
 var view: WorldView = null
-var restart: Callable = Callable()  ## invalid = no restart offered (multiplayer for now)
+var restart: Callable = Callable()  ## invalid = no restart offered (clients wait for the host)
+var restart_label: String = "REMATCH"
 var quit: Callable = Callable()
+var quit_label: String = "LEAVE TO MENU"
+var waiting_text: String = "WAITING FOR THE HOST TO CALL A REMATCH"
 
 var _hits: Array = []
 
@@ -83,7 +87,7 @@ func _draw() -> void:
 		var wv: SimVehicle = world.get_vehicle_for_peer(world.winner_peer)
 		title = "%s WINS" % (UiKit.player_name(wv) if wv else "NOBODY")
 		sub = "YOUR CONVOY IS LOST - ROUND %d" % world.round
-		col = UiKit.player_color(wv) if wv else Gfx.UI_TEXT
+		col = UiKit.bar_color(wv.color_index) if wv else Gfx.UI_TEXT
 	else:
 		title = "NO SURVIVORS"
 		sub = "THE HIVE TAKES IT ALL - ROUND %d" % world.round
@@ -100,12 +104,11 @@ func _draw() -> void:
 	y += 9.0
 	draw_rect(Rect2(r.position.x + 12, y - 3, r.size.x - 24, 1), Gfx.OUTLINE)
 	for v in world.vehicles:
-		var pc: Color = UiKit.player_color(v)
-		draw_rect(Rect2(cols[0], y, 5, 5), pc)
-		var nm: String = UiKit.player_name(v) + (" (YOU)" if v.peer_id == local_peer else "")
-		if v.peer_id == world.winner_peer:
-			nm += " - WINNER"
-		PixelFont.draw(self, nm, Vector2(cols[0] + 9, y), pc if v.peer_id != local_peer else Gfx.UI_TEXT, Gfx.UI_SHADOW)
+		UiKit.swatch(self, Rect2(cols[0] - 1, y - 1, 7, 7), v.color_index)
+		var nx: float = UiKit.paint_text(self, UiKit.player_name(v), Vector2(cols[0] + 9, y), v.color_index)
+		var tag: String = "WINNER" if v.peer_id == world.winner_peer else ("(YOU)" if v.peer_id == local_peer else "")
+		if tag != "":
+			PixelFont.draw(self, tag, Vector2(nx + 3, y), Gfx.FIRE[4] if v.peer_id == world.winner_peer else Gfx.UI_TEXT, Gfx.UI_SHADOW)
 		PixelFont.draw(self, "OUT" if v.eliminated else str(v.fuel), Vector2(cols[1], y), Gfx.UI_DIM if v.eliminated else Gfx.FIRE[3], Gfx.UI_SHADOW)
 		PixelFont.draw(self, str(v.kills), Vector2(cols[2], y), Gfx.UI_TEXT, Gfx.UI_SHADOW)
 		PixelFont.draw(self, "%d/%d" % [v.tech.size(), Tech.count()], Vector2(cols[3], y), Gfx.UI_TEXT, Gfx.UI_SHADOW)
@@ -123,18 +126,25 @@ func _draw() -> void:
 	# buttons
 	var by: float = r.end.y - 24.0
 	var has_restart: bool = restart.is_valid()
-	var bw: float = 100.0
+	var bw: float = 104.0
 	var bx: float = cx - (bw + 4.0 if has_restart else bw / 2.0)
+	var mouse: Vector2 = get_local_mouse_position()
 	if has_restart:
 		var rb := Rect2(bx, by, bw, 17)
+		var hov: bool = rb.has_point(mouse)
 		UiKit.steel(self, rb)
-		UiKit.hazard_frame(self, rb, 2.0)
-		UiKit.center_text(self, "ENTER - NEW CONVOY", rb.get_center().x, rb.position.y + 6, Gfx.UI_TEXT, Gfx.OUTLINE)
+		UiKit.hazard_frame(self, rb, 2.0, Color.WHITE if hov else Color(0.8, 0.8, 0.8))
+		UiKit.center_text(self, "ENTER - %s" % restart_label, rb.get_center().x, rb.position.y + 6, Gfx.FIRE[5] if hov else Gfx.UI_TEXT, Gfx.OUTLINE)
 		_hits.append([rb, "restart"])
 		bx += bw + 8.0
 	var qb := Rect2(bx, by, bw, 17)
 	UiKit.steel(self, qb)
-	UiKit.center_text(self, "ESC - QUIT", qb.get_center().x, qb.position.y + 6, Gfx.UI_TEXT, Gfx.OUTLINE)
+	UiKit.center_text(self, "ESC - %s" % quit_label, qb.get_center().x, qb.position.y + 6, Gfx.FIRE[5] if qb.has_point(mouse) else Gfx.UI_TEXT, Gfx.OUTLINE)
 	_hits.append([qb, "quit"])
-	if not has_restart:
-		UiKit.center_text(self, "RELAUNCH THE HOST FOR A REMATCH", cx, r.end.y + 6, Gfx.UI_DIM, Gfx.OUTLINE)
+	if not has_restart and waiting_text != "":
+		var dots: String = ".".repeat(int(Time.get_ticks_msec() / 400) % 4)
+		var t: String = waiting_text + dots
+		var tw: float = PixelFont.width(waiting_text + "...") + 12.0
+		var tr := Rect2(floorf(cx - tw / 2.0), r.end.y + 4, tw, 9)
+		UiKit.tape(self, tr, Color("#e8dcc4"))
+		PixelFont.draw(self, t, Vector2(tr.position.x + 6, tr.position.y + 2), Gfx.INK)

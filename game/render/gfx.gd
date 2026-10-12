@@ -11,7 +11,10 @@ const ENEMY_DIRS := 16
 const FX_DIRS := 16
 
 const TEX_GROUND := preload("res://assets/ground_dune_sea.png")
-const TEX_BUGGY: Array[Texture2D] = [preload("res://assets/buggy_red.png"), preload("res://assets/buggy_magenta.png")]
+## Hull strips per paint job, indexed by SimVehicle.color_index (tools/artgen/palette.py PLAYERS order).
+const TEX_BUGGY: Array[Texture2D] = [preload("res://assets/buggy_red.png"), preload("res://assets/buggy_magenta.png"),
+	preload("res://assets/buggy_blue.png"), preload("res://assets/buggy_green.png"), preload("res://assets/buggy_white.png"),
+	preload("res://assets/buggy_purple.png"), preload("res://assets/buggy_lime.png"), preload("res://assets/buggy_black.png")]
 const TEX_TURRET := preload("res://assets/turret_mg.png")
 const TEX_MITE := preload("res://assets/mite.png")
 const TEX_MITE_GLOW := preload("res://assets/mite_glow.png")
@@ -43,6 +46,8 @@ const TEX_TAPE := preload("res://assets/ui_tape.png")
 const TEX_HAZARD := preload("res://assets/ui_hazard.png")
 const TEX_STEEL := preload("res://assets/ui_steel.png")
 const TEX_VIGNETTE := preload("res://assets/ui_vignette.png")
+const TEX_LOGO := preload("res://assets/ui_logo.png")
+const TEX_SPLAT := preload("res://assets/ui_splat.png")
 ## Cells of ui_icons.png (16x16 each), as in tools/artgen/ui.py ICON_NAMES.
 const ICON_NAMES: PackedStringArray = ["mg", "shotgun", "cannon", "flamer", "armor", "mobility", "behavior",
 	"ballistics", "engineering", "propulsion", "electronics", "salvage", "scrap", "fuel"]
@@ -94,14 +99,22 @@ const CRT_HI := Color("#ffe48a")
 const CATEGORY_COLORS := {
 	"weapon": Color("#d8673e"), "armor": Color("#a3a8b0"), "mobility": Color("#d6ad30"), "behavior": Color("#a9a66a"),
 }
-## Player paint (PLAYERS ramp, step 3), indexed by Gfx.player_index(). The art has two paint jobs so
-## far; further players cycle through them until more colours are designed.
-const PLAYER_COLORS: Array[Color] = [Color("#d9473a"), Color("#c84aae")]
-const PLAYER_NAMES: PackedStringArray = ["RED", "MAGENTA"]
+## Player paint (PLAYERS ramp, step 3), indexed by SimVehicle.color_index (0..7). Eight distinct
+## paints: never cyan/teal (alien GLOW) and never yellow/orange (FIRE tracers); design doc 11c.
+const PLAYER_COLORS: Array[Color] = [Color("#d9473a"), Color("#c84aae"), Color("#3f6ae4"), Color("#3fa449"),
+	Color("#e4e1da"), Color("#8549d0"), Color("#9fcb2c"), Color("#27262c")]
+const PLAYER_NAMES: PackedStringArray = ["RED", "MAGENTA", "BLUE", "GREEN", "WHITE", "PURPLE", "LIME", "BLACK"]
+## Paints too dark for the usual dark text shadow: their text gets a light rim instead.
+const DARK_PAINT := 7
 
 
 static func player_index(v: SimVehicle) -> int:
-	return v.id % TEX_BUGGY.size()
+	return color_slot(v.color_index)
+
+
+## A colour index clamped to the paint table (robust against junk from older snapshots).
+static func color_slot(color_index: int) -> int:
+	return clampi(color_index, 0, PLAYER_COLORS.size() - 1)
 
 
 ## Frame index for a world angle (radians, Godot convention 0 = east) in an N-frame strip.

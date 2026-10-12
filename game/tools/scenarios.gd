@@ -10,15 +10,21 @@ extends RefCounted
 ## - "gameover_mp"  (about 200 ticks): magenta runs dry, red is the last rig standing.
 ## - "eliminated"   (about 220 ticks): three rigs; red runs dry and spectates (ELIMINATED).
 ##
-## The sim does not give spitters an attack yet; step() lets them lob acid (owner -1 projectiles,
-## which the sim already handles) on a fixed cadence so alien projectiles show up in shots.
+## Spitters scattered into skirmish / horde spit real acid (the sim's own attack, any round).
+##
+## UI scenarios (main.gd also builds the menu from ui_state()):
+## - "menu"     the attract battlefield (eight rigs, one per paint) behind the main menu.
+## - "join"     the join screen with two fake discovered hosts (one in a match).
+## - "lobby"    the host's lobby: four drivers, mixed ready.
+## - "pause"    skirmish with the pause / menu overlay (LAN wording: the fight goes on).
+## - "rematch"  gameover_mp seen by the host: REMATCH and LEAVE TO MENU.
+## - "waiting"  gameover_mp seen by the loser (a client): waiting for the host's rematch.
 
-const NAMES: PackedStringArray = ["skirmish", "horde", "workshop", "gameover", "gameover_mp", "eliminated"]
+const NAMES: PackedStringArray = ["skirmish", "horde", "workshop", "gameover", "gameover_mp", "eliminated",
+	"menu", "join", "lobby", "pause", "rematch", "waiting"]
 const WORKSHOP_ROUND := 3
-const SPIT_PERIOD := 45  ## ticks
-const SPIT_RANGE := 230.0
-const SPIT_SPEED := 170.0
-const SPIT_DAMAGE := 6.0
+const ATTRACT_NAMES: PackedStringArray = ["RUSTBUCKET", "DUNE RAT", "MAD MAREK", "SANDY", "OLD SMOKEY",
+	"NOMAD", "LIMEADE", "NIGHTCRAWLER"]
 
 
 static func build(name: String, p_seed: int) -> SimWorld:
@@ -34,7 +40,7 @@ static func build(name: String, p_seed: int) -> SimWorld:
 		"gameover":
 			var w1 := SimWorld.new(p_seed)
 			w1.fast_rounds = true
-			w1.add_vehicle(1, SimWorld.ARENA.get_center())
+			w1.add_vehicle(1, SimWorld.ARENA.get_center(), "MAD MAREK")
 			w1.vehicles[0].fuel = 15
 			_scatter(w1, 500, 0.08, 0.04, 120.0, 700.0)
 			return w1
@@ -46,16 +52,68 @@ static func build(name: String, p_seed: int) -> SimWorld:
 		"eliminated":
 			var w3: SimWorld = _skirmish(p_seed)
 			w3.fast_rounds = true
-			w3.add_vehicle(3, Vector2(640, 600))
+			w3.add_vehicle(3, Vector2(640, 600), "NIGHTCRAWLER", 7)
 			w3.vehicles[0].fuel = 15
 			return w3
+		"menu", "join", "lobby":
+			return attract(p_seed)
+		"pause":
+			return _skirmish(p_seed)
+		"rematch", "waiting":
+			return build("gameover_mp", p_seed)
 	return null
 
 
-static func step(name: String, w: SimWorld) -> void:
-	w.step()
-	_spit(w)
+## Menu backdrop: one rig per paint job, named, driving and fighting through a scattered hive.
+static func attract(p_seed: int) -> SimWorld:
+	var w := SimWorld.new(p_seed)
+	var c: Vector2 = SimWorld.ARENA.get_center()
+	var drives: PackedStringArray = ["circle", "kite", "charge"]
+	for i in SimVehicle.COLOR_COUNT:
+		var a: float = TAU * float(i) / float(SimVehicle.COLOR_COUNT)
+		w.add_vehicle(i + 1, c + Vector2(cos(a) * 420.0, sin(a) * 230.0), ATTRACT_NAMES[i], i)
+		w.apply_command(i + 1, {"type": "set_drive", "value": drives[i % 3]})
+	_scatter(w, 260, 0.07, 0.06, 90.0, 760.0)
+	return w
+
+
+## What main.gd shows on top of a UI scenario's world ({} = the plain game view).
+static func ui_state(name: String) -> Dictionary:
+	var lobby: Array[Dictionary] = [
+		{"peer_id": 1, "name": "MAD MAREK", "color_index": 0, "ready": false, "is_host": true},
+		{"peer_id": 2, "name": "DUNE RAT", "color_index": 2, "ready": true, "is_host": false},
+		{"peer_id": 3, "name": "NIGHTCRAWLER", "color_index": 7, "ready": false, "is_host": false},
+		{"peer_id": 4, "name": "LIMEADE", "color_index": 6, "ready": true, "is_host": false},
+	]
 	match name:
+		"menu":
+			return {"screen": "main", "profile": ["MAD MAREK", 0]}
+		"join":
+			return {"screen": "join", "profile": ["SANDY", 3], "ip": "192.168.1.",
+				"hosts": [
+					{"address": "192.168.1.20", "port": 24680, "name": "MAD MAREK", "players": 3, "state": "lobby"},
+					{"address": "192.168.1.37", "port": 24680, "name": "OLD SMOKEY", "players": 5, "state": "match"},
+				]}
+		"lobby":
+			return {"screen": "lobby", "profile": ["MAD MAREK", 0], "players": lobby, "is_host": true, "local_peer": 1,
+				"info": "HOSTING ON PORT 24680 - FRIENDS FIND YOU UNDER JOIN LAN GAME"}
+		"pause":
+			return {"screen": "pause", "solo": false}
+		"rematch":
+			return {"game_over": "host"}
+		"waiting":
+			return {"game_over": "client", "local_peer": 2}
+	return {}
+
+
+static func step(name: String, w: SimWorld) -> void:
+	if name == "rematch" or name == "waiting":
+		name = "gameover_mp"
+	w.step()
+	match name:
+		"menu", "join", "lobby":
+			if w.phase == SimWorld.PHASE_WORKSHOP:
+				_ready_all(w)
 		"workshop":
 			if w.phase == SimWorld.PHASE_WORKSHOP:
 				if w.round < WORKSHOP_ROUND:
@@ -115,8 +173,8 @@ static func _stage_workshop(w: SimWorld) -> void:
 ## Two rigs (red: circle / nearest, magenta: kite / players_first) in a running horde.
 static func _skirmish(p_seed: int) -> SimWorld:
 	var w := SimWorld.new(p_seed)
-	w.add_vehicle(1, Vector2(420, 420))
-	w.add_vehicle(2, Vector2(900, 300))
+	w.add_vehicle(1, Vector2(420, 420), "MAD MAREK")
+	w.add_vehicle(2, Vector2(900, 300), "DUNE RAT")
 	w.apply_command(1, {"type": "set_drive", "value": "circle"})
 	w.apply_command(1, {"type": "set_target", "value": "nearest"})
 	w.apply_command(2, {"type": "set_drive", "value": "kite"})
@@ -128,7 +186,7 @@ static func _skirmish(p_seed: int) -> SimWorld:
 ## One rig in the middle of ~800 aliens.
 static func _horde(p_seed: int) -> SimWorld:
 	var w := SimWorld.new(p_seed)
-	w.add_vehicle(1, SimWorld.ARENA.get_center())
+	w.add_vehicle(1, SimWorld.ARENA.get_center(), "MAD MAREK")
 	_scatter(w, 800, 0.06, 0.03, 170.0, 760.0)
 	return w
 
@@ -157,20 +215,3 @@ static func _scatter(w: SimWorld, n: int, boulder_p: float, spitter_p: float, mi
 		w.spawn_enemy(kind, p)
 		placed += 1
 
-
-static func _spit(w: SimWorld) -> void:
-	for i in w.enemy_count:
-		if w.enemy_kind[i] != SimWorld.SPITTER or (w.tick + w.enemy_id[i] * 11) % SPIT_PERIOD != 0:
-			continue
-		var from: Vector2 = w.enemy_pos[i]
-		var best: SimVehicle = null
-		var best_d: float = SPIT_RANGE
-		for v in w.vehicles:
-			var d: float = v.pos.distance_to(from)
-			if v.alive and d < best_d:
-				best = v
-				best_d = d
-		if best == null:
-			continue
-		var dir: Vector2 = from.direction_to(best.pos + best.vel * (best_d / SPIT_SPEED))
-		w.spawn_projectile(from + dir * 10.0, dir * SPIT_SPEED, SPIT_RANGE / SPIT_SPEED + 0.2, SPIT_DAMAGE, -1)

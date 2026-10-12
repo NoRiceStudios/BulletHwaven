@@ -77,7 +77,7 @@ func _draw_status(v: SimVehicle) -> void:
 	if v != null:
 		hp_frac = clampf(v.hp / v.max_hp, 0.0, 1.0) if v.alive else 0.0
 		fuel = maxi(v.fuel, 0)
-	UiKit.bar(self, Rect2(bx, 19, bw, 5), hp_frac, UiKit.player_color(v) if v else Gfx.UI_DIM)
+	UiKit.bar(self, Rect2(bx, 19, bw, 5), hp_frac, UiKit.bar_color(v.color_index) if v else Gfx.UI_DIM)
 	var fuel_col: Color = Gfx.FIRE[3] if fuel > 40 else Gfx.UI_BAD
 	UiKit.bar(self, Rect2(bx, 27, bw - 16, 5), float(fuel) / float(SimWorld.START_FUEL), fuel_col)
 	var ft := str(fuel)

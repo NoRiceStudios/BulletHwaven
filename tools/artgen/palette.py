@@ -35,9 +35,19 @@ SPORE = ["#2a2433", "#463a52", "#665173", "#8a6d8f", "#ad91a8"]
 FIRE = ["#3a1a14", "#7a2a14", "#c4481c", "#ef7d22", "#ffb53d", "#ffe48a", "#fffbe0"]
 SMOKE = ["#2a2426", "#433a3a", "#605453", "#807272", "#9e9088"]
 
+# Player paint jobs, in SimVehicle.color_index order (0..7). Eight clearly distinct paints
+# (design doc 11c): never cyan/teal (GLOW is the aliens' colour), never yellow/orange (FIRE is
+# the player tracers'), and each must read on sand by day and on dark ground at night.
+# Step 3 is the "paint" colour used for name tags and UI swatches.
 PLAYERS = {
     "red": ["#4a0f12", "#7d1a1d", "#b02a28", "#d9473a", "#f07560"],
     "magenta": ["#3c1238", "#6a1f60", "#9c3089", "#c84aae", "#e57fcf"],
+    "blue": ["#121a4f", "#1d2d80", "#2a46b4", "#3f6ae4", "#7d9ff7"],
+    "green": ["#10301a", "#1a5226", "#287a34", "#3fa449", "#7fd07a"],
+    "white": ["#4e4b4a", "#85817d", "#b7b3ab", "#e4e1da", "#fbfaf5"],
+    "purple": ["#26113f", "#401c6c", "#5f2b9e", "#8549d0", "#b283ee"],
+    "lime": ["#283809", "#486212", "#6f941c", "#9fcb2c", "#d0ec72"],
+    "black": ["#08080a", "#121114", "#1b1a1e", "#27262c", "#45434d"],
 }
 
 UI_TEXT = "#f0d9b0"
@@ -47,6 +57,6 @@ RAMPS = {
     "SAND": SAND, "SALT": SALT, "CANYON": CANYON, "ROCK": ROCK, "BONE": BONE,
     "STEEL": STEEL, "RUST": RUST, "TYRE": TYRE, "KHAKI": KHAKI, "BRASS": BRASS, "BURLAP": BURLAP,
     "CHITIN": CHITIN, "GLOW": GLOW, "CRYSTAL": CRYSTAL, "VOLATILE": VOLATILE,
-    "FIRE": FIRE, "SMOKE": SMOKE, "PLAYER RED": PLAYERS["red"],
-    "PLAYER MAGENTA": PLAYERS["magenta"],
+    "FIRE": FIRE, "SMOKE": SMOKE,
+    **{f"PLAYER {k.upper()}": v for k, v in PLAYERS.items()},
 }

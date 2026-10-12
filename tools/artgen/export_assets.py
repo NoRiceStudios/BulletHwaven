@@ -341,8 +341,10 @@ def export(out=OUT):
     fx_ang = [k * 2 * math.pi / FX_DIRS for k in range(FX_DIRS)]
 
     # vehicles: hull (RotSprite) + separate turret (drawn natively per angle)
-    for player, sd in (("red", 1), ("magenta", 9)):
-        save(sheet([rotated_frames(lambda: sprites.buggy(player, seed=sd, gun=False), VEHICLE_DIRS, 64)]),
+    seeds = {"red": 1, "magenta": 9}  # the first two keep their original weathering
+    for i, player in enumerate(PLAYERS):  # PLAYERS order = SimVehicle.color_index
+        sd = seeds.get(player, 20 + i * 3)
+        save(sheet([rotated_frames(lambda p=player, sd=sd: sprites.buggy(p, seed=sd, gun=False), VEHICLE_DIRS, 64)]),
              f"buggy_{player}.png")
     save(sheet([[turret_frame(a) for a in v_ang]]), "turret_mg.png")
 
@@ -387,4 +389,6 @@ def export(out=OUT):
     save(ui.hazard(), "ui_hazard.png")
     save(ui.steel_plate(), "ui_steel.png")
     save(ui.vignette(), "ui_vignette.png")
+    save(ui.logo(), "ui_logo.png")
+    save(ui.splat(), "ui_splat.png")
     print("wrote game assets to", os.path.normpath(out))

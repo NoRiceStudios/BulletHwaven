@@ -8,6 +8,9 @@ static var _plate: StyleBoxTexture = null
 static var _steel: StyleBoxTexture = null
 static var _tape: StyleBoxTexture = null
 
+## Tape tint behind black-paint names.
+const PAINT_TAPE := Color("#d6cfbf")
+
 
 static func _box(tex: Texture2D) -> StyleBoxTexture:
 	var sb := StyleBoxTexture.new()
@@ -116,12 +119,54 @@ static func pct(x: float) -> String:
 	return "%d%%" % roundi(x * 100.0)
 
 
+## The driver's name (sanitised by the sim, printable ASCII).
 static func player_name(v: SimVehicle) -> String:
-	return Gfx.PLAYER_NAMES[Gfx.player_index(v)]
+	return v.player_name
 
 
 static func player_color(v: SimVehicle) -> Color:
 	return Gfx.PLAYER_COLORS[Gfx.player_index(v)]
+
+
+## Text in paint colour `color_index` (small font) with a dark drop shadow. Black paint is sprayed
+## on a strip of masking tape instead, so it stays readable on dark plates and night ground.
+## Returns the x after the text.
+static func paint_text(ci: CanvasItem, text: String, pos: Vector2, color_index: int) -> float:
+	var slot: int = Gfx.color_slot(color_index)
+	if slot == Gfx.DARK_PAINT:
+		tape(ci, Rect2(pos.floor() - Vector2(3, 2), Vector2(PixelFont.width(text) + 6.0, 9)), PAINT_TAPE)
+		return PixelFont.draw(ci, text, pos, Gfx.PLAYER_COLORS[slot])
+	return PixelFont.draw(ci, text, pos, Gfx.PLAYER_COLORS[slot], Gfx.OUTLINE)
+
+
+## The same in the stencil font (lobby roster).
+static func paint_big(ci: CanvasItem, text: String, pos: Vector2, color_index: int) -> float:
+	var slot: int = Gfx.color_slot(color_index)
+	if slot == Gfx.DARK_PAINT:
+		tape(ci, Rect2(pos.floor() - Vector2(4, 2), Vector2(PixelFont.width_big(text) + 8.0, 11)), PAINT_TAPE)
+		return PixelFont.draw_big(ci, text, pos, Gfx.PLAYER_COLORS[slot])
+	return PixelFont.draw_big(ci, text, pos, Gfx.PLAYER_COLORS[slot], Gfx.OUTLINE)
+
+
+## A fill colour for bars and swatches on dark UI: the paint, or steel grey for black paint.
+static func bar_color(color_index: int) -> Color:
+	var slot: int = Gfx.color_slot(color_index)
+	return Gfx.STEEL[4] if slot == Gfx.DARK_PAINT else Gfx.PLAYER_COLORS[slot]
+
+
+## Small square paint chip inside `r` (1px dark frame; black paint gets a light frame).
+static func swatch(ci: CanvasItem, r: Rect2, color_index: int) -> void:
+	var slot: int = Gfx.color_slot(color_index)
+	ci.draw_rect(r, Gfx.STEEL[4] if slot == Gfx.DARK_PAINT else Gfx.OUTLINE)
+	ci.draw_rect(r.grow(-1.0), Gfx.PLAYER_COLORS[slot])
+	ci.draw_rect(Rect2(r.position + Vector2.ONE, Vector2(r.size.x - 2.0, 1)), Gfx.PLAYER_COLORS[slot].lightened(0.3))
+
+
+## Paint splat swatch (16x16) in paint colour `color_index`, top-left at `pos`.
+static func splat(ci: CanvasItem, pos: Vector2, color_index: int, alpha: float = 1.0) -> void:
+	var col: Color = Gfx.PLAYER_COLORS[Gfx.color_slot(color_index)]
+	col.a = alpha
+	ci.draw_texture(Gfx.TEX_SPLAT, pos.floor(), col)
 
 
 # ---------------------------------------------------------------- card and tech text
