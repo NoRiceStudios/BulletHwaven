@@ -42,6 +42,8 @@
 - `doctrine: Dictionary = {"drive": "circle", "target": "nearest"}`.
 - `weapons: Array[Dictionary]`, each `{"kind": "mg", "damage": float, "range": float, "cooldown_ticks": int, "cooldown": int, "aim": float}`. `aim` is the world angle, updated by the sim so render can rotate turrets.
 
+Sim details (clarifications, no contract change): `enemy_vel`/`proj_vel` are px/s; `proj_ttl` is seconds; event `kind` is the enemy kind hit/killed (`-1` for a vehicle), `fire` kind is `0` (mg), and for `vehicle_destroyed` `owner` is the destroyed vehicle's id. Extras on `SimWorld`: `spawning_enabled`, `spawn_enemy(kind, pos)`, `spawn_projectile(...)`, `query_enemies(...)`, `rebuild_derived()` (call after a snapshot rewrites the arrays: resets `enemy_count`/`proj_count` and the spatial hash). `checksum()` covers contract state only (not rng state or AI scratch).
+
 Skeleton gameplay: vehicles drive themselves according to their doctrine; weapons auto-fire at targets in range. Mites chase the nearest vehicle and deal contact damage; boulders are slow and tanky. Spawn rate grows over time. Projectiles hit enemies and other players' vehicles (PvP), never their owner. Kills give scrap.
 
 ## Net contract (`net/`)
