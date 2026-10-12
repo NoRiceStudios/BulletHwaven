@@ -1,0 +1,18 @@
+- **Upgrade value (solo):** `balanced` scores 14.1 vs 5.0 for `never_upgrade` (+9.1 rounds, x2.82).
+- **Solo policy ranking (score):** best `balanced_kite` (16.2), `greedy_damage` (15.7), `balanced` (14.1), `tech_rush` (11.1); worst `focus_flamer` (8.0), `balanced_charge` (7.8), `random` (6.8), `never_upgrade` (5.0).
+- **Dominant solo strategies (> balanced + 1.5 rounds):** `greedy_damage` (+1.6 vs balanced), `balanced_kite` (+2.1 vs balanced).
+- **Solo strategies far behind balanced (< -4 rounds, excluding baselines):** `speedster` (-6.1), `focus_mg` (-5.2), `focus_shotgun` (-4.4), `focus_flamer` (-6.1), `saver` (-6.0), `balanced_charge` (-6.3), `pvp_hunter` (-5.9).
+- **Pacing, solo:** 0 of 15 policies survive to the round cap in 50%+ of runs (-): the alien curve is too gentle for decent builds.
+- **Pacing, solo:** eliminated runs end at median round 8 (p10 6, p90 13); a rig has 5 lives (20 fuel each), see the fuel table.
+- **Weapon strength (solo score of the single-weapon focus policies):** `mg` 8.9, `shotgun` 9.7, `cannon` 10.9, `flamer` 8.0.
+- **Economy:** a `balanced` rig ends with 2764 unspent scrap on average (all 15 tech cost 2650 in total): scrap is a real (if mild) constraint.
+- **FFA policies winning significantly more than 25%:** none.
+- **FFA policies winning significantly less than 25%:** `random` (0%, avg place 3.45).
+- **Pacing, ffa:** 55% of matches are decided before the round cap; median length 19 rounds (p90 20).
+- **PvP share:** 51% of ffa vehicle losses were caused by another player (bots only attack players when `players_first`).
+- **Cards that significantly raise survival (random-policy lift, owned at round 5):** `mg` (+1.0 rounds), `cannon` (+1.4 rounds).
+- **Cards that significantly lower it:** `vulture` (-1.0 rounds).
+- **Cards almost never picked by any scored policy (<10% pick rate):** none.
+- **Tech that significantly raises survival (random-policy lift):** `ballistics_2` (+1.4 rounds).
+- **Tech that significantly lowers it:** none detected.
+- **Tech owned by fewer than 25% of players at the end:** `propulsion_3`, `salvage_3`.

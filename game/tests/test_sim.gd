@@ -85,6 +85,7 @@ func test_spawn_rate_ramps() -> void:
 func test_pvp_damage() -> void:
 	var w := SimWorld.new(99)
 	w.spawning_enabled = false
+	w.round = SimWorld.PVP_START_ROUND  # no PvP before this round (see test_pvp.gd)
 	var a := w.add_vehicle(1, Vector2(600, 360))
 	var b := w.add_vehicle(2, Vector2(690, 360))
 	for p in [1, 2]:

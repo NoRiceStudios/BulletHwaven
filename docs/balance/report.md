@@ -258,3 +258,43 @@ All figures are measured on frozen copies of the sim (exploration runs of 6 seed
 
 Cards that are fine as measured: `mg` and `cannon` give the strongest lift (+1.2 / +1.0) but all four single-weapon focus builds land within 13-15 (the `balanced` mix with two weapons plus tech reaches 20), so there is no weapon to nerf. `vulture` is dead in PvE (-0.8 round) but strong in PvP (ffa lift +43 points), which suits its design; `scrap_magnet` only matters once scrap is scarce (re-check after #1).
 
+
+
+## Iteration 2: balance package applied
+
+Applied from `proposed_changes.md` (rows 1-5 plus the PvP rows 6): `Tech.TIER_COSTS` 15/30/55 -> 70/160/300, `HP_SCALE_PER_ROUND` 0.12 -> 0.15, `SPAWN_SCALE_PER_ROUND` 0.10 -> 0.11, `CONTACT_ARMOR_FACTOR` 0.04 -> 0.08, `REROLL_COST_START` 2 -> 6. New rules (all in `sim_world.gd` / `vehicle_ai.gd`, see `docs/architecture.md`, "PvP rules"): no PvP before round 4 (`PVP_START_ROUND`), bounty on the leader (3x kill bounty), 2 s of halved damage after a player kill, and return fire (a vehicle shoots back for 2 s at a player that deliberately targeted it).
+
+Run: `scripts/bot-league.sh --solo-seeds 10 --ffa-matches 60 --random-seeds 100 --out docs/balance/iteration2` (6.5 min on 4 cores; full output in `docs/balance/iteration2/`). Iteration 1 numbers above are 10 seeds, 80 ffa matches, 300 random seeds, so differences below about 1 round (solo) or 10 points of win rate (ffa) are noise.
+
+| metric | before | after | target |
+|---|---|---|---|
+| `balanced` solo score / median | 19.4 / 19.6 | 14.1 / 13.5 | median 12-16 |
+| `balanced_kite` / `greedy_damage` median | 20.5 / 20.1 | 16.5 / 16.5 | 12-16 (kite and greedy slightly above) |
+| `never_upgrade` score | 5.3 | 5.0 | <= 5 |
+| `random` score | 8.1 | 6.8 | |
+| policies reaching the round cap in 50%+ of solo runs | 3 of 15 | 0 of 15 | 0 |
+| `balanced` unspent scrap at the end | 9,918 | 2,764 (whole tree: 2,650) | scrap is a constraint |
+| `balanced` techs owned at the start of round 5 | about 12 of 15 by round 3 | 5.0 | not maxed by round 4 |
+| solo losses caused by boulders (`balanced`) | 89% | 82% | lower |
+| `tank` (armour first) vs `balanced` | -7.2 | -3.6 (10.5 vs 14.1) | closer |
+| `pvp_hunter` ffa win rate (fair share 25%) | 74% | 11% (2 of 18, avg place 2.83) | < 45% |
+| ffa matches decided before the cap / median length | 52% / 20 | 55% / 19 | |
+| top ffa win rate | `pvp_hunter` 74% | `focus_cannon` 38%, `balanced_kite` 31%, `balanced` 31% | no policy above 45% |
+
+How the ffa result was reached (60 ffa matches each, same seeds and policy mixes, ffa only):
+
+| variant | `pvp_hunter` wins | median game length | note |
+|---|---|---|---|
+| grace period + leader bounty + protection only | 61% | 17 | the bounty never reaches the other bots, which do not fight back; protection even helps the hunter |
+| + return fire after any hit by a player | 17% | 7 | stray shots at aliens started wars between all rigs, vehicles stopped killing aliens and died to boulders |
+| same, `FUEL_LOSS_PVP` 30 -> 20 and PvP damage x0.5 | 17% | 8 | no change in length: lethality was not the cause |
+| return fire only after a deliberate attack (shooter targets the victim) | 11% | 19 | **kept** |
+| no return fire, fuel 20, PvP damage x0.5 | 67% | 20 | constants alone do not stop the hunter |
+
+Remaining concerns:
+- `greedy_damage` and `balanced_kite` still end up at a median of 16.5 and 10% of kite runs reach the cap; one more small step (for example `HP_SCALE_PER_ROUND` 0.16) would bring them to about 15 but would pull `balanced` below 13.
+- Single-weapon and mobility builds are now at 8-11 rounds (`speedster` 8.0, `focus_flamer` 8.0, `focus_mg` 8.9): weapon cards and non-weapon cards are still thin (proposed rows 7 and 8, untested). Boulders cause 60-90% of all solo losses; armour is better than before (`tank` 10.5) but `tank` still trails.
+- The `pvp_hunter` policy is now weak (11%); whether a pure hunter should be a viable strategy is a design call. The leader bounty and the protection matter little in bot play because only `players_first` bots chase players; they need a human test.
+- Return fire is a new rule that the design doc only mentions as the "Opportunistic" stance (section 8); its 2 s window and the "deliberate attack" condition are untested with humans.
+- `propulsion_3` and `salvage_3` are owned by under 25% of players at the end (the 300-scrap tier is out of reach in short runs); `vulture` is still the only card with a significant negative lift (-1.0).
+- The "alien curve too gentle" finding line still prints for an empty list (cosmetic, `bot_league.gd`).

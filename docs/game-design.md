@@ -229,7 +229,7 @@ When a **Champion kills a player**, it survives, levels up, gains a mutation and
 - **Clear visual language** for mutations: each one has a consistent visual feature (glow colour, crystal growth, pulsing). Section 11.
 
 ### 7j. Round flow (example, about 14 rounds)
-- **Rounds 1–3:** 1–2 species, no mutations, each player in their own sector (no PvP). Learn the build basics.
+- **Rounds 1–3:** 1–2 species, no mutations, each player in their own sector (no PvP). Learn the build basics. *In the current build there are no sectors; the same rule is enforced directly: before round 4 (`PVP_START_ROUND`) vehicles do not target, shoot or ram each other. Section 8 notes the first anti-snowball rules that came with it.*
 - **Rounds 4, 8, 12:** **Boss rounds** from the match's boss trio. Optionally a contested world boss.
 - **From round 5:** mutations start appearing, the next round is announced, and random events become possible.
 - **From round 6:** **the Blight** (a battle-royale zone) closes, sectors merge, and PvP becomes common. The hive starts to adapt.
@@ -256,6 +256,7 @@ When a **Champion kills a player**, it survives, levels up, gains a mutation and
 - **Bounty on the leader:** the player with the most kills or the strongest vehicle is visible on the map and worth a big reward.
 - **Underdog bonus:** players in the bottom places get +scrap and a better card rarity in the draft.
 - **Third-party protection:** after a PvP kill you get a short shield / repair burst, so fights aren't pure losses.
+- *Implemented so far (balance iteration 2):* the leader (most kills + scrap/10) is marked and worth 3x the normal kill bounty, and a player kill gives 2 s of halved damage taken. The underdog bonus and the visible map marker are still open.
 - **Separate PvE and PvP values:** damage against vehicles is calculated through its own armour layer (plating), so swarm-clearing builds don't automatically delete players.
 
 **After elimination: the Horde Warlord (against R3)**

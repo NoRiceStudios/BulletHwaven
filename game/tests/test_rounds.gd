@@ -231,7 +231,7 @@ func test_offers_and_pick() -> void:
 			uniq[id] = true
 		assert_eq(uniq.size(), 3, "distinct offers")
 		assert_false(v.picked)
-		assert_eq(v.reroll_cost, 2)
+		assert_eq(v.reroll_cost, SimWorld.REROLL_COST_START)
 	var v1: SimVehicle = w.vehicles[0]
 	var choice: String = v1.offers[1]
 	var before: int = int(v1.cards.get(choice, 0))
@@ -333,27 +333,28 @@ func test_reroll() -> void:
 	var first: Array[String] = v.offers.duplicate()
 	w.apply_command(1, {"type": "reroll"})
 	assert_eq(v.offers, first, "no scrap, no reroll")
-	assert_eq(v.reroll_cost, 2)
-	v.scrap = 20
+	var c0: int = SimWorld.REROLL_COST_START
+	assert_eq(v.reroll_cost, c0)
+	v.scrap = 100
 	w.apply_command(1, {"type": "reroll"})
-	assert_eq(v.scrap, 18, "first reroll costs 2")
-	assert_eq(v.reroll_cost, 3, "cost goes up by 1")
+	assert_eq(v.scrap, 100 - c0, "first reroll costs the start price")
+	assert_eq(v.reroll_cost, c0 + 1, "cost goes up by 1")
 	assert_eq(v.offers.size(), 3)
 	w.apply_command(1, {"type": "reroll"})
-	assert_eq(v.scrap, 15)
-	assert_eq(v.reroll_cost, 4)
-	v.scrap = 3
+	assert_eq(v.scrap, 100 - c0 - (c0 + 1))
+	assert_eq(v.reroll_cost, c0 + 2)
+	v.scrap = c0 + 1
 	w.apply_command(1, {"type": "reroll"})
-	assert_eq(v.scrap, 3, "cannot afford 4")
-	v.scrap = 20
+	assert_eq(v.scrap, c0 + 1, "cannot afford the next one")
+	v.scrap = 100
 	w.apply_command(1, {"type": "pick_card", "value": 0})
 	w.apply_command(1, {"type": "reroll"})
-	assert_eq(v.scrap, 20, "no reroll after the pick")
+	assert_eq(v.scrap, 100, "no reroll after the pick")
 	# The cost resets every workshop.
 	w.apply_command(1, {"type": "ready"})
 	w.step()
 	_to_workshop(w)
-	assert_eq(v.reroll_cost, 2)
+	assert_eq(v.reroll_cost, c0)
 
 
 func test_late_joiner_gets_offers_in_workshop() -> void:
@@ -416,7 +417,7 @@ func test_tech_changes_derived_stats() -> void:
 	assert_eq(v.scrap_mult, 1.0)
 	assert_eq(v.weapon_slots, 2)
 	assert_eq(v.interest_cap, 5)
-	v.scrap = 1000
+	v.scrap = 3000
 	for id in ["ballistics_1", "ballistics_2", "engineering_1", "propulsion_1", "electronics_1", "salvage_1"]:
 		assert_true(Tech.buy(v, id), id)
 	assert_gt(float(v.weapons[0]["damage"]), base_damage, "ballistics: damage")
@@ -888,6 +889,7 @@ func _compare_round_state(host: SimWorld, client: SimWorld) -> void:
 	assert_eq(client.round, host.round, "round")
 	assert_eq(client.phase_ticks_left, host.phase_ticks_left, "phase_ticks_left")
 	assert_eq(client.winner_peer, host.winner_peer, "winner_peer")
+	assert_eq(client.leader_peer, host.leader_peer, "leader_peer")
 	assert_eq(client.vehicles.size(), host.vehicles.size())
 	for i in host.vehicles.size():
 		var a: SimVehicle = host.vehicles[i]
@@ -898,6 +900,7 @@ func _compare_round_state(host: SimWorld, client: SimWorld) -> void:
 		assert_eq(b.ready, a.ready, "ready")
 		assert_eq(b.picked, a.picked, "picked")
 		assert_eq(b.reroll_cost, a.reroll_cost, "reroll_cost")
+		assert_eq(b.protect_ticks, a.protect_ticks, "protect_ticks")
 		assert_eq(b.offers, a.offers, "offers")
 		assert_eq(b.cards, a.cards, "cards")
 		assert_eq(b.tech, a.tech, "tech")
@@ -929,7 +932,7 @@ func test_snapshot_round_trip_of_round_state() -> void:
 	client.add_vehicle(9, Vector2(1, 1))  # stale content
 	assert_true(Snapshot.apply(client, Snapshot.encode(host)))
 	_compare_round_state(host, client)
-	assert_eq(client.vehicles[1].reroll_cost, 3)
+	assert_eq(client.vehicles[1].reroll_cost, SimWorld.REROLL_COST_START + 1)
 	# Mid-combat with a dead vehicle, then game over with a winner.
 	host.apply_command(1, {"type": "ready"})
 	host.apply_command(2, {"type": "ready"})
@@ -981,21 +984,22 @@ func test_snapshot_rejects_bad_round_state() -> void:
 	assert_true(Snapshot.apply(client, good))
 	client = SimWorld.new(0)
 	client.add_vehicle(1, Vector2(1, 2))
-	# Tail: ... cards n=1, idx, level, tech n=0.
+	# Tail: ... cards n=1, idx, level, tech n=0, protect_ticks.
 	var n: int = good.size()
-	assert_eq(good[n - 4], 1, "one card")
+	assert_eq(good[n - 5], 1, "one card")
 	var bad_level: PackedByteArray = good.duplicate()
-	bad_level[n - 2] = 9
+	bad_level[n - 3] = 9
 	assert_false(Snapshot.apply(client, bad_level), "level out of range")
 	var zero_level: PackedByteArray = good.duplicate()
-	zero_level[n - 2] = 0
+	zero_level[n - 3] = 0
 	assert_false(Snapshot.apply(client, zero_level), "level 0")
 	var bad_card: PackedByteArray = good.duplicate()
-	bad_card[n - 3] = 200
+	bad_card[n - 4] = 200
 	assert_false(Snapshot.apply(client, bad_card), "card index out of range")
 	var bad_tech: PackedByteArray = good.duplicate()
-	bad_tech[n - 1] = 1
-	bad_tech.append(250)
+	bad_tech[n - 2] = 1
+	bad_tech[n - 1] = 250
+	bad_tech.append(0)
 	assert_false(Snapshot.apply(client, bad_tech), "tech index out of range")
 	var bad_phase: PackedByteArray = good.duplicate()
 	bad_phase[21] = 7

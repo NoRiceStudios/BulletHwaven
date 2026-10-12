@@ -44,7 +44,16 @@ static func _acquire(w: SimWorld, v: SimVehicle) -> void:
 	v.target_id = -1
 	var rng_range: float = v.max_range()
 	var mode: String = v.doctrine.get("target", "nearest")
-	if mode == "players_first":
+	if v.retaliate_ticks > 0 and mode != "players_first" and w.pvp_enabled():
+		# Return fire: shoot back at the player that hurt us, if it is in range.
+		var attacker: SimVehicle = w.vehicles[v.retaliate_id]
+		if attacker.alive and v.pos.distance_squared_to(attacker.pos) <= rng_range * rng_range:
+			v.target_kind = 2
+			v.target_index = attacker.id
+			v.target_id = attacker.id
+			_refresh_target(w, v)
+			return
+	if mode == "players_first" and w.pvp_enabled():
 		var best: SimVehicle = null
 		var best_d2: float = rng_range * rng_range
 		for o in w.vehicles:

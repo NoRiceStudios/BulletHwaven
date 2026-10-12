@@ -3,8 +3,8 @@ extends RefCounted
 ## Compact binary world snapshot (host -> clients). See docs/architecture.md ("Net contract").
 ##
 ## Layout (little endian):
-##   header   30 B  version, flags, tick, next_enemy_id, counts, enemy id base,
-##                   phase, round, phase_ticks_left, winner_peer
+##   header   34 B  version, flags, tick, next_enemy_id, counts, enemy id base,
+##                   phase, round, phase_ticks_left, winner_peer, leader_peer
 ##   vehicles variable (about 160 B each: doctrine strings, weapons, fuel / flags, offers, cards, tech,
 ##                   player name and colour index)
 ##   events   7 B each  type, owner, kind, pos (u16 x2, 1/32 px, offset by POS_ORIGIN)
@@ -17,14 +17,14 @@ extends RefCounted
 ## current round, SimWorld.enemy_max_hp). Card and tech ids are table indices (Cards.DEFS / Tech.DEFS).
 ## Projectile pierce / splash are not sent: the client world is passive.
 
-const VERSION := 3
+const VERSION := 4  # 4: header leader_peer, per-vehicle protect_ticks
 const FLAG_WIDE_IDS := 1  ## enemy ids spread over more than 65535: ids are sent as u32 deltas from 0
 
 const POS_SCALE := 32.0
 const POS_ORIGIN := 64.0  ## added to projectile/event coordinates (they may leave the arena slightly)
 const POS_ERROR := 1.0 / 64.0
 
-const HEADER_BYTES := 30
+const HEADER_BYTES := 34
 const ENEMY_BYTES := 8
 const WIDE_ENEMY_BYTES := 10
 const PROJ_BYTES := 13
@@ -79,6 +79,7 @@ static func encode(world: SimWorld, p_events: Array[Dictionary] = []) -> PackedB
 	sp.put_u16(clampi(world.round, 1, MAX_ROUND))
 	sp.put_u16(clampi(world.phase_ticks_left, 0, 65535))
 	sp.put_32(world.winner_peer)
+	sp.put_32(world.leader_peer)
 
 	for vi in n_veh:
 		_put_vehicle(sp, world.vehicles[vi])
@@ -152,6 +153,7 @@ static func apply(world: SimWorld, bytes: PackedByteArray) -> bool:
 	var round_n: int = r.u16()
 	var phase_left: int = r.u16()
 	var winner: int = r.s32()
+	var leader: int = r.s32()
 	if not r.ok or n_veh > MAX_VEHICLES or phase > SimWorld.PHASE_GAME_OVER or round_n < 1:
 		return false
 	var wide: bool = (flags & FLAG_WIDE_IDS) != 0
@@ -248,6 +250,7 @@ static func apply(world: SimWorld, bytes: PackedByteArray) -> bool:
 	world.round = round_n
 	world.phase_ticks_left = phase_left
 	world.winner_peer = winner
+	world.leader_peer = leader
 	_commit_vehicles(world, vehicles)
 	world.events = events
 	world.enemy_id = e_id
@@ -363,6 +366,7 @@ static func _put_vehicle(sp: StreamPeerBuffer, v: SimVehicle) -> void:
 	sp.put_u8(tech_ix.size())
 	for ti in tech_ix:
 		sp.put_u8(ti)
+	sp.put_u8(clampi(v.protect_ticks, 0, 255))
 
 
 static func _get_vehicle(r: _Reader) -> SimVehicle:
@@ -447,6 +451,7 @@ static func _get_vehicle(r: _Reader) -> SimVehicle:
 			r.fail()
 		tech.append(tid)
 	v.tech = tech
+	v.protect_ticks = r.u8()
 	if r.ok:
 		# Derived stats follow from cards + tech; weapons and hp are exactly as sent.
 		Cards.recompute(v, false, false)
@@ -497,6 +502,7 @@ static func _commit_vehicles(world: SimWorld, fresh: Array[SimVehicle]) -> void:
 			dst.vulture = src.vulture
 			dst.weapon_slots = src.weapon_slots
 			dst.interest_cap = src.interest_cap
+			dst.protect_ticks = src.protect_ticks
 		elif i < cur.size():
 			cur[i] = src
 		else:

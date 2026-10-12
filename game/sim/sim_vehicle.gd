@@ -34,7 +34,7 @@ var eliminated: bool = false
 var ready: bool = false  ## workshop: done shopping
 var offers: Array[String] = []  ## 3 card ids to pick from, empty once picked
 var picked: bool = false
-var reroll_cost: int = 2
+var reroll_cost: int = SimWorld.REROLL_COST_START
 var cards: Dictionary = {"mg": 1}  ## card id -> level 1..3 (insertion order = acquisition order)
 var tech: Array[String] = []  ## owned tech ids
 
@@ -50,6 +50,7 @@ var vulture: float = 0.0  ## extra damage fraction vs targets under 30% hp
 var weapon_slots: int = 2
 var interest_cap: int = 5
 var scrap_frac: float = 0.0  ## fractional scrap carried by scrap_mult
+var protect_ticks: int = 0  ## third-party protection: > 0 means damage taken is halved (set by a player kill)
 
 # AI scratch state (derived each tick; not part of the checksum).
 var target_kind: int = 0  ## 0 = none, 1 = enemy, 2 = vehicle
@@ -58,6 +59,8 @@ var target_id: int = -1  ## stable enemy id (kind 1) or vehicle id (kind 2)
 var target_pos: Vector2 = Vector2.ZERO
 var target_vel: Vector2 = Vector2.ZERO  ## px/s
 var orbit_dir: float = 1.0
+var retaliate_id: int = -1  ## vehicle id of the last player that hurt this one (return fire), -1 = none
+var retaliate_ticks: int = 0  ## ticks left for the return-fire memory
 var ram_damage: float = 0.0  ## per-tick damage dealt to touching enemies/vehicles ("charge")
 
 

@@ -18,6 +18,8 @@ Effect: `focus_shotgun` 12.8 -> 13.8 solo; ffa avg place 3.17 -> 3.08; random-po
 
 ### Proposed, not applied
 
+**Update:** rows 1 to 6 were applied in iteration 2 (see the end of `report.md`; row 6 became the PvP grace period plus return fire). Rows 7 and 8 are still open.
+
 All figures are measured on frozen copies of the sim (exploration runs of 6 seeds, plus the what-if run above).
 
 | # | file | constant | old | new | rationale / evidence | confidence |

@@ -9,7 +9,7 @@ extends RefCounted
 ## dmg, range, rate (all additive) and slots, interest (integers).
 
 const BRANCHES: PackedStringArray = ["ballistics", "engineering", "propulsion", "electronics", "salvage"]
-const TIER_COSTS: PackedInt32Array = [15, 30, 55]
+const TIER_COSTS: PackedInt32Array = [70, 160, 300]
 const MAX_TIER := 3
 
 const DEFS: Array = [

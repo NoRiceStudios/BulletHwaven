@@ -30,6 +30,14 @@ const SPREAD := 0.04  # radians, uniform +-
 const SPLASH_FRACTION := 0.5  # splash damage as a fraction of the direct hit
 const PVP_KILL_SCRAP := 15  # bounty for destroying another player's vehicle
 
+# PvP rules (design doc 7j and 8): grace period and anti-snowball.
+const PVP_START_ROUND := 4  # before this round vehicles never target, shoot or ram each other
+const LEADER_BOUNTY_MULT := 3  # killing the leader pays PVP_KILL_SCRAP x this
+const LEADER_SCRAP_DIVISOR := 10  # leader score = kills + scrap / this
+const PVP_PROTECT_TICKS := 60  # 2 s of third-party protection after a player kill
+const PVP_PROTECT_FACTOR := 0.5  # damage multiplier while protected
+const RETALIATE_TICKS := 60  # return fire: a vehicle shoots back at a player that hurt it for 2 s (any doctrine)
+
 const SPAWN_RATE_START := 1.5  # enemies / s
 const SPAWN_RATE_RAMP := 0.5  # added every SPAWN_RAMP_INTERVAL seconds of the combat phase
 const SPAWN_RAMP_INTERVAL := 10.0
@@ -66,19 +74,19 @@ const FUEL_LOSS := 20  # destroyed by aliens
 const FUEL_LOSS_PVP := 30  # destroyed by another player
 const RESPAWN_TICKS := 90  # 3 s
 const INTEREST_PER := 10  # +1 scrap per this much scrap held at the end of a round
-const REROLL_COST_START := 2
+const REROLL_COST_START := 6
 const RETREAT_EVENT_CAP := 150  # at most this many "retreat" events per round end
 
 # Per-round enemy scaling (round 1 = x1).
-const HP_SCALE_PER_ROUND := 0.12
-const SPAWN_SCALE_PER_ROUND := 0.10
+const HP_SCALE_PER_ROUND := 0.15
+const SPAWN_SCALE_PER_ROUND := 0.11
 const BOULDER_CHANCE_PER_ROUND := 0.025
 const BOULDER_CHANCE_MAX := 0.4
 const DAMAGE_SCALE_PER_ROUND := 0.03
 
 # Armour: flat reduction per hit with a floor; per touching enemy per tick it counts for much less.
 const ARMOR_MIN_FRACTION := 0.25
-const CONTACT_ARMOR_FACTOR := 0.04
+const CONTACT_ARMOR_FACTOR := 0.08
 
 const SPAWN_SPOT_CLEARANCE := 90.0  # no vehicle closer than this to a respawn spot
 const SPAWN_SPOT_ENEMY_CLEARANCE := 70.0
@@ -98,6 +106,8 @@ var phase: int = PHASE_COMBAT
 var round: int = 1
 var phase_ticks_left: int = COMBAT_TICKS_EARLY
 var winner_peer: int = -1  ## peer id of the winner once phase == PHASE_GAME_OVER (-1 = none / solo loss)
+## Peer id of the marked leader (bounty target), -1 = nobody. See update_leader().
+var leader_peer: int = -1
 ## Shortens combat and workshop (tests, screenshots). Set it right after construction: at tick 0 it
 ## also resets the running combat timer.
 var fast_rounds: bool = false:
@@ -227,6 +237,50 @@ static func _integral(x: Variant) -> int:
 	return -1
 
 
+# ---------------------------------------------------------------- PvP rules
+
+## False during the grace rounds (< PVP_START_ROUND): vehicles do not target players, player
+## projectiles pass through other vehicles and ramming does no damage. Alien hits are unaffected.
+func pvp_enabled() -> bool:
+	return round >= PVP_START_ROUND
+
+
+## Leader score: kills (aliens and players) plus a tenth of the scrap in hand.
+func leader_score(v: SimVehicle) -> int:
+	return v.kills + v.scrap / LEADER_SCRAP_DIVISOR
+
+
+## Recomputes `leader_peer`: the non-eliminated vehicle with the strictly highest leader_score, or -1
+## while PvP is off, fewer than two vehicles are still in the game, or the top score is tied (a tied
+## incumbent keeps the mark). Deterministic, no rng.
+func update_leader() -> void:
+	var best: int = -1
+	var best_peer: int = -1
+	var tied: bool = false
+	var incumbent_in_top: bool = false
+	var alive_n: int = 0
+	if pvp_enabled():
+		for v in vehicles:
+			if v.eliminated:
+				continue
+			alive_n += 1
+			var s: int = leader_score(v)
+			if s > best:
+				best = s
+				best_peer = v.peer_id
+				tied = false
+				incumbent_in_top = v.peer_id == leader_peer
+			elif s == best:
+				tied = true
+				incumbent_in_top = incumbent_in_top or v.peer_id == leader_peer
+	if alive_n < 2 or best <= 0:
+		leader_peer = -1
+	elif not tied:
+		leader_peer = best_peer
+	elif not incumbent_in_top:
+		leader_peer = -1
+
+
 # ---------------------------------------------------------------- round scaling
 
 static func enemy_hp_mult(r: int) -> float:
@@ -313,6 +367,7 @@ func step() -> void:
 
 
 func _step_combat() -> void:
+	update_leader()
 	_update_respawns()
 	_update_enemies()
 	_update_vehicles()
@@ -346,7 +401,7 @@ func _step_workshop() -> void:
 func checksum() -> int:
 	var ctx := HashingContext.new()
 	ctx.start(HashingContext.HASH_SHA256)
-	var head := PackedInt64Array([tick, enemy_count, proj_count, vehicles.size(), phase, round, phase_ticks_left, winner_peer, next_enemy_id])
+	var head := PackedInt64Array([tick, enemy_count, proj_count, vehicles.size(), phase, round, phase_ticks_left, winner_peer, next_enemy_id, leader_peer])
 	ctx.update(head.to_byte_array())
 	var vf := PackedFloat64Array()
 	for v in vehicles:
@@ -383,6 +438,7 @@ func checksum() -> int:
 		vf.append(v.vulture)
 		vf.append(float(v.weapon_slots))
 		vf.append(float(v.interest_cap))
+		vf.append(float(v.protect_ticks))
 		vf.append(float(v.offers.size()))
 		for oid in v.offers:
 			vf.append(float(Cards.index_of(oid)))
@@ -470,6 +526,8 @@ func _respawn(v: SimVehicle) -> void:
 	v.hp = v.max_hp
 	v.alive = true
 	v.respawn_ticks = 0
+	v.protect_ticks = 0
+	v.retaliate_ticks = 0
 	v.target_kind = 0
 	v.heading = (ARENA.get_center() - v.pos).angle()
 	_emit("respawn", v.pos, v.id, -1)
@@ -516,6 +574,8 @@ func _begin_workshop() -> void:
 		v.ram_damage = 0.0
 		v.ready = false
 		v.picked = false
+		v.protect_ticks = 0
+		v.retaliate_ticks = 0
 		v.reroll_cost = REROLL_COST_START
 		v.offers = []
 		if v.eliminated:
@@ -814,6 +874,10 @@ func _update_vehicles() -> void:
 	for v in vehicles:
 		if not v.alive:
 			continue
+		if v.protect_ticks > 0:
+			v.protect_ticks -= 1
+		if v.retaliate_ticks > 0:
+			v.retaliate_ticks -= 1
 		if v.regen > 0.0 and v.hp < v.max_hp:
 			v.hp = minf(v.hp + v.regen * DT, v.max_hp)
 		VehicleAI.update_target(self, v)
@@ -849,6 +913,8 @@ func _resolve_vehicle_contacts() -> void:
 			var push: Vector2 = dv * ((min_d - d) * 0.5 / d)
 			va.pos -= push
 			vb.pos += push
+			if not pvp_enabled():
+				continue  # grace period: the vehicles only push each other
 			if va.ram_damage > 0.0:
 				_damage_vehicle(vb, va.ram_damage, va.id)
 			if vb.ram_damage > 0.0:
@@ -862,6 +928,13 @@ func _damage_vehicle(v: SimVehicle, dmg: float, attacker: int, use_armor: bool =
 		return
 	if use_armor and v.armor > 0.0:
 		dmg = maxf(dmg - v.armor, dmg * ARMOR_MIN_FRACTION)
+	if v.protect_ticks > 0:
+		dmg *= PVP_PROTECT_FACTOR
+	if attacker >= 0 and attacker != v.id and attacker < vehicles.size():
+		var av0: SimVehicle = vehicles[attacker]
+		if av0.target_kind == 2 and av0.target_id == v.id:  # deliberate attack, not a stray shot
+			v.retaliate_id = attacker
+			v.retaliate_ticks = RETALIATE_TICKS
 	v.hp -= dmg
 	if v.hp > 0.0:
 		return
@@ -881,7 +954,9 @@ func _damage_vehicle(v: SimVehicle, dmg: float, attacker: int, use_armor: bool =
 	if by_player:
 		var av: SimVehicle = vehicles[attacker]
 		av.kills += 1
-		av.scrap += PVP_KILL_SCRAP
+		av.scrap += PVP_KILL_SCRAP * (LEADER_BOUNTY_MULT if v.peer_id == leader_peer else 1)
+		if av.alive:
+			av.protect_ticks = PVP_PROTECT_TICKS
 
 
 func _fire_weapons(v: SimVehicle) -> void:
@@ -956,6 +1031,7 @@ func _update_projectiles() -> void:
 	var n: int = proj_count
 	var i: int = n - 1
 	var nveh: int = vehicles.size()
+	var pvp: bool = pvp_enabled()
 	var a_lo := ARENA.position - Vector2(40, 40)
 	var a_hi := ARENA.end + Vector2(40, 40)
 	while i >= 0:
@@ -983,7 +1059,7 @@ func _update_projectiles() -> void:
 					hit_enemy = j
 		for vi in nveh:
 			var v: SimVehicle = vehicles[vi]
-			if not v.alive or v.id == owner:
+			if not v.alive or v.id == owner or (owner >= 0 and not pvp):
 				continue
 			var tv: float = _segment_circle_t(p0, step_v, v.pos, SimVehicle.RADIUS + PROJECTILE_RADIUS)
 			if tv >= 0.0 and tv < best_t:
