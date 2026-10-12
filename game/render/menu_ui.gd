@@ -404,9 +404,10 @@ func _profile_panel(r: Rect2, taken: Dictionary) -> void:
 	var c: Vector2 = inner.get_center().floor()
 	var frame: int = int(_t * 5.0) % Gfx.VEHICLE_DIRS
 	var tex: Texture2D = Gfx.TEX_BUGGY[Gfx.color_slot(col)]
-	var src := Rect2(frame * 64, 0, 64, 64)
-	draw_texture_rect_region(tex, Rect2(c - Vector2(32, 32) + Vector2(3, 4), Vector2(64, 64)), src, Color(0.18, 0.15, 0.24, 0.45))
-	draw_texture_rect_region(tex, Rect2(c - Vector2(32, 32), Vector2(64, 64)), src)
+	var fs: float = float(RigArt.FRAME)
+	var src := Rect2(frame * fs, 0, fs, fs)
+	draw_texture_rect_region(tex, Rect2(c - Vector2(fs, fs) / 2.0 + Vector2(3, 4), Vector2(fs, fs)), src, Color(0.18, 0.15, 0.24, 0.45))
+	draw_texture_rect_region(tex, Rect2(c - Vector2(fs, fs) / 2.0, Vector2(fs, fs)), src)
 	var piv: Vector2 = Gfx.snap(Gfx.TURRET_PIVOT.rotated(Gfx.frame_rotation(frame, Gfx.VEHICLE_DIRS)))
 	draw_texture_rect_region(Gfx.TEX_TURRET, Rect2(c + piv - Vector2(18, 18), Vector2(36, 36)), Rect2(frame * 36, 0, 36, 36))
 	var nm: String = _edit if _focus == "name" else _shown_name()

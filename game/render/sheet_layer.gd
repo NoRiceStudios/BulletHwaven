@@ -10,7 +10,7 @@ var _nodes: Array[MultiMeshInstance2D] = []
 
 
 func setup(tex: Texture2D, cols: int, rows: int, z: int, glow_tex: Texture2D = null,
-		shadow_offset: Vector2 = Vector2.ZERO, glow_intensity: float = 1.0) -> void:
+		shadow_offset: Vector2 = Vector2.ZERO, glow_intensity: float = 1.0, shadow_alpha: float = 0.45) -> void:
 	var cell := Vector2(tex.get_width() / cols, tex.get_height() / rows)
 	_mm = MultiMesh.new()
 	_mm.transform_format = MultiMesh.TRANSFORM_2D
@@ -24,6 +24,7 @@ func setup(tex: Texture2D, cols: int, rows: int, z: int, glow_tex: Texture2D = n
 		sh.set_shader_parameter("frames", cols)
 		sh.set_shader_parameter("rows", rows)
 		sh.set_shader_parameter("shadow", true)
+		sh.set_shader_parameter("shadow_color", Color(0.184, 0.165, 0.239, shadow_alpha))
 		_add_node(tex, sh, Gfx.Z_SHADOWS, shadow_offset)
 	var body := ShaderMaterial.new()
 	body.shader = Gfx.SHEET_SHADER

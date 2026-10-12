@@ -112,6 +112,24 @@ def biome_sheet():
     return cv
 
 
+def rig_sheet():
+    """The layered rig (rig.py): eight builds, one per paint, facing north and turned."""
+    import rig
+    tile = 104
+    W, H = tile * 8, tile * 2 + 24
+    cv = Canvas(W, H)
+    cv.rgb[:] = dune_sea(W, H, seed=11) * 0.55 + rgb(SAND[2]) * 0.45
+    cv.a[:] = 1
+    text(cv, "THE RIG GROWS: HULL + BOLT-ON LAYERS PER CARD AND ENGINEERING TIER", 6, 4, UI_TEXT, OUTLINE)
+    for i, (name, b) in enumerate(rig.SAMPLE_BUILDS):
+        for j, ang in enumerate((0.0, 2.4)):
+            r = rig.compose(b, ang, aim=ang + 0.6, size=tile)
+            cast_shadow(cv, r, i * tile, 14 + j * tile, 3, 4, strength=0.4)
+            paste(cv, r, i * tile, 14 + j * tile)
+        label(cv, name, i * tile + tile // 2, H - 9)
+    return cv
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--scale", type=int, default=3)
@@ -128,6 +146,7 @@ def main():
     palette_sheet().to_image(s).save(os.path.join(OUT, "palette.png"))
     sprite_sheet().to_image(s).save(os.path.join(OUT, "sprites.png"))
     biome_sheet().to_image(s).save(os.path.join(OUT, "biomes.png"))
+    rig_sheet().to_image(s).save(os.path.join(OUT, "rigs.png"))
     sc = scene.build()
     scene.finish(scene.render_day(sc)).to_image(s).save(os.path.join(OUT, "mockup_day.png"))
     scene.finish(scene.render_night(sc)).to_image(s).save(os.path.join(OUT, "mockup_night.png"))

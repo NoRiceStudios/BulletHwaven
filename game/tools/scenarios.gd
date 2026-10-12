@@ -12,6 +12,15 @@ extends RefCounted
 ##
 ## Spitters scattered into skirmish / horde spit real acid (the sim's own attack, any round).
 ##
+## Visual review scenarios (playtest round 1 #6, #11, #12):
+## - "rig_growth"   eight parked rigs, one per paint, from the starter buggy to a tier-3 rig with a
+##                  trailer: every card's bolt-on (guns per level, plates, spikes, nitro, tracks...).
+##                  The world is not stepped (any ticks), so the line-up stays put.
+## - "late_round"   (about 240 ticks) round 8: a dense hive of boulders and spitters, corpses piling
+##                  up, the local rig at low hp (red vignette), rivals with builds and a bounty leader.
+## - "pvp_on"       (about 380 ticks) fast rounds up to the start of round 4: the PVP ON banner.
+## - "rig_kill"     (about 60 ticks) a rival rig blowing up next to yours (explosion and debris).
+##
 ## UI scenarios (main.gd also builds the menu from ui_state()):
 ## - "menu"     the attract battlefield (eight rigs, one per paint) behind the main menu.
 ## - "join"     the join screen with two fake discovered hosts (one in a match).
@@ -21,7 +30,18 @@ extends RefCounted
 ## - "waiting"  gameover_mp seen by the loser (a client): waiting for the host's rematch.
 
 const NAMES: PackedStringArray = ["skirmish", "horde", "workshop", "gameover", "gameover_mp", "eliminated",
-	"menu", "join", "lobby", "pause", "rematch", "waiting"]
+	"menu", "join", "lobby", "pause", "rematch", "waiting", "rig_growth", "late_round", "pvp_on", "rig_kill"]
+## rig_growth line-up: [engineering tier, {card: level}] per paint (weapon cards in mount order).
+const GROWTH_BUILDS: Array = [
+	[0, {}],
+	[1, {"mg": 2, "shotgun": 1, "steel_plates": 2, "v8_engine": 1}],
+	[2, {"shotgun": 3, "flamer": 2, "spiked_plating": 3, "nitro": 2, "berserker": 1, "caterpillar_tracks": 1}],
+	[3, {"cannon": 3, "mg": 3, "flamer": 3, "reinforced_hull": 3, "ablative_scrap": 2, "off_road_tyres": 1, "scrap_magnet": 1}],
+	[2, {"cannon": 1, "steel_plates": 3, "ablative_scrap": 3, "vulture": 1, "regenerator": 1, "v8_engine": 3}],
+	[0, {"flamer": 1, "spiked_plating": 1, "nitro": 1}],
+	[1, {"mg": 3, "cannon": 2, "reinforced_hull": 1, "steel_plates": 1}],
+	[2, {"shotgun": 2, "spiked_plating": 2, "steel_plates": 1, "v8_engine": 2, "off_road_tyres": 1}],
+]
 const WORKSHOP_ROUND := 3
 const ATTRACT_NAMES: PackedStringArray = ["RUSTBUCKET", "DUNE RAT", "MAD MAREK", "SANDY", "OLD SMOKEY",
 	"NOMAD", "LIMEADE", "NIGHTCRAWLER"]
@@ -61,6 +81,16 @@ static func build(name: String, p_seed: int) -> SimWorld:
 			return _skirmish(p_seed)
 		"rematch", "waiting":
 			return build("gameover_mp", p_seed)
+		"rig_growth":
+			return _rig_growth(p_seed)
+		"late_round":
+			return _late_round(p_seed)
+		"pvp_on":
+			var w4: SimWorld = attract(p_seed)
+			w4.fast_rounds = true
+			return w4
+		"rig_kill":
+			return _rig_kill(p_seed)
 	return null
 
 
@@ -109,8 +139,28 @@ static func ui_state(name: String) -> Dictionary:
 static func step(name: String, w: SimWorld) -> void:
 	if name == "rematch" or name == "waiting":
 		name = "gameover_mp"
+	if name == "rig_growth":
+		w.tick += 1  # parked: only the clock runs (nitro flicker, ring)
+		return
+	if name == "pvp_on" and w.round >= SimWorld.PVP_START_ROUND and w.phase == SimWorld.PHASE_COMBAT:
+		w.step()
+		return
 	w.step()
 	match name:
+		"pvp_on":
+			if w.phase == SimWorld.PHASE_WORKSHOP:
+				_ready_all(w)
+		"late_round":
+			var me: SimVehicle = w.vehicles[0]
+			if me.alive:
+				me.hp = minf(me.hp, me.max_hp * 0.18)
+		"rig_kill":
+			if w.tick == 40:  # the rival in front of us takes a cannon shell too many
+				var rv: SimVehicle = w.vehicles[1]
+				rv.invuln_ticks = 0
+				rv.protect_ticks = 0
+				rv.hp = 1.0
+				w.spawn_projectile(rv.pos + Vector2(-30, 0), Vector2(400, 0), 0.5, 500.0, 0)
 		"menu", "join", "lobby":
 			if w.phase == SimWorld.PHASE_WORKSHOP:
 				_ready_all(w)
@@ -168,6 +218,63 @@ static func _stage_workshop(w: SimWorld) -> void:
 	var mag: SimVehicle = w.vehicles[1]
 	w.apply_command(mag.peer_id, {"type": "pick_card", "value": 0})
 	w.apply_command(mag.peer_id, {"type": "ready"})
+
+
+## Gives `v` an engineering tier and cards (levels), then recomputes its stats and weapons.
+static func _outfit(v: SimVehicle, tier: int, cards: Dictionary) -> void:
+	for id: String in cards:
+		for i in int(cards[id]):
+			Cards.grant(v, id)
+	for t in range(1, tier + 1):
+		v.tech.append("engineering_%d" % t)
+	Cards.recompute(v)
+	v.hp = v.max_hp
+
+
+static func _rig_growth(p_seed: int) -> SimWorld:
+	var w := SimWorld.new(p_seed)
+	w.spawning_enabled = false
+	var c: Vector2 = SimWorld.ARENA.get_center()
+	for i in SimVehicle.COLOR_COUNT:
+		var col: int = i % 4
+		var row: int = i / 4
+		var pos: Vector2 = c + Vector2(-114.0 + 76.0 * col, -62.0 + 132.0 * row)
+		var v: SimVehicle = w.add_vehicle(i + 1, pos, ATTRACT_NAMES[i], i)
+		var b: Array = GROWTH_BUILDS[i]
+		_outfit(v, b[0], b[1])
+		v.heading = -PI / 2.0 + (0.0 if row == 0 else 0.4)
+		v.vel = Vector2.from_angle(v.heading) * 60.0  # rolling: nitro jets burn
+		for k in v.weapons.size():
+			v.weapons[k]["aim"] = v.heading + 0.5 - 0.7 * k
+	w.leader_peer = 4
+	return w
+
+
+static func _late_round(p_seed: int) -> SimWorld:
+	var w := SimWorld.new(p_seed)
+	w.round = 8
+	var c: Vector2 = SimWorld.ARENA.get_center()
+	var builds: Array = [GROWTH_BUILDS[6], GROWTH_BUILDS[2], GROWTH_BUILDS[3], GROWTH_BUILDS[7]]
+	var spots: Array = [c, c + Vector2(150, -70), c + Vector2(-170, 90), c + Vector2(230, 120)]
+	for i in builds.size():
+		var v: SimVehicle = w.add_vehicle(i + 1, spots[i], ATTRACT_NAMES[i * 2], [0, 2, 3, 7][i])
+		_outfit(v, builds[i][0], builds[i][1])
+		v.kills = 40 + i * 25
+	w.apply_command(1, {"type": "set_drive", "value": "kite"})
+	_scatter(w, 520, 0.22, 0.14, 70.0, 620.0)
+	return w
+
+
+static func _rig_kill(p_seed: int) -> SimWorld:
+	var w := SimWorld.new(p_seed)
+	w.round = SimWorld.PVP_START_ROUND
+	var c: Vector2 = SimWorld.ARENA.get_center()
+	var me: SimVehicle = w.add_vehicle(1, c, "MAD MAREK", 0)
+	_outfit(me, 1, {"cannon": 2, "steel_plates": 1})
+	var rv: SimVehicle = w.add_vehicle(2, c + Vector2(90, 10), "DUNE RAT", 2)
+	_outfit(rv, 2, {"shotgun": 2, "spiked_plating": 2})
+	_scatter(w, 60, 0.1, 0.05, 160.0, 500.0)
+	return w
 
 
 ## Two rigs (red: circle / nearest, magenta: kite / players_first) in a running horde.

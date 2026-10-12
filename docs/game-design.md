@@ -110,7 +110,7 @@ Five branches, each with about 4–6 tiers:
 - **Electronics:** **doctrine slots** (smarter AI), radar (see further ahead, scout opponents), active-ability cooldown
 - **Salvage:** economy: more scrap per kill, interest, cheaper rerolls, wreck looting
 
-**Interest mechanic (TFT):** +1 scrap per 10 saved at the end of each round (max +5). This creates a "save or spend" decision.
+**Interest mechanic (TFT):** 10% of the scrap you hold at the end of each round (cap 5 + 2 per round, raised by Salvage tech). This creates a "save or spend" decision.
 
 ---
 
@@ -249,14 +249,14 @@ When a **Champion kills a player**, it survives, levels up, gains a mutation and
 **Life system instead of instant elimination (against R3)**
 - Each player has **Fuel Reserves** (e.g. 100), a TFT-style player-HP model.
 - Vehicle destroyed = respawn after a few seconds, but you lose fuel (more if a *player* killed you, and the killer gets a bounty) **plus 1 random module**.
-- Fuel 0 = eliminated. Each loss also drains fuel slowly, so the match ends reliably.
+- Fuel 0 = eliminated. Destroying a rival steals 10 of its fuel loss (leader: 10 more), and from round 8 every rig in a multiplayer game loses 5+ fuel per round (never below 1), so only kills offset it: passive play no longer wins by waiting. Solo has no drain.
 - Result: a bad round is a setback, not game over. Elimination usually only happens in the second half.
 
 **Anti-snowball (against R4/R6)**
 - **Bounty on the leader:** the player with the most kills or the strongest vehicle is visible on the map and worth a big reward.
 - **Underdog bonus:** players in the bottom places get +scrap and a better card rarity in the draft.
 - **Third-party protection:** after a PvP kill you get a short shield / repair burst, so fights aren't pure losses.
-- *Implemented so far (balance iteration 2):* the leader (most kills + scrap/10) is marked and worth 3x the normal kill bounty, and a player kill gives 2 s of halved damage taken. The underdog bonus and the visible map marker are still open.
+- *Implemented so far (balance iteration 2):* the leader (most kills + scrap/10) is marked and worth 3x the normal kill bounty, and a player kill gives 2 s of halved damage taken. *Balance iteration 3:* the lowest-fuel player loses 30% less fuel per death; rigs are invulnerable for 3 s after a respawn and at each combat start; the first 10 s of round 4 are still PvP-free; repeat kills of the same victim in a round pay 100% / 50% / 0%; `players_first` hunts the leader before anyone else. The visible map marker is still open.
 - **Separate PvE and PvP values:** damage against vehicles is calculated through its own armour layer (plating), so swarm-clearing builds don't automatically delete players.
 
 **After elimination: the Horde Warlord (against R3)**
@@ -301,6 +301,7 @@ This explains the scrap economy (the wreck is the resource), the Mad Max look (i
   - Sand Mite: about 8–12 px · Spitter: about 16–24 px · Boulder Back: about 32–48 px · Tripod Walker / boss: 96–200 px
   - Starter buggy: about 32×48 px. A fully built war rig with trailers: 100–250 px long, so the vehicle growth is visible on screen.
 - **Modules are drawn onto the vehicle.** Each module on the chassis grid is a visible sprite at its grid position (guns rotate, armour plates sit on the edge). From above, your build is readable at a glance, which also helps with scouting rivals.
+  - *As built (draft cards, playtest round 1):* every card bolts something on. Each gun card has its own turret (MG, scatter gun, cannon, flamer) and its level shows (twin barrels, ammo drums, longer barrels, extra tanks); the second gun sits on the hood or flatbed, the third on the trailer. Steel plates add painted flank plates, reinforced hull adds girders, ablative scrap adds rusty slabs and tyres, spiked plating adds spikes that grow per level; V8 adds a blower, nitro adds bottles and exhaust flames while driving, tracks and off-road tyres swap the running gear; behaviour cards add a trophy or tool (magnet, horned skull, vulture skull, welding rig). Engineering tier 1 adds a canopy and rear bumper, tier 2 stretches the buggy into a six-wheel truck, tier 3 adds a gun trailer. Paint covers the hood, the flanks and the plates so eight rigs stay apart; your own rig stands on a ring in its paint colour.
 - **Damage is visible:** dented plates, smoke, fire, missing modules, alien goo on the bodywork.
 - **Scrap-built, never factory-new:** every vehicle is patched together from mismatched panels (bare steel, rust, faded olive paint) joined by visible weld seams. Standard wear: bullet holes, dents, scratches, rust streaks, chipped player paint. Rugged add-ons break up the silhouette: spiked ram bars and hubs, chains, barbed wire, sandbags, tarp-covered cargo, jerrycans, ammo belts, trophies.
 - **Organic ground, no repeating patterns:** dunes are built from irregular noise, never periodic stripes or tiles, and sand texture uses random grain instead of an ordered dither. Ordered (checkerboard) dithering is reserved for light and glow effects.

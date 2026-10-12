@@ -9,7 +9,6 @@ const SMOOTH_RATE := 22.0  ## 1/s, easing toward the extrapolated sim position
 const SNAP_DIST := 48.0  ## px, farther jumps (respawn, snapshot correction) snap instead of easing
 const MAX_LEAD := 0.1  ## s, never extrapolate further than this past the last tick
 const TRAIL_STEP := 3.0  ## px of travel between tyre-track stamps
-const REAR_WHEELS: Array[Vector2] = [Vector2(-12, 13), Vector2(12, 13)]  ## buggy, facing north
 const SHOT_EFFECT_TICKS := 10  ## screenshot mode: transient effects from the last N ticks
 const WORKSHOP_CAM_LIFT := 92.0  ## px: in the workshop the camera shows the camped rig near the top
 const CAM_EASE := 4.0  ## 1/s, easing of that lift
@@ -46,8 +45,14 @@ var _hud_layer: CanvasLayer
 var workshop: WorkshopUi
 var game_over: GameOverUi
 var _cam_lift: float = 0.0
+var _shake: float = 0.0  ## 0..1, screen shake from rigs blowing up (decays; never in screenshot mode)
+var _shake_t: float = 0.0
+var _ring: Node2D
+## world.tick at which PvP last switched on (-1 = not seen): the HUD's "PVP ON" banner.
+var pvp_on_tick: int = -1
+var _pvp_prev: bool = false
 
-var _vehicle_nodes: Dictionary = {}  # vehicle id -> [shadow, hull, turret] Sprite2D
+var _vehicle_nodes: Dictionary = {}  # vehicle id -> RigView
 var _veh_disp: Dictionary = {}  # vehicle id -> Vector3(x, y, heading)
 var _veh_trail: Dictionary = {}  # vehicle id -> [position, wheel positions...] at the last track stamp
 var _veh_steps: Dictionary = {}  # vehicle id -> int, track stamps so far (dust cadence)
@@ -70,15 +75,21 @@ func _ready() -> void:
 	_decals.z_index = Gfx.Z_DECALS
 	add_child(_decals)
 
-	var kinds: Array = [  # [texture, glow, rows, shadow offset] per SimWorld enemy kind
-		[Gfx.TEX_MITE, Gfx.TEX_MITE_GLOW, 2, Vector2(1, 2)],
-		[Gfx.TEX_BOULDER, Gfx.TEX_BOULDER_GLOW, 2, Vector2(3, 4)],
-		[Gfx.TEX_SPITTER, Gfx.TEX_SPITTER_GLOW, 1, Vector2(2, 3)],
+	_ring = Node2D.new()
+	_ring.z_index = Gfx.Z_RING
+	_ring.draw.connect(_draw_ring)
+	add_child(_ring)
+
+	var kinds: Array = [  # [texture, glow, rows, shadow offset, shadow alpha] per SimWorld enemy kind
+		[Gfx.TEX_MITE, Gfx.TEX_MITE_GLOW, 2, Vector2(1, 2), 0.45],
+		# boulders cast a longer, darker shadow so a pile reads as separate rocks (#12)
+		[Gfx.TEX_BOULDER, Gfx.TEX_BOULDER_GLOW, 2, Vector2(4, 6), 0.62],
+		[Gfx.TEX_SPITTER, Gfx.TEX_SPITTER_GLOW, 1, Vector2(2, 3), 0.45],
 	]
 	for k in kinds:
 		var layer := SheetLayer.new()
 		add_child(layer)
-		layer.setup(k[0], Gfx.ENEMY_DIRS, k[2], Gfx.Z_ENEMIES, k[1], k[3])
+		layer.setup(k[0], Gfx.ENEMY_DIRS, k[2], Gfx.Z_ENEMIES, k[1], k[3], 1.0, k[4])
 		_enemy_layers.append(layer)
 
 	_tracers = SheetLayer.new()
@@ -141,11 +152,13 @@ func set_world(w: SimWorld, peer: int) -> void:
 	_veh_trail.clear()
 	_veh_steps.clear()
 	for id in _vehicle_nodes:
-		for n: Node in _vehicle_nodes[id]:
-			n.queue_free()
+		(_vehicle_nodes[id] as Node).queue_free()
 	_vehicle_nodes.clear()
 	_decals.clear()
 	_effects.clear()
+	_shake = 0.0
+	pvp_on_tick = -1
+	_pvp_prev = w != null and w.pvp_enabled()
 	_hud.world = w
 	_hud.local_peer = peer
 	workshop.world = w
@@ -159,7 +172,7 @@ static func record_tick(w: SimWorld) -> Dictionary:
 	var veh: Array = []
 	for v in w.vehicles:
 		veh.append([v.id, v.pos, v.heading, v.alive])
-	return {"tick": w.tick, "events": w.events.duplicate(), "vehicles": veh}
+	return {"tick": w.tick, "events": w.events.duplicate(), "vehicles": veh, "pvp": w.pvp_enabled()}
 
 
 ## Screenshot mode: replays recorded ticks so the frame shows the match's history (persistent goo,
@@ -168,7 +181,12 @@ func prime(history: Array) -> void:
 	if world == null or history.is_empty():
 		return
 	var last_tick: int = history[-1]["tick"]
+	var was_pvp: bool = bool(history[0].get("pvp", false))
 	for h: Dictionary in history:
+		var pvp: bool = bool(h.get("pvp", false))
+		if pvp and not was_pvp:
+			pvp_on_tick = int(h["tick"])
+		was_pvp = pvp
 		var age: float = float(last_tick - int(h["tick"])) * SimWorld.DT
 		for vd: Array in h["vehicles"]:
 			if vd[3]:
@@ -185,6 +203,10 @@ func _process(delta: float) -> void:
 		_consume_events(world.events, 0.0, true)
 		_last_tick = world.tick
 		_tick_age = 0.0
+		var pvp: bool = world.pvp_enabled()
+		if pvp and not _pvp_prev:
+			pvp_on_tick = world.tick
+		_pvp_prev = pvp
 	elif not frozen:
 		_tick_age += delta
 	var lead: float = 0.0 if frozen else minf(_tick_age, MAX_LEAD)
@@ -193,8 +215,12 @@ func _process(delta: float) -> void:
 	_update_enemies(lead, k)
 	_update_projectiles(lead)
 	_update_camera(1.0 if frozen else 1.0 - exp(-CAM_EASE * delta))
+	if not frozen:
+		_shake = maxf(0.0, _shake - delta * 2.2)
+		_shake_t += delta
 	_halos.queue_redraw()
 	_labels.queue_redraw()
+	_ring.queue_redraw()
 
 
 # ---------------------------------------------------------------- vehicles
@@ -220,60 +246,40 @@ func _update_vehicles(lead: float, k: float) -> void:
 			head = lerp_angle(head, v.heading, k)
 		_veh_disp[v.id] = Vector3(p.x, p.y, head)
 
-		var nodes: Array = _vehicle_nodes.get(v.id, [])
-		if nodes.is_empty():
-			nodes = _make_vehicle_nodes(v)
-			_vehicle_nodes[v.id] = nodes
-		var shadow: Sprite2D = nodes[0]
-		var hull: Sprite2D = nodes[1]
-		var turret: Sprite2D = nodes[2]
-		var tex: Texture2D = Gfx.TEX_BUGGY[Gfx.player_index(v)]
-		hull.texture = tex
-		shadow.texture = tex
-		var frame: int = Gfx.frame_for_angle(head, Gfx.VEHICLE_DIRS)
-		hull.position = Gfx.snap(p)
-		hull.frame = frame
-		shadow.position = hull.position + Vector2(3, 4)
-		shadow.frame = frame
-		hull.modulate = Color.WHITE if v.alive else Color(0.32, 0.27, 0.27)
-		turret.visible = v.alive
+		var rv: RigView = _vehicle_nodes.get(v.id)
+		if rv == null:
+			rv = RigView.new()
+			add_child(rv)
+			_vehicle_nodes[v.id] = rv
+		rv.setup(v)
+		rv.place(v, Gfx.snap(p), head, world.tick, frozen)
+		rv.set_flash(_protect_flash(v))
 		if v.alive:
-			turret.position = hull.position + Gfx.snap(_turret_pivot(frame))
-			var aim: float = float(v.weapons[0]["aim"]) if not v.weapons.is_empty() else head
-			turret.frame = Gfx.frame_for_angle(aim, Gfx.VEHICLE_DIRS)
 			_trail(v.id, p, head, -1.0 if frozen else 0.0)
 	for id in _vehicle_nodes.keys():
 		if not seen.has(id):
-			for n: Node in _vehicle_nodes[id]:
-				n.queue_free()
+			(_vehicle_nodes[id] as Node).queue_free()
 			_vehicle_nodes.erase(id)
 			_veh_disp.erase(id)
 
 
-func _make_vehicle_nodes(v: SimVehicle) -> Array:
-	var tex: Texture2D = Gfx.TEX_BUGGY[Gfx.player_index(v)]
-	var shadow := Sprite2D.new()
-	shadow.texture = tex
-	shadow.hframes = Gfx.VEHICLE_DIRS
-	shadow.z_index = Gfx.Z_SHADOWS
-	var mat := ShaderMaterial.new()
-	mat.shader = Gfx.SILHOUETTE_SHADER
-	shadow.material = mat
-	var hull := Sprite2D.new()
-	hull.texture = tex
-	hull.hframes = Gfx.VEHICLE_DIRS
-	hull.z_index = Gfx.Z_VEHICLES
-	var turret := Sprite2D.new()
-	turret.texture = Gfx.TEX_TURRET
-	turret.hframes = Gfx.VEHICLE_DIRS
-	turret.z_index = Gfx.Z_TURRETS
-	for n in [shadow, hull, turret]:
-		add_child(n)
-	return [shadow, hull, turret]
+## Protection shimmer strength for this frame (third-party protection, respawn shields).
+func _protect_flash(v: SimVehicle) -> float:
+	if not v.alive or protect_ticks(v) <= 0:
+		return 0.0
+	var t: int = world.tick
+	return 0.15 if (t / 3) % 2 == 0 else 0.0
 
 
-func _turret_pivot(frame: int) -> Vector2:
-	return Gfx.TURRET_PIVOT.rotated(Gfx.frame_rotation(frame, Gfx.VEHICLE_DIRS))
+## Ticks of damage protection left: PvP third-party protection plus any respawn/round-start shield
+## the sim may add (read by name so render keeps working whichever field exists).
+static func protect_ticks(v: SimVehicle) -> int:
+	var n: int = v.protect_ticks
+	for f: String in ["invuln_ticks", "spawn_protect_ticks", "shield_ticks"]:
+		var x: Variant = v.get(f)
+		if x != null:
+			n = maxi(n, int(x))
+	return n
 
 
 ## Tyre tracks (persistent) and dust puffs (transient, `dust_age` < 0 = none) behind the rear wheels.
@@ -283,7 +289,9 @@ func _trail(id: int, p: Vector2, head: float, dust_age: float) -> void:
 		return
 	var rot: float = head + PI / 2.0
 	var cur: Array = [p]
-	for w in REAR_WHEELS:
+	var rv: RigView = _vehicle_nodes.get(id)
+	var foot: int = rv.foot if rv != null else 0
+	for w: Vector2 in RigArt.REAR_WHEELS[foot]:
 		cur.append(p + w.rotated(rot))
 	_veh_trail[id] = cur
 	if last == null or p.distance_to(last[0]) > SNAP_DIST:
@@ -291,7 +299,7 @@ func _trail(id: int, p: Vector2, head: float, dust_age: float) -> void:
 	var steps: int = int(_veh_steps.get(id, 0)) + 1
 	_veh_steps[id] = steps
 	for i in range(1, cur.size()):
-		_decals.track(last[i], cur[i])
+		_decals.track(last[i], cur[i], _track_width(id))
 		if dust_age >= 0.0 and steps % 3 == 0:
 			_effects.spawn(EffectsLayer.Kind.DUST, cur[i] - Vector2.from_angle(head) * 4.0, 0.0, dust_age, steps * 31 + i)
 
@@ -348,7 +356,7 @@ func _update_projectiles(lead: float) -> void:
 func _draw_halos() -> void:
 	var s := Vector2(Gfx.TEX_HALO_CYAN.get_size())
 	for p in _acid_pos:
-		_halos.draw_texture_rect(Gfx.TEX_HALO_CYAN, Rect2(p - s / 2.0, s), false, Color(1, 1, 1, 0.35))
+		_halos.draw_texture_rect(Gfx.TEX_HALO_CYAN, Rect2(p - s / 2.0, s), false, Color(1, 1, 1, 0.6))
 
 
 # ---------------------------------------------------------------- events
@@ -362,7 +370,7 @@ func _consume_events(events: Array, age: float, transient: bool) -> void:
 		match str(e.get("type", "")):
 			"fire":
 				if transient:
-					_muzzle_flash(owner, pos, age)
+					_muzzle_flash(owner, pos, kind, age)
 			"hit":
 				if transient:
 					var ang: float = float(h % 628) / 100.0
@@ -371,28 +379,44 @@ func _consume_events(events: Array, age: float, transient: bool) -> void:
 					else:
 						_effects.spawn(EffectsLayer.Kind.SPARKS, pos, ang, age, h)
 			"kill":
+				if kind < 0:
+					continue  # player kill: the wreck comes from "vehicle_destroyed", no alien goo
 				_kill_decal(pos, kind, h)
 				if transient:
 					_effects.spawn(EffectsLayer.Kind.ICHOR, pos, float(h % 628) / 100.0, age, h + 1)
-			"vehicle_destroyed":
+			"vehicle_destroyed":  # a rig goes up: big blast, flying scrap, shake (#11)
 				_decals.stamp(Gfx.TEX_SCORCH, 2, 1, h % 2, 0, pos)
+				for i in 3:
+					var off := Vector2(float((h >> (i * 4)) % 33 - 16), float((h >> (i * 4 + 2)) % 25 - 12))
+					_decals.stamp(Gfx.TEX_WRECK, 4, 1, (h + i) % 4, 0, pos + off)
 				if transient:
-					_effects.spawn(EffectsLayer.Kind.EXPLOSION, pos, 0.0, age, h)
-					_effects.spawn(EffectsLayer.Kind.SPARKS, pos, 0.0, age, h + 3)
+					_effects.spawn(EffectsLayer.Kind.EXPLOSION_BIG, pos, 0.0, age, h)
+					_effects.spawn(EffectsLayer.Kind.DEBRIS, pos, 0.0, age, h + 5)
+					for i in 3:
+						_effects.spawn(EffectsLayer.Kind.SPARKS, pos, float(i) * 2.1, age, h + 3 + i)
+					_effects.spawn(EffectsLayer.Kind.EXPLOSION, pos + Vector2(9, -6), 0.0, age + 0.12, h + 9)
+					if age < 0.05 and not frozen and _on_screen(pos):
+						_shake = 1.0
 
 
-func _muzzle_flash(vehicle_id: int, muzzle: Vector2, age: float) -> void:
+func _muzzle_flash(vehicle_id: int, muzzle: Vector2, kind: int, age: float) -> void:
 	if vehicle_id < 0 or vehicle_id >= world.vehicles.size():
 		return
 	var v: SimVehicle = world.vehicles[vehicle_id]
-	var ang: float = (muzzle - v.pos).angle()
-	# Put the flash on the drawn barrel tip rather than the sim's muzzle point.
-	var d: Vector3 = _vehicle_display(v)
-	var frame: int = Gfx.frame_for_angle(d.z, Gfx.VEHICLE_DIRS)
-	var pivot: Vector2 = Gfx.snap(Vector2(d.x, d.y)) + Gfx.snap(_turret_pivot(frame))
-	var aim_frame: int = Gfx.frame_for_angle(ang, Gfx.VEHICLE_DIRS)
-	var aim: float = Gfx.frame_rotation(aim_frame, Gfx.VEHICLE_DIRS) - PI / 2.0
-	_effects.spawn(EffectsLayer.Kind.MUZZLE, pivot + Vector2.from_angle(aim) * Gfx.BARREL_LENGTH, aim, age)
+	var rv: RigView = _vehicle_nodes.get(v.id)
+	if rv == null:
+		return
+	# Put the flash on the drawn barrel tip of that gun rather than the sim's muzzle point.
+	var m: Array = rv.muzzle(kind, (muzzle - v.pos).angle())
+	_effects.spawn(EffectsLayer.Kind.MUZZLE, m[0], m[1], age)
+	if kind == Cards.weapon_kind_index("cannon"):
+		_effects.spawn(EffectsLayer.Kind.SPARKS, m[0], m[1] + PI, age, Gfx.hash_pos(m[0], 3))
+
+
+func _track_width(id: int) -> float:
+	if id >= 0 and id < world.vehicles.size() and RigArt.uses_tracks(world.vehicles[id]):
+		return 5.0
+	return 3.0
 
 
 func _kill_decal(pos: Vector2, kind: int, h: int) -> void:
@@ -409,6 +433,11 @@ func _kill_decal(pos: Vector2, kind: int, h: int) -> void:
 
 
 # ---------------------------------------------------------------- camera and labels
+
+func _on_screen(p: Vector2) -> bool:
+	var half: Vector2 = get_viewport_rect().size / 2.0
+	return Rect2(_camera.position - half, half * 2.0).grow(24.0).has_point(p)
+
 
 ## Where the local rig is drawn, in viewport pixels (UI vignettes centre on it).
 func local_screen_pos() -> Vector2:
@@ -442,21 +471,71 @@ func _update_camera(k: float) -> void:
 	c.x = clampf(c.x, SimWorld.ARENA.position.x + half.x, SimWorld.ARENA.end.x - half.x)
 	c.y = clampf(c.y, SimWorld.ARENA.position.y + half.y, SimWorld.ARENA.end.y - half.y)
 	_camera.position = Gfx.snap(c)
+	# shake: whole-pixel jolts on top of the clamped camera (the ground has margin to spare)
+	_camera.offset = Gfx.snap(Vector2(sin(_shake_t * 61.0), cos(_shake_t * 47.0)) * 4.0 * _shake * _shake)
 	_camera.force_update_scroll()
 
 
-## Driver names in paint colour and hp ticks over rival rigs (readability, design doc section 11c).
+## Your own rig stands on a ring of its paint colour, so you find it at a glance (#6).
+func _draw_ring() -> void:
+	if world == null or attract:
+		return
+	var v: SimVehicle = world.get_vehicle_for_peer(local_peer)
+	if v == null or not v.alive:
+		return
+	var rv: RigView = _vehicle_nodes.get(v.id)
+	var d: Vector3 = _vehicle_display(v)
+	var c: Vector2 = Gfx.snap(Vector2(d.x, d.y))
+	var r: float = RigArt.RADIUS[rv.foot if rv != null else 0]
+	var col: Color = Gfx.PLAYER_COLORS[Gfx.player_index(v)]
+	if v.color_index == Gfx.DARK_PAINT:
+		col = Gfx.STEEL[3]
+	var n: int = int(r * 4.0)
+	var spin: int = world.tick / 3
+	for i in n:
+		var a: float = TAU * float(i) / float(n)
+		var p: Vector2 = Gfx.snap(c + Vector2(cos(a), sin(a) * 0.8) * r)
+		var dash: bool = ((i + spin) / 3) % 2 == 0
+		_ring.draw_rect(Rect2(p, Vector2.ONE), Color(col, 0.75 if dash else 0.3))
+		_ring.draw_rect(Rect2(p + Vector2(0, 1), Vector2.ONE), Color(Gfx.OUTLINE, 0.25))
+
+
+## Driver names in paint colour## Driver names in paint colour and hp ticks over rival rigs (readability, design doc section 11c).
 func _draw_labels() -> void:
 	if world == null or attract:
 		return
 	for v in world.vehicles:
-		if v.peer_id == local_peer or not v.alive:
+		if not v.alive:
 			continue
 		var d: Vector3 = _vehicle_display(v)
 		var p: Vector2 = Gfx.snap(Vector2(d.x, d.y))
+		var rv: RigView = _vehicle_nodes.get(v.id)
+		var r: float = RigArt.RADIUS[rv.foot if rv != null else 0]
+		var top: float = p.y - r - 9.0
+		if protect_ticks(v) > 0:
+			_draw_shield(p, r, v.id)
+		if v.peer_id == world.leader_peer:  # bounty mark (#11)
+			var bob: float = float((world.tick / 10) % 2)
+			var s := Vector2(Gfx.TEX_SKULL.get_size())
+			var sy: float = top - (s.y + 1.0 if v.peer_id != local_peer else 0.0) - bob
+			_labels.draw_texture(Gfx.TEX_SKULL, Vector2(p.x - floorf(s.x / 2.0), sy))
+		if v.peer_id == local_peer:
+			continue
 		var tag: String = UiKit.player_name(v)
-		var top: float = p.y - 36.0
 		UiKit.paint_text(_labels, tag, Vector2(p.x - floorf(PixelFont.width(tag) / 2.0), top), v.color_index)
 		var bw: float = 20.0
 		_labels.draw_rect(Rect2(p.x - bw / 2.0 - 1.0, top + 7.0, bw + 2.0, 3.0), Gfx.OUTLINE)
 		_labels.draw_rect(Rect2(p.x - bw / 2.0, top + 8.0, floorf(bw * clampf(v.hp / v.max_hp, 0.0, 1.0)), 1.0), UiKit.bar_color(v.color_index))
+
+
+## Protection shimmer: a broken ring of warm-white sparks orbiting the rig (never cyan: cold = alien).
+func _draw_shield(c: Vector2, r: float, sd: int) -> void:
+	var n: int = 22
+	var t: float = float(world.tick) * 0.09 + float(sd)
+	for i in n:
+		var a: float = TAU * float(i) / float(n) + t
+		if (i + world.tick / 2) % 4 == 0:
+			continue
+		var p: Vector2 = Gfx.snap(c + Vector2(cos(a), sin(a) * 0.85) * (r + 2.0))
+		var col: Color = Gfx.FIRE[6] if i % 3 == 0 else Gfx.FIRE[5]
+		_labels.draw_rect(Rect2(p, Vector2.ONE), Color(col, 0.85))

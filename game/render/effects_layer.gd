@@ -3,9 +3,9 @@ extends Node2D
 ## Short-lived effects (muzzle flashes, sparks, ichor, explosions, dust) drawn immediately each
 ## frame, plus their additive light on a child canvas item. No node per effect.
 
-enum Kind { MUZZLE, SPARKS, ICHOR, EXPLOSION, DUST }
+enum Kind { MUZZLE, SPARKS, ICHOR, EXPLOSION, DUST, EXPLOSION_BIG, DEBRIS }
 
-const LIFE: PackedFloat32Array = [0.07, 0.18, 0.3, 0.8, 0.6]
+const LIFE: PackedFloat32Array = [0.07, 0.18, 0.3, 0.8, 0.6, 1.1, 0.9]
 const MAX_EFFECTS := 1500
 
 var frozen: bool = false
@@ -66,6 +66,10 @@ func _draw() -> void:
 				_cell(Gfx.TEX_EXPLOSION, 8, 1, mini(7, int(t * 8.0)), 0, pos)
 			Kind.DUST:
 				_dust(pos, sd, t)
+			Kind.EXPLOSION_BIG:
+				_cell(Gfx.TEX_EXPLOSION_BIG, 10, 1, mini(9, int(t * 10.0)), 0, pos)
+			Kind.DEBRIS:
+				_debris(pos, sd, t)
 
 
 func _draw_glow() -> void:
@@ -83,6 +87,13 @@ func _draw_glow() -> void:
 			Kind.EXPLOSION:
 				_cell_on(_glow, Gfx.TEX_EXPLOSION_GLOW, 8, 1, mini(7, int(t * 8.0)), 0, pos)
 				_center_on(_glow, Gfx.TEX_HALO_WARM_BIG, pos, Color(1, 1, 1, clampf(1.0 - t * 1.4, 0.0, 1.0)))
+			Kind.EXPLOSION_BIG:
+				_cell_on(_glow, Gfx.TEX_EXPLOSION_BIG_GLOW, 10, 1, mini(9, int(t * 10.0)), 0, pos)
+				var a: float = clampf(1.0 - t * 1.2, 0.0, 1.0)
+				_center_on(_glow, Gfx.TEX_HALO_WARM_BIG, pos, Color(1, 1, 1, a))
+				if t < 0.25:  # the first flash lights up the whole neighbourhood
+					var s := Vector2(Gfx.TEX_HALO_WARM_BIG.get_size()) * 2.0
+					_glow.draw_texture_rect(Gfx.TEX_HALO_WARM_BIG, Rect2(pos - s / 2.0, s), false, Color(1, 1, 1, 0.6 * (1.0 - t * 4.0)))
 
 
 func _cell(tex: Texture2D, cols: int, rows: int, col: int, row: int, pos: Vector2) -> void:
@@ -122,3 +133,20 @@ func _dust(pos: Vector2, sd: int, t: float) -> void:
 		var d: float = sqrt(rng.randf()) * r
 		var p: Vector2 = Gfx.snap(pos + Vector2(cos(a) * d, sin(a) * d - t * 3.0))
 		draw_rect(Rect2(p, Vector2.ONE), Gfx.SAND[5] if i % 3 != 0 else Gfx.SAND[4])
+
+
+## Scrap chunks and a burning bit or two thrown out of a wrecked rig, arcing up and falling back.
+func _debris(pos: Vector2, sd: int, t: float) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = sd
+	for i in 14:
+		var a: float = rng.randf() * TAU
+		var v: float = 30.0 + rng.randf() * 55.0
+		var d: float = v * t * LIFE[Kind.DEBRIS] * (1.0 - t * 0.35)
+		var lift: float = 26.0 * rng.randf() * t * (1.0 - t) * 4.0  # hop up and land
+		var p: Vector2 = Gfx.snap(pos + Vector2(cos(a), sin(a) * 0.8) * d - Vector2(0, lift))
+		var hot: bool = i % 4 == 0 and t < 0.7
+		var c: Color = Gfx.FIRE[4] if hot else (Gfx.STEEL[1 + i % 3] if i % 3 else Color("#843f24"))
+		var sz := Vector2(2, 2) if i % 2 == 0 else Vector2(2, 1)
+		draw_rect(Rect2(p - Vector2.ONE, sz + Vector2(2, 2)), Gfx.OUTLINE)
+		draw_rect(Rect2(p, sz), c)
