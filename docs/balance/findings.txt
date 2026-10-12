@@ -1,0 +1,17 @@
+- **Upgrade value (solo):** `balanced` scores 19.4 vs 5.3 for `never_upgrade` (+14.1 rounds, x3.65).
+- **Solo policy ranking (score):** best `balanced_kite` (20.2), `greedy_damage` (19.9), `balanced` (19.4), `tech_rush` (18.1); worst `speedster` (10.3), `pvp_hunter` (10.2), `random` (8.1), `never_upgrade` (5.3).
+- **Dominant solo strategies (> balanced + 1.5 rounds):** none.
+- **Solo strategies far behind balanced (< -4 rounds, excluding baselines):** `tank` (-7.2), `speedster` (-9.1), `focus_mg` (-4.8), `focus_shotgun` (-5.6), `focus_cannon` (-4.4), `focus_flamer` (-4.9), `saver` (-8.1), `pvp_hunter` (-9.2).
+- **Pacing, solo:** 3 of 15 policies survive to the round cap in 50%+ of runs (greedy_damage, balanced, balanced_kite): the alien curve is too gentle for decent builds.
+- **Pacing, solo:** eliminated runs end at median round 8 (p10 6, p90 15); a rig has 5 lives (20 fuel each), see the fuel table.
+- **Weapon strength (solo score of the single-weapon focus policies):** `mg` 14.6, `shotgun` 13.8, `cannon` 15.0, `flamer` 14.5.
+- **Economy:** a `balanced` rig ends with 9918 unspent scrap on average (all 15 tech cost 500 in total): scrap is never a constraint, so tech prices, reroll costs and interest do not matter.
+- **FFA policies winning significantly more than 25%:** `pvp_hunter` (74%, avg place 1.39).
+- **FFA policies winning significantly less than 25%:** `never_upgrade` (0%, avg place 3.59), `focus_mg` (5%, avg place 2.76), `focus_shotgun` (4%, avg place 3.09), `focus_cannon` (6%, avg place 2.06), `balanced_charge` (0%, avg place 2.04).
+- **Pacing, ffa:** 52% of matches are decided before the round cap; median length 20 rounds (p90 20).
+- **PvP share:** 65% of ffa vehicle losses were caused by another player (bots only attack players when `players_first`).
+- **Cards that significantly raise survival (random-policy lift, owned at round 5):** `mg` (+0.9 rounds), `cannon` (+1.0 rounds).
+- **Cards that significantly lower it:** `scrap_magnet` (-0.6 rounds), `vulture` (-0.9 rounds).
+- **Cards almost never picked by any scored policy (<10% pick rate):** none.
+- **Tech that significantly raises survival (random-policy lift):** `ballistics_1` (+1.5 rounds), `ballistics_2` (+1.5 rounds), `ballistics_3` (+1.9 rounds), `engineering_1` (+1.6 rounds), `engineering_2` (+1.9 rounds), `engineering_3` (+1.6 rounds), `propulsion_1` (+1.1 rounds), `propulsion_2` (+1.8 rounds), `propulsion_3` (+1.7 rounds), `electronics_1` (+1.2 rounds), `electronics_2` (+1.6 rounds), `electronics_3` (+1.8 rounds), `salvage_1` (+1.0 rounds), `salvage_2` (+1.1 rounds), `salvage_3` (+1.6 rounds).
+- **Tech that significantly lowers it:** none detected.

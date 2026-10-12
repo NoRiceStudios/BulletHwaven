@@ -28,7 +28,7 @@ const WEAPONS := {
 		"speed": 400.0, "spread": 0.04,
 	},
 	"shotgun": {
-		"damage": [3.0, 3.5, 4.0], "cooldown": [14, 13, 12], "range": [150.0, 160.0, 170.0],
+		"damage": [3.5, 4.0, 4.5], "cooldown": [14, 13, 12], "range": [150.0, 160.0, 170.0],
 		"pellets": [5, 6, 8], "pierce": [0, 0, 0], "splash": [0.0, 0.0, 0.0],
 		"speed": 380.0, "spread": 0.30,
 	},
