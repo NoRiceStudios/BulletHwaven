@@ -81,3 +81,37 @@ Render details (as built):
 - `test.sh`: runs the headless test suite and exits non-zero on failure.
 - `shot.sh <scenario> <seed> <ticks> <out.png>`: renders a scenario under Xvfb and saves a screenshot.
 - `lan-smoke.sh`: starts a headless host and a headless client on localhost and checks they sync.
+
+## Round loop contract (design doc sections 3, 5 and 8)
+
+Phases (`SimWorld` constants): `PHASE_COMBAT = 0`, `PHASE_WORKSHOP = 1`, `PHASE_GAME_OVER = 2`.
+- `world.phase: int`, `world.round: int` (starts at 1), `world.phase_ticks_left: int`, `world.winner_peer: int` (`-1` until game over).
+- Durations are tunable constants: `COMBAT_TICKS` (default 60 s; rounds 1–2 shorter, 40 s) and `WORKSHOP_TICKS` (25 s). `world.fast_rounds: bool` (tests and screenshots) shortens both.
+- **Combat:** enemies spawn and scale per round (hp and spawn-rate multipliers; boulders more frequent later).
+- **Combat → workshop:** enemies retreat (all removed, with a `"retreat"` event), projectiles are cleared and vehicles stop. Every vehicle earns interest (+1 scrap per 10 held, max +5) and gets 3 fresh card offers.
+- **Workshop → combat:** when the timer runs out, or when every alive, non-eliminated player is ready. Then `round += 1`.
+- **Fuel reserves:** each vehicle starts with `fuel = 100`. Destroyed: lose 20 fuel (30 if a player killed it, and that player gains 15 scrap as a bounty) and respawn after 3 s (`respawn_ticks`) at full hp, at a free spot. At `fuel <= 0` the vehicle is `eliminated`.
+- **Game over:** when at most one player remains in a multiplayer game (`winner_peer` = the survivor), or when the only player is eliminated in solo.
+
+`SimVehicle` additions:
+- `fuel: int`, `respawn_ticks: int`, `eliminated: bool`, `ready: bool`
+- `offers: Array[String]` (3 card ids, empty once picked), `picked: bool`, `reroll_cost: int` (starts at 2, +1 per reroll, resets each workshop)
+- `cards: Dictionary` (card id → level 1..3), `tech: Array[String]` (owned tech ids)
+- Derived stats recomputed from the base values plus cards plus tech: `max_hp`, `armor` (flat damage reduction), `speed`, `turn_rate`, `scrap_mult`. Weapons are rebuilt from the weapon cards.
+
+Data (`sim/cards.gd`, `sim/tech.gd`, pure data plus apply functions):
+- **Cards:** about 16 to start, in 4 categories (`weapon`, `armor`, `mobility`, `behavior`) with a rarity weight. A duplicate pick raises the level (max 3); level 3 cards are no longer offered.
+  - Weapons: `mg` (starter), `shotgun` (spread, short range), `cannon` (slow, heavy, pierce 1), `flamer` (very short range, fast ticks).
+  - Weapon slots: 2, +1 from tech.
+- **Tech:** 5 branches × 3 tiers. Ids are `ballistics_1..3`, `engineering_1..3`, `propulsion_1..3`, `electronics_1..3` and `salvage_1..3`. Tier N requires N-1 in the same branch. Costs grow by tier (e.g. 6/12/20).
+  - Effects: ballistics = damage; engineering = hp, armor and (tier 3) a weapon slot; propulsion = speed and turn rate; electronics = range and fire rate; salvage = scrap multiplier and interest cap.
+- Card offers and rerolls use `world.rng` only, so they stay deterministic.
+
+Commands (validated by `NetSession` allow-lists; ignored in the wrong phase):
+- `{"type": "pick_card", "value": int 0..2}`
+- `{"type": "reroll"}`
+- `{"type": "buy_tech", "value": "<tech id>"}`
+- `{"type": "ready"}`
+- `set_drive` and `set_target` stay valid in every phase.
+
+Snapshots carry all of the above. Card and tech ids are encoded as indices into the data tables.
