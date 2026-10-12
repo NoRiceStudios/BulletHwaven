@@ -74,7 +74,10 @@ Render details (as built):
 - *(no args)*: solo
 - `--host`: host a LAN game
 - `--join=<ip>`: join a host
-- `--shot=<png> --scenario=<name> --seed=<n> --ticks=<n>`: screenshot mode (see `tools/`)
+- `--shot=<png> --scenario=<name> --seed=<n> --ticks=<n>`: screenshot mode (see `tools/`). Scenarios: `skirmish`, `horde`, `workshop` (about 400 ticks), `gameover` (about 300), `gameover_mp` (about 200), `eliminated` (about 220). `--hover=x,y` and `--click=x,y;...` simulate the mouse in screenshot mode, through the same code path as real input.
+- `--fast`: short rounds (`fast_rounds`) for quick manual testing.
+- Network events are logged as `net: ...` lines on the console.
+- Input: mouse; `1`/`2`/`3` pick a card, `R` reroll, `Space` ready, `Enter` restart (solo), `Esc` quit. All actions go through `NetSession.send_command`.
 
 ## Dev scripts (`scripts/`)
 

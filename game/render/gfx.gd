@@ -36,6 +36,17 @@ const TEX_CARCASS := preload("res://assets/decal_carcass.png")
 const TEX_SCORCH := preload("res://assets/decal_scorch.png")
 const TEX_FONT := preload("res://assets/font_3x5.png")
 const TEX_UI_PLATE := preload("res://assets/ui_plate.png")
+const TEX_STENCIL := preload("res://assets/font_stencil.png")
+const TEX_ICONS := preload("res://assets/ui_icons.png")
+const TEX_CARD := preload("res://assets/ui_card.png")
+const TEX_TAPE := preload("res://assets/ui_tape.png")
+const TEX_HAZARD := preload("res://assets/ui_hazard.png")
+const TEX_STEEL := preload("res://assets/ui_steel.png")
+const TEX_VIGNETTE := preload("res://assets/ui_vignette.png")
+## Cells of ui_icons.png (16x16 each), as in tools/artgen/ui.py ICON_NAMES.
+const ICON_NAMES: PackedStringArray = ["mg", "shotgun", "cannon", "flamer", "armor", "mobility", "behavior",
+	"ballistics", "engineering", "propulsion", "electronics", "salvage", "scrap", "fuel"]
+const ICON_SIZE := 16
 
 const SHEET_SHADER := preload("res://render/sheet.gdshader")
 const SHEET_ADD_SHADER := preload("res://render/sheet_add.gdshader")
@@ -66,6 +77,23 @@ const FIRE: Array[Color] = [Color("#3a1a14"), Color("#7a2a14"), Color("#c4481c")
 const STEEL: Array[Color] = [Color("#1f1e24"), Color("#34343c"), Color("#4c4e58"), Color("#6c707a"), Color("#959aa3"), Color("#c3c7cc")]
 const UI_TEXT := Color("#f0d9b0")
 const UI_SHADOW := Color("#2a2224")
+const UI_DIM := Color("#ad9b80")
+const UI_BAD := Color("#e0623a")  ## warm warning red-orange (never cyan: cold = alien)
+const UI_PLATE_DARK := Color("#3d3233")
+const BONE_LIGHT := Color("#f2ead8")
+const INK := Color("#2a1c18")  ## dark ink on paper tags
+const INK_RED := Color("#a8341f")
+const HAZARD := Color("#c9a227")
+const BRASS: Array[Color] = [Color("#4a3414"), Color("#7a5a24"), Color("#a8823a"), Color("#d2ad5c")]
+## Salvaged CRT terminal (doctrine): amber monochrome, a warm contrast to the desert (section 11f).
+const CRT_BG := Color("#1d1209")
+const CRT_DIM := Color("#8a5418")
+const CRT_TEXT := Color("#ffb53d")
+const CRT_HI := Color("#ffe48a")
+## Card category tape colours (warm / neutral; GLOW stays reserved for aliens).
+const CATEGORY_COLORS := {
+	"weapon": Color("#d8673e"), "armor": Color("#a3a8b0"), "mobility": Color("#d6ad30"), "behavior": Color("#a9a66a"),
+}
 ## Player paint (PLAYERS ramp, step 3), indexed by Gfx.player_index(). The art has two paint jobs so
 ## far; further players cycle through them until more colours are designed.
 const PLAYER_COLORS: Array[Color] = [Color("#d9473a"), Color("#c84aae")]

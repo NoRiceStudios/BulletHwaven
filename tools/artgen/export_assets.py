@@ -19,6 +19,7 @@ import os
 import numpy as np
 
 import sprites
+import ui
 from palette import (BONE, FIRE, GLOW, OUTLINE, PLAYERS, ROCK, SAND, SHADOW, SMOKE, UI_PLATE)
 from pixel import (Canvas, bayer, blob, cast_shadow, circle, line, outline, paint, paste, pixels,
                    polar, rect, rgb, value_noise, _GLYPHS)
@@ -30,7 +31,7 @@ OUT = os.path.join(os.path.dirname(__file__), "..", "..", "game", "assets")
 VEHICLE_DIRS = 32
 ENEMY_DIRS = 16
 FX_DIRS = 16
-FONT_CHARS = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:.+-/()!',"
+FONT_CHARS = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:.+-/()!',%><?*=#"  # append only
 ARENA_W, ARENA_H = 1280, 720
 
 
@@ -379,4 +380,11 @@ def export(out=OUT):
     save(ground(), "ground_dune_sea.png")
     save(font(), "font_3x5.png")
     save(ui_plate(), "ui_plate.png")
+    save(ui.stencil_font(), "font_stencil.png")
+    save(ui.icons(), "ui_icons.png")
+    save(ui.card_tag(), "ui_card.png")
+    save(ui.tape(), "ui_tape.png")
+    save(ui.hazard(), "ui_hazard.png")
+    save(ui.steel_plate(), "ui_steel.png")
+    save(ui.vignette(), "ui_vignette.png")
     print("wrote game assets to", os.path.normpath(out))

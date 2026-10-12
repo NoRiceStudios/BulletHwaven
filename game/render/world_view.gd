@@ -11,6 +11,8 @@ const MAX_LEAD := 0.1  ## s, never extrapolate further than this past the last t
 const TRAIL_STEP := 3.0  ## px of travel between tyre-track stamps
 const REAR_WHEELS: Array[Vector2] = [Vector2(-12, 13), Vector2(12, 13)]  ## buggy, facing north
 const SHOT_EFFECT_TICKS := 10  ## screenshot mode: transient effects from the last N ticks
+const WORKSHOP_CAM_LIFT := 92.0  ## px: in the workshop the camera shows the camped rig near the top
+const CAM_EASE := 4.0  ## 1/s, easing of that lift
 
 var world: SimWorld = null
 var local_peer: int = 1
@@ -31,6 +33,9 @@ var _halos: Node2D
 var _labels: Node2D
 var _camera: Camera2D
 var _hud: Hud
+var workshop: WorkshopUi
+var game_over: GameOverUi
+var _cam_lift: float = 0.0
 
 var _vehicle_nodes: Dictionary = {}  # vehicle id -> [shadow, hull, turret] Sprite2D
 var _veh_disp: Dictionary = {}  # vehicle id -> Vector3(x, y, heading)
@@ -103,7 +108,14 @@ func _ready() -> void:
 	hud_layer.layer = 10
 	add_child(hud_layer)
 	_hud = Hud.new()
+	_hud.view = self
 	hud_layer.add_child(_hud)
+	workshop = WorkshopUi.new()
+	workshop.view = self
+	hud_layer.add_child(workshop)
+	game_over = GameOverUi.new()
+	game_over.view = self
+	hud_layer.add_child(game_over)
 
 
 ## Shows `w` from the point of view of `peer` (camera, HUD). Clears all marks of a previous world.
@@ -124,6 +136,10 @@ func set_world(w: SimWorld, peer: int) -> void:
 	_effects.clear()
 	_hud.world = w
 	_hud.local_peer = peer
+	workshop.world = w
+	workshop.local_peer = peer
+	game_over.world = w
+	game_over.local_peer = peer
 
 
 ## Snapshot of one tick for prime(): events plus vehicle poses (for tyre tracks).
@@ -164,7 +180,7 @@ func _process(delta: float) -> void:
 	_update_vehicles(lead, k)
 	_update_enemies(lead, k)
 	_update_projectiles(lead)
-	_update_camera()
+	_update_camera(1.0 if frozen else 1.0 - exp(-CAM_EASE * delta))
 	_halos.queue_redraw()
 	_labels.queue_redraw()
 
@@ -382,13 +398,27 @@ func _kill_decal(pos: Vector2, kind: int, h: int) -> void:
 
 # ---------------------------------------------------------------- camera and labels
 
-func _update_camera() -> void:
+## Where the local rig is drawn, in viewport pixels (UI vignettes centre on it).
+func local_screen_pos() -> Vector2:
+	var vs: Vector2 = get_viewport_rect().size
+	if world == null:
+		return vs / 2.0
+	var v: SimVehicle = world.get_vehicle_for_peer(local_peer)
+	if v == null:
+		return vs / 2.0
+	var d: Vector3 = _vehicle_display(v)
+	return (get_viewport().get_canvas_transform() * Gfx.snap(Vector2(d.x, d.y))).floor()
+
+
+func _update_camera(k: float) -> void:
 	var v: SimVehicle = world.get_vehicle_for_peer(local_peer)
 	if v == null:
 		return
 	var d: Vector3 = _vehicle_display(v)
 	var half := get_viewport_rect().size / 2.0
-	var c := Vector2(d.x, d.y)
+	var lift: float = WORKSHOP_CAM_LIFT if world.phase == SimWorld.PHASE_WORKSHOP else 0.0
+	_cam_lift = lerpf(_cam_lift, lift, k)
+	var c := Vector2(d.x, d.y + _cam_lift)
 	c.x = clampf(c.x, SimWorld.ARENA.position.x + half.x, SimWorld.ARENA.end.x - half.x)
 	c.y = clampf(c.y, SimWorld.ARENA.position.y + half.y, SimWorld.ARENA.end.y - half.y)
 	_camera.position = Gfx.snap(c)

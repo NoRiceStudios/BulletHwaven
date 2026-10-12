@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Renders a scenario under Xvfb and saves a screenshot.
-#   scripts/shot.sh <scenario> <seed> <ticks> <out.png>
+#   scripts/shot.sh <scenario> <seed> <ticks> <out.png> [--hover=x,y] [--click="x,y;x,y"]
+# --hover places the UI pointer, --click clicks through the workshop UI (viewport px, 640x360).
 # Writes <out.png> (native 640x360) and <out>_1080p.png (3x nearest). Exits non-zero on failure.
 set -uo pipefail
-if [ $# -ne 4 ]; then
-  echo "usage: $0 <scenario> <seed> <ticks> <out.png>" >&2
+if [ $# -lt 4 ]; then
+  echo "usage: $0 <scenario> <seed> <ticks> <out.png> [--hover=x,y] [--click=x,y;...]" >&2
   exit 2
 fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -20,9 +21,9 @@ rm -f "$OUT"
 log="$(mktemp)"
 trap 'rm -f "$log"' EXIT
 xvfb-run -a -s "-screen 0 1920x1080x24" "$GODOT" --path "$ROOT/game" --rendering-driver opengl3 --audio-driver Dummy \
-  -- --shot="$OUT" --scenario="$1" --seed="$2" --ticks="$3" >"$log" 2>&1
+  -- --shot="$OUT" --scenario="$1" --seed="$2" --ticks="$3" "${@:5}" >"$log" 2>&1
 code=$?
-grep -E "SHOT_OK|SCRIPT ERROR|Parse Error|^ERROR:|^USER ERROR" "$log" | grep -v "ALSA" >&2
+grep -E "SHOT_OK|SHOT_CLICK|SCRIPT ERROR|Parse Error|^ERROR:|^USER ERROR" "$log" | grep -v "ALSA" >&2
 if [ "$code" -ne 0 ] || ! grep -q "SHOT_OK" "$log" || [ ! -s "$OUT" ]; then
   echo "shot.sh: failed (exit $code)" >&2
   exit 1
