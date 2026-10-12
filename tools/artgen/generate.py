@@ -1,6 +1,7 @@
 """Render the BulletHwaven art-style samples into art/samples/.
 
 Usage:  python tools/artgen/generate.py [--scale 3]
+        python tools/artgen/generate.py --export-game-assets   (1x sprites into game/assets/)
 """
 
 import argparse
@@ -114,7 +115,13 @@ def biome_sheet():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--scale", type=int, default=3)
+    ap.add_argument("--export-game-assets", action="store_true",
+                    help="write 1x game sprites to game/assets/ instead of the samples")
     args = ap.parse_args()
+    if args.export_game_assets:
+        import export_assets
+        export_assets.export()
+        return
     os.makedirs(OUT, exist_ok=True)
     s = args.scale
 

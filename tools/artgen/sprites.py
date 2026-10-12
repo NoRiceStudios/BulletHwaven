@@ -201,8 +201,9 @@ def turret(cv, cx, cy, r, ang, length, barrels=1, bw=2, ramp=STEEL, seed=0):
 
 # ---------------------------------------------------------------- vehicles
 
-def buggy(player="red", gun_angle=0.0, seed=1):
-    """Starter vehicle: welded scrap buggy with one pintle MG (36x52)."""
+def buggy(player="red", gun_angle=0.0, seed=1, gun=True):
+    """Starter vehicle: welded scrap buggy with one pintle MG (36x52).
+    gun=False leaves the MG off (the game draws it as a separate rotating turret sprite)."""
     W, H = 36, 52
     cv = Canvas(W, H)
     pc = PLAYERS[player]
@@ -266,7 +267,8 @@ def buggy(player="red", gun_angle=0.0, seed=1):
     # pintle MG fed by an ammo belt
     paint(cv, rect(W, H, 21, 21, 24, 24), KHAKI, base=2)
     ammo_belt(cv, [(21, 22), (19, 22)])
-    turret(cv, 17.5, 22, 2.5, gun_angle, 14, barrels=1, bw=2, seed=seed)
+    if gun:
+        turret(cv, 17.5, 22, 2.5, gun_angle, 14, barrels=1, bw=2, seed=seed)
     outline(cv, OUTLINE)
     return cv
 

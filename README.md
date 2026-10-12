@@ -2,7 +2,15 @@
 
 A multiplayer **PvPvE auto-battler survivor**. AI-driven, scrap-welded war rigs fight alien hordes, and each other, on a desert planet. Steer the battle through roguelike upgrade drafts, a tech tree and **AI doctrine**: the last convoy standing wins.
 
-> Status: pre-production. The design and art direction are drafted; the Godot 4 project skeleton is being built (see [`docs/architecture.md`](docs/architecture.md)).
+> Status: pre-production. The design and art direction are drafted, and a playable Godot 4 skeleton exists: an AI-driven vehicle vs. alien waves, LAN multiplayer, and headless tests (see [`docs/architecture.md`](docs/architecture.md)).
+
+**In-game, current build:**
+
+| Skirmish | Horde |
+|---|---|
+| ![In-game skirmish](docs/screenshots/ingame_skirmish.png) | ![In-game horde](docs/screenshots/ingame_horde.png) |
+
+**Art-style target:**
 
 | Day | Night |
 |---|---|

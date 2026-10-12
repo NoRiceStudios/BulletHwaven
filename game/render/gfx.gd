@@ -1,0 +1,116 @@
+class_name Gfx
+extends RefCounted
+## Shared render constants: textures exported by tools/artgen (--export-game-assets), palette
+## colours (tools/artgen/palette.py), draw order and sheet helpers.
+##
+## Directional sprites are pre-rendered strips (frame k = rotated k * 360 / N degrees clockwise
+## from north), so nothing is rotated on the GPU and pixels stay crisp at 640x360.
+
+const VEHICLE_DIRS := 32
+const ENEMY_DIRS := 16
+const FX_DIRS := 16
+
+const TEX_GROUND := preload("res://assets/ground_dune_sea.png")
+const TEX_BUGGY: Array[Texture2D] = [preload("res://assets/buggy_red.png"), preload("res://assets/buggy_magenta.png")]
+const TEX_TURRET := preload("res://assets/turret_mg.png")
+const TEX_MITE := preload("res://assets/mite.png")
+const TEX_MITE_GLOW := preload("res://assets/mite_glow.png")
+const TEX_BOULDER := preload("res://assets/boulder.png")
+const TEX_BOULDER_GLOW := preload("res://assets/boulder_glow.png")
+const TEX_SPITTER := preload("res://assets/spitter.png")
+const TEX_SPITTER_GLOW := preload("res://assets/spitter_glow.png")
+const TEX_TRACER := preload("res://assets/tracer.png")
+const TEX_TRACER_GLOW := preload("res://assets/tracer_glow.png")
+const TEX_ACID := preload("res://assets/acid.png")
+const TEX_ACID_GLOW := preload("res://assets/acid_glow.png")
+const TEX_MUZZLE := preload("res://assets/muzzle.png")
+const TEX_MUZZLE_GLOW := preload("res://assets/muzzle_glow.png")
+const TEX_EXPLOSION := preload("res://assets/explosion.png")
+const TEX_EXPLOSION_GLOW := preload("res://assets/explosion_glow.png")
+const TEX_HALO_CYAN := preload("res://assets/halo_cyan.png")
+const TEX_HALO_WARM := preload("res://assets/halo_warm.png")
+const TEX_HALO_WARM_BIG := preload("res://assets/halo_warm_big.png")
+const TEX_GOO := preload("res://assets/decal_goo.png")
+const TEX_GOO_BIG := preload("res://assets/decal_goo_big.png")
+const TEX_CARCASS := preload("res://assets/decal_carcass.png")
+const TEX_SCORCH := preload("res://assets/decal_scorch.png")
+const TEX_FONT := preload("res://assets/font_3x5.png")
+const TEX_UI_PLATE := preload("res://assets/ui_plate.png")
+
+const SHEET_SHADER := preload("res://render/sheet.gdshader")
+const SHEET_ADD_SHADER := preload("res://render/sheet_add.gdshader")
+const SILHOUETTE_SHADER := preload("res://render/silhouette.gdshader")
+
+## Turret pivot relative to the hull centre, buggy facing north (px).
+const TURRET_PIVOT := Vector2(0, -4)
+const BARREL_LENGTH := 15.0
+
+# Draw order (z_index, all relative to the WorldView).
+const Z_GROUND := -20
+const Z_DECALS := -19
+const Z_SHADOWS := -10
+const Z_ENEMIES := 0
+const Z_VEHICLES := 2
+const Z_TURRETS := 3
+const Z_PROJECTILES := 4
+const Z_EFFECTS := 5
+const Z_GLOW := 8
+const Z_LABELS := 9
+
+# Palette (tools/artgen/palette.py).
+const OUTLINE := Color("#1c1416")
+const SHADOW := Color("#2f2a3d")
+const SAND: Array[Color] = [Color("#6e4a36"), Color("#8e6145"), Color("#ad7d55"), Color("#c99c6b"), Color("#e0bd8c"), Color("#f0d9b0")]
+const GLOW: Array[Color] = [Color("#0f3a40"), Color("#16646a"), Color("#1fa3a3"), Color("#4fe0d4"), Color("#a8fff2"), Color("#effffc")]
+const FIRE: Array[Color] = [Color("#3a1a14"), Color("#7a2a14"), Color("#c4481c"), Color("#ef7d22"), Color("#ffb53d"), Color("#ffe48a"), Color("#fffbe0")]
+const STEEL: Array[Color] = [Color("#1f1e24"), Color("#34343c"), Color("#4c4e58"), Color("#6c707a"), Color("#959aa3"), Color("#c3c7cc")]
+const UI_TEXT := Color("#f0d9b0")
+const UI_SHADOW := Color("#2a2224")
+## Player paint (PLAYERS ramp, step 3), indexed by Gfx.player_index(). The art has two paint jobs so
+## far; further players cycle through them until more colours are designed.
+const PLAYER_COLORS: Array[Color] = [Color("#d9473a"), Color("#c84aae")]
+const PLAYER_NAMES: PackedStringArray = ["RED", "MAGENTA"]
+
+
+static func player_index(v: SimVehicle) -> int:
+	return v.id % TEX_BUGGY.size()
+
+
+## Frame index for a world angle (radians, Godot convention 0 = east) in an N-frame strip.
+static func frame_for_angle(angle: float, dirs: int) -> int:
+	return posmod(roundi((angle + PI / 2.0) / (TAU / float(dirs))), dirs)
+
+
+## The rotation a strip frame actually shows (clockwise from north), for placing attachments.
+static func frame_rotation(frame: int, dirs: int) -> float:
+	return float(frame) * TAU / float(dirs)
+
+
+static func snap(p: Vector2) -> Vector2:
+	return Vector2(floorf(p.x + 0.5), floorf(p.y + 0.5))
+
+
+## Region of cell (col, row) in a sheet with square or rectangular cells.
+static func cell_rect(tex: Texture2D, cols: int, rows: int, col: int, row: int) -> Rect2:
+	var cw: float = float(tex.get_width()) / float(cols)
+	var ch: float = float(tex.get_height()) / float(rows)
+	return Rect2(col * cw, row * ch, cw, ch)
+
+
+## Centred quad (2D vertices) for MultiMesh instances; even sizes keep texels on pixel centres.
+static func quad_mesh(size: Vector2) -> ArrayMesh:
+	var h := size / 2.0
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = PackedVector2Array([Vector2(-h.x, -h.y), Vector2(h.x, -h.y), Vector2(h.x, h.y), Vector2(-h.x, h.y)])
+	arrays[Mesh.ARRAY_TEX_UV] = PackedVector2Array([Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1)])
+	arrays[Mesh.ARRAY_INDEX] = PackedInt32Array([0, 1, 2, 0, 2, 3])
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+
+## Cheap deterministic hash of a position + salt, for picking decal variants without an rng.
+static func hash_pos(p: Vector2, salt: int) -> int:
+	var h: int = int(p.x * 7.0) * 73856093 ^ int(p.y * 7.0) * 19349663 ^ salt * 83492791
+	return absi(h)

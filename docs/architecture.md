@@ -63,6 +63,11 @@ Net details (as built):
 - `world.events` holds only the latest tick's events, so render must consume them once per sim tick, not once per frame.
 - `LanDiscovery` also emits `host_lost`.
 
+Render details (as built):
+- Every sprite that turns is pre-rendered by `tools/artgen/export_assets.py` as a strip of frames: 32 directions for hulls and 16 for aliens, using RotSprite with the outline drawn after rotating. Turrets, tracers and acid are drawn fresh at each angle.
+- Godot only picks a frame and never rotates pixels on the GPU, which would make pixels jagged and shimmer at 640x360. Trade-off: the baked top-left lighting turns with the sprite.
+- Effects consume `world.events` once per sim tick. Goo, scorch marks and tyre ruts persist in a decal layer.
+
 ## Entry point and command line
 
 `main.tscn` / `main.gd` parse `OS.get_cmdline_user_args()`:
