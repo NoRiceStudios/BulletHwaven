@@ -23,7 +23,7 @@ A multiplayer **PvPvE auto-battler survivor**. AI-driven, scrap-welded war rigs 
 |---|---|
 | [`game/`](game/) | Godot 4.7 project: `sim/` (deterministic simulation), `net/` (LAN multiplayer), `render/`, `tools/`, `tests/` |
 | [`docs/architecture.md`](docs/architecture.md) | Tech stack decision and the layer and API contract |
-| [`scripts/`](scripts/) | `setup-godot.sh` (installs the pinned Godot), `test.sh`, `shot.sh`, `lan-smoke.sh` |
+| [`scripts/`](scripts/) | `setup-godot.sh` (installs the pinned Godot), `test.sh`, `shot.sh`, `lan-smoke.sh`, `export.sh` (release builds) |
 | [`docs/game-design.md`](docs/game-design.md) | Game design document: core loop, vehicle grid, draft and tech tree, AI doctrine, enemy variety, PvP, meta progression, art direction |
 | [`art/samples/`](art/samples/) | Art-style samples: mock-up screenshots (day/night), sprite sheet, biome tiles, palette |
 | [`tools/artgen/`](tools/artgen/) | Python generator that draws the sample art procedurally from the master palette |
@@ -41,6 +41,18 @@ scripts/shot.sh <scenario> <seed> <ticks> out.png   # screenshot a scenario
 ```
 
 Or open `game/project.godot` in the Godot editor.
+
+## Builds
+
+CI (`.github/workflows/ci.yml`) runs the headless tests and the LAN smoke test on every push and pull request, then exports release builds. Download them from the run's **Artifacts** section on the Actions tab (`BulletHwaven-builds`: `BulletHwaven-linux-x86_64.zip` and `BulletHwaven-windows-x86_64.zip`, kept for 14 days).
+
+To build locally:
+
+```bash
+scripts/export.sh [linux|windows|all]   # default: all
+```
+
+It installs Godot and the matching export templates if missing (about 1 GB download, 180 MB installed), then writes `build/linux/`, `build/windows/` and the zips in `build/`. The export presets live in `game/export_presets.cfg`.
 
 ## Art-style samples
 

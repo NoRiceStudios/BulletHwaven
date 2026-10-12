@@ -5,5 +5,4 @@ __pycache__/
 # Godot
 game/.godot/
 *.translation
-export_presets.cfg
 build/

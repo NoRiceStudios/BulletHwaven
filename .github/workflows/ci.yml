@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  GODOT_VERSION: "4.7.2"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Godot
+        run: scripts/setup-godot.sh
+      - name: Headless tests
+        run: scripts/test.sh
+      - name: LAN smoke test
+        run: scripts/lan-smoke.sh
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache export templates
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/godot/export_templates
+          key: godot-export-templates-${{ env.GODOT_VERSION }}
+      - name: Install Godot
+        run: scripts/setup-godot.sh
+      - name: Export Linux and Windows builds
+        run: scripts/export.sh all
+      - name: Upload builds
+        uses: actions/upload-artifact@v4
+        with:
+          name: BulletHwaven-builds
+          path: build/*.zip
+          retention-days: 14
+          if-no-files-found: error
