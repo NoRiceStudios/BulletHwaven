@@ -146,7 +146,12 @@ func _ready() -> void:
 	hud_layer.layer = 10
 	hud_layer.visible = ui_visible
 	_hud_layer = hud_layer
-	add_child(hud_layer)
+	# The world renders into a 640x360 SubViewport (pixel exact, scaled up by whole pixels); the
+	# HUD and overlays live on the full-resolution root canvas so their text stays crisp.
+	if owner != null and owner.get_viewport() != get_viewport():
+		owner.add_child.call_deferred(hud_layer)
+	else:
+		add_child(hud_layer)
 	_hud = Hud.new()
 	_hud.view = self
 	hud_layer.add_child(_hud)
@@ -498,6 +503,12 @@ func local_screen_pos() -> Vector2:
 	return screen_pos(v)
 
 
+## Collision radius of `v`'s drawn rig (buggy or truck footprint), in pixels.
+func rig_radius(v: SimVehicle) -> float:
+	var rv: RigView = _vehicle_nodes.get(v.id)
+	return RigArt.RADIUS[rv.foot if rv != null else 0]
+
+
 ## Where vehicle `v` is drawn, in viewport pixels (may be off-screen).
 func screen_pos(v: SimVehicle) -> Vector2:
 	var d: Vector3 = _vehicle_display(v)
@@ -677,15 +688,9 @@ func _draw_labels() -> void:
 		if v.peer_id == world.leader_peer:  # bounty mark (#11)
 			var bob: float = float((world.tick / 10) % 2)
 			var s := Vector2(Gfx.TEX_SKULL.get_size())
-			var sy: float = top - (s.y + 1.0 if v.peer_id != local_peer else 0.0) - bob
+			var sy: float = top - (s.y + 4.0 if v.peer_id != local_peer else 0.0) - bob
 			_labels.draw_texture(Gfx.TEX_SKULL, Vector2(p.x - floorf(s.x / 2.0), sy))
-		if v.peer_id == local_peer:
-			continue
-		var tag: String = UiKit.player_name(v)
-		UiKit.paint_text(_labels, tag, Vector2(p.x - floorf(PixelFont.width(tag) / 2.0), top), v.color_index)
-		var bw: float = 20.0
-		_labels.draw_rect(Rect2(p.x - bw / 2.0 - 1.0, top + 7.0, bw + 2.0, 3.0), Gfx.OUTLINE)
-		_labels.draw_rect(Rect2(p.x - bw / 2.0, top + 8.0, floorf(bw * clampf(v.hp / v.max_hp, 0.0, 1.0)), 1.0), UiKit.bar_color(v.color_index))
+		# rival name tags and hp bars are drawn by the HUD (crisp text): Hud._draw_rival_tags
 
 
 ## Protection shimmer: a broken ring of warm-white sparks orbiting the rig (never cyan: cold = alien).
