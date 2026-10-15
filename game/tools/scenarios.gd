@@ -92,7 +92,7 @@ static func build(name: String, p_seed: int) -> SimWorld:
 		"eliminated":
 			var w3: SimWorld = _skirmish(p_seed)
 			w3.fast_rounds = true
-			w3.add_vehicle(3, Vector2(640, 600), "NIGHTCRAWLER", 7)
+			w3.add_vehicle(3, _old_arena(Vector2(640, 600)), "NIGHTCRAWLER", 7)
 			w3.vehicles[0].fuel = 15
 			return w3
 		"menu", "join", "lobby":
@@ -122,9 +122,9 @@ static func build(name: String, p_seed: int) -> SimWorld:
 			return w5
 		"combat_feed", "pvp_grace", "spectator", "spectator_ws", "awards":
 			var c2: Vector2 = SimWorld.ARENA.get_center()
-			var spots: Array = [c2, Vector2(140, 110), Vector2(1170, 640), Vector2(1200, 320), c2 + Vector2(120, -80)]
+			var spots: Array = [c2, _old_arena(Vector2(140, 110)), _old_arena(Vector2(1170, 640)), _old_arena(Vector2(1200, 320)), c2 + Vector2(120, -80)]
 			if name == "spectator" or name == "spectator_ws":
-				spots = [c2 + Vector2(-380, 150), c2 + Vector2(40, -20), c2 + Vector2(170, 40), Vector2(170, 130), Vector2(1130, 610)]
+				spots = [c2 + Vector2(-380, 150), c2 + Vector2(40, -20), c2 + Vector2(170, 40), _old_arena(Vector2(170, 130)), _old_arena(Vector2(1130, 610))]
 			var w6: SimWorld = _lan_night(p_seed, spots)
 			w6.round = 4 if name == "pvp_grace" else (11 if name == "awards" else 6)
 			w6.fast_rounds = name == "spectator_ws"
@@ -331,8 +331,8 @@ static func _rig_kill(p_seed: int) -> SimWorld:
 ## Two rigs (red: circle / nearest, magenta: kite / players_first) in a running horde.
 static func _skirmish(p_seed: int) -> SimWorld:
 	var w := SimWorld.new(p_seed)
-	w.add_vehicle(1, Vector2(420, 420), "MAD MAREK")
-	w.add_vehicle(2, Vector2(900, 300), "DUNE RAT")
+	w.add_vehicle(1, _old_arena(Vector2(420, 420)), "MAD MAREK")
+	w.add_vehicle(2, _old_arena(Vector2(900, 300)), "DUNE RAT")
 	w.apply_command(1, {"type": "set_drive", "value": "circle"})
 	w.apply_command(1, {"type": "set_target", "value": "nearest"})
 	w.apply_command(2, {"type": "set_drive", "value": "kite"})
@@ -347,6 +347,11 @@ static func _horde(p_seed: int) -> SimWorld:
 	w.add_vehicle(1, SimWorld.ARENA.get_center(), "MAD MAREK")
 	_scatter(w, 800, 0.06, 0.03, 170.0, 760.0)
 	return w
+
+
+## A spot written for the old 1280x720 arena, moved so it keeps its place relative to the centre.
+static func _old_arena(p: Vector2) -> Vector2:
+	return p + SimWorld.ARENA.get_center() - Vector2(640, 360)
 
 
 ## Places `n` enemies around the vehicles (ring min_d..max_d from the arena centre), using world.rng.
@@ -396,7 +401,7 @@ const REPLAY_COMMANDS: PackedStringArray = ["pick_card", "reroll", "buy_tech", "
 
 static func replay_spawn_position(slot: int) -> Vector2:
 	var a: float = float(slot % 8) * TAU / 8.0
-	return SimWorld.ARENA.get_center() + Vector2(cos(a) * 480.0, sin(a) * 240.0)
+	return SimWorld.ARENA.get_center() + Vector2(cos(a) * SimWorld.SPAWN_ELLIPSE.x, sin(a) * SimWorld.SPAWN_ELLIPSE.y)
 
 
 ## Builds the run state for `session`: {"w": SimWorld, "bots": Array (null for the human), "target":
