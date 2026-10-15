@@ -69,6 +69,8 @@ func _draw() -> void:
 		return
 	_panels.clear()
 	var vs: Vector2 = get_viewport_rect().size
+	if view != null and view.minimap != null and view.minimap.visible_now():
+		_panels.append(Minimap.frame_rect(vs))
 	var me: SimVehicle = world.get_vehicle_for_peer(local_peer)
 	var spec: bool = view != null and view.spectating()
 	var elim_recent: bool = me != null and me.eliminated and not spec
