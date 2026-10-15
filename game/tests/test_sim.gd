@@ -60,7 +60,7 @@ func test_enemies_spawn_and_die() -> void:
 					saw_fire_event = true
 				"hit":
 					saw_hit_event = true
-	assert_gt(w.next_enemy_id, 20, "enemies spawned over time")
+	assert_gt(w.next_enemy_id, 15, "enemies spawned over time")  # round 1 is eased (SPAWN_EASE_START)
 	assert_gt(max_seen, 0)
 	assert_gt(v.kills, 0, "vehicle got kills")
 	assert_gt(v.scrap, 0, "vehicle got scrap")
