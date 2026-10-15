@@ -173,9 +173,10 @@ func _draw_hive(w: SimWorld, a: Rect2, inner: Rect2) -> void:
 
 ## The part of the arena on screen right now (from the world canvas transform), as a bone frame.
 func _draw_camera(a: Rect2, inner: Rect2) -> void:
-	var inv: Transform2D = get_viewport().get_canvas_transform().affine_inverse()
+	# the world renders in its own SubViewport: use its camera, not the HUD canvas
+	var inv: Transform2D = view.get_viewport().get_canvas_transform().affine_inverse()
 	var tl: Vector2 = inv * Vector2.ZERO
-	var br: Vector2 = inv * get_viewport_rect().size
+	var br: Vector2 = inv * view.get_viewport_rect().size
 	var p0: Vector2 = to_map(tl, a, inner)
 	var p1: Vector2 = to_map(br, a, inner)
 	var r := Rect2(p0, (p1 - p0).max(Vector2(2, 2)))
