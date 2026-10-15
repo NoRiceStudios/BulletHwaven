@@ -225,7 +225,7 @@ func get_vehicle_for_peer(peer_id: int) -> SimVehicle:
 
 
 ## Applies a (pre-validated) command from `peer_id`. Card / tech / ready commands only work in the
-## workshop; set_drive and set_target work in every phase. Unknown or illegal commands are ignored.
+## workshop; set_drive, set_target, set_rules and set_weapon_target work in every phase. Unknown or illegal commands are ignored.
 func apply_command(peer_id: int, cmd: Dictionary) -> void:
 	var v: SimVehicle = get_vehicle_for_peer(peer_id)
 	if v == null:
@@ -238,8 +238,16 @@ func apply_command(peer_id: int, cmd: Dictionary) -> void:
 				v.doctrine["drive"] = value
 		"set_target":
 			var value2: String = str(cmd.get("value", ""))
-			if value2 in ["nearest", "strongest", "players_first"]:
+			if value2 in Doctrine.RIG_TARGETS:
 				v.doctrine["target"] = value2
+		"set_rules":  # {"scope": "rig" | weapon kind, "value": Doctrine text form}
+			var scope: String = str(cmd.get("scope", ""))
+			if scope == Doctrine.SCOPE_RIG or Doctrine.is_weapon_scope(scope):
+				var parsed: Variant = Doctrine.parse(str(cmd.get("value", "")), scope)
+				if parsed != null:
+					Doctrine.set_rules(v, scope, parsed)
+		"set_weapon_target":  # {"scope": weapon kind, "value": Doctrine.WEAPON_TARGETS}
+			Doctrine.set_weapon_target(v, str(cmd.get("scope", "")), str(cmd.get("value", "")))
 		"pick_card":
 			if _can_shop(v) and not v.picked:
 				var idx: int = _integral(cmd.get("value"))
@@ -544,6 +552,7 @@ func checksum() -> int:
 		vf.append(float(v.kills))
 		vf.append(float(str(v.doctrine.get("drive", "")).hash()))
 		vf.append(float(str(v.doctrine.get("target", "")).hash()))
+		vf.append(float(Doctrine.fingerprint(v).hash()))
 		vf.append(float(v.fuel))
 		vf.append(float(v.respawn_ticks))
 		vf.append(1.0 if v.eliminated else 0.0)
@@ -1098,6 +1107,7 @@ func _update_vehicles() -> void:
 			v.retaliate_ticks -= 1
 		if v.regen > 0.0 and v.hp < v.max_hp:
 			v.hp = minf(v.hp + v.regen * DT, v.max_hp)
+		Doctrine.apply_rig(self, v)
 		VehicleAI.update_target(self, v)
 		VehicleAI.steer(self, v)
 		v.pos += v.vel * DT
@@ -1155,7 +1165,7 @@ func _damage_vehicle(v: SimVehicle, dmg: float, attacker: int, use_armor: bool =
 	if v.protect_ticks > 0:
 		dmg *= PVP_PROTECT_FACTOR
 	var av: SimVehicle = vehicles[attacker] if by_player else null
-	if av != null and av.target_kind == 2 and av.target_id == v.id:  # deliberate attack, not a stray shot
+	if av != null and _aims_at(av, v.id):  # deliberate attack, not a stray shot
 		v.retaliate_id = attacker
 		v.retaliate_ticks = RETALIATE_TICKS
 	var applied: float = minf(dmg, v.hp)
@@ -1265,29 +1275,42 @@ func _reward_player_kill(av: SimVehicle, v: SimVehicle, src: int, fuel_lost: int
 
 
 func _fire_weapons(v: SimVehicle) -> void:
-	var has_target: bool = v.target_kind != 0
-	var weak: bool = has_target and v.vulture > 0.0 and _target_is_weak(v)
-	for w in v.weapons:
+	for slot in v.weapons.size():
+		var w: Dictionary = v.weapons[slot]
 		var cd: int = w["cooldown"]
 		if cd > 0:
 			cd -= 1
 			w["cooldown"] = cd
-		if not has_target:
+		# Per-weapon doctrine: its rules pick a target mode and may hold fire.
+		var dec: Array = Doctrine.apply_weapon(self, v, w)
+		VehicleAI.update_weapon_target(self, v, w, slot, str(dec[0]))
+		var tk: int = int(w.get("tk", 0))
+		var tpos: Vector2 = w.get("tp", Vector2.ZERO)
+		var tvel: Vector2 = w.get("tv", Vector2.ZERO)
+		var ti: int = int(w.get("ti", -1))
+		var tid: int = int(w.get("tid", -1))
+		if tk == 0:
+			tk = v.target_kind
+			tpos = v.target_pos
+			tvel = v.target_vel
+			ti = v.target_index
+			tid = v.target_id
+		if tk == 0:
 			continue
 		var speed: float = float(w.get("speed", PROJECTILE_SPEED))
-		var dist: float = v.pos.distance_to(v.target_pos)
-		var lead: Vector2 = v.target_pos + v.target_vel * (dist / speed)
+		var dist: float = v.pos.distance_to(tpos)
+		var lead: Vector2 = tpos + tvel * (dist / speed)
 		var to: Vector2 = lead - v.pos
 		var ang: float = to.angle()
 		w["aim"] = ang
-		if cd > 0 or dist > float(w["range"]) or proj_count >= MAX_PROJECTILES:
+		if bool(dec[1]) or cd > 0 or dist > float(w["range"]) or proj_count >= MAX_PROJECTILES:
 			continue
 		var spread: float = float(w.get("spread", SPREAD))
 		var pellets: int = int(w.get("pellets", 1))
 		var pierce: int = int(w.get("pierce", 0))
 		var splash: float = float(w.get("splash", 0.0))
 		var dmg: float = float(w["damage"])
-		if weak:
+		if v.vulture > 0.0 and _is_weak(tk, ti, tid):
 			dmg *= 1.0 + v.vulture
 		var ttl: float = float(w["range"]) / speed + 0.05
 		var muzzle: Vector2 = v.pos + Vector2.from_angle(ang) * MUZZLE_OFFSET
@@ -1298,16 +1321,25 @@ func _fire_weapons(v: SimVehicle) -> void:
 		_emit("fire", muzzle, v.id, Cards.weapon_kind_index(str(w["kind"])))
 
 
-## Vulture: is the current target under 30% hp?
-func _target_is_weak(v: SimVehicle) -> bool:
-	if v.target_kind == 1:
-		var i: int = v.target_index
-		if i < 0 or i >= enemy_count:
+## Vulture: is the target under 30% hp?
+func _is_weak(kind: int, index: int, id: int) -> bool:
+	if kind == 1:
+		if index < 0 or index >= enemy_count:
 			return false
-		return enemy_hp[i] < Cards.VULTURE_HP_FRACTION * enemy_max_hp(enemy_kind[i], round)
-	if v.target_kind == 2 and v.target_id >= 0 and v.target_id < vehicles.size():
-		var t: SimVehicle = vehicles[v.target_id]
+		return enemy_hp[index] < Cards.VULTURE_HP_FRACTION * enemy_max_hp(enemy_kind[index], round)
+	if kind == 2 and id >= 0 and id < vehicles.size():
+		var t: SimVehicle = vehicles[id]
 		return t.alive and t.hp < Cards.VULTURE_HP_FRACTION * t.max_hp
+	return false
+
+
+## True if `av` (the rig or one of its weapons) deliberately aims at vehicle `id`.
+func _aims_at(av: SimVehicle, id: int) -> bool:
+	if av.target_kind == 2 and av.target_id == id:
+		return true
+	for w in av.weapons:
+		if int(w.get("tk", 0)) == 2 and int(w.get("tid", -1)) == id:
+			return true
 	return false
 
 
