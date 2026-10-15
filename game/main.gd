@@ -7,8 +7,8 @@ extends Node
 ##   --join=<ip>           join a host (its lobby or, for an auto-start host, its match)
 ##   --fast                (solo / host) fast_rounds: 4 s combat, 1.5 s workshop, for UI testing
 ##   --shot=<png> --scenario=<name> --seed=<n> --ticks=<n> [--hover=x,y] [--click=x,y;x,y...]
-##                         screenshot: build tools/scenarios.gd, step it, save <png> (640x360)
-##                         and <png minus .png>_1080p.png (3x nearest), then quit (exit 1 on error).
+##                         screenshot: build tools/scenarios.gd, step it, save <png> (640x360 preview)
+##                         and <png minus .png>_1080p.png (full resolution), then quit (exit 1 on error).
 ##                         --hover puts the UI pointer at x,y (viewport px); --click clicks there
 ##                         through the visible UI's own click path (menu or workshop).
 ##   --scenario=replay --session=<dir> --frames=<frames.json>   (playtest harness, scripts/playtest.sh)
@@ -27,7 +27,7 @@ const DRIVE_KEYS := {KEY_1: "circle", KEY_2: "kite", KEY_3: "charge"}
 const TARGET_KEYS := {KEY_Q: "nearest", KEY_W: "strongest", KEY_E: "players_first"}
 const DEMO_TICKS := 30 * 120  ## the menu's attract battle restarts after this many ticks
 
-@onready var _view: WorldView = $WorldView
+@onready var _view: WorldView = $Stage/World/WorldView
 
 var _menu: MenuUi = null
 ## The NetSession and LanDiscovery, loaded by path so screenshot mode never depends on game/net.
@@ -520,22 +520,23 @@ func _abs_png(out_path: String) -> String:
 	return out_path if out_path.is_absolute_path() else OS.get_environment("PWD").path_join(out_path)
 
 
-## Saves the drawn viewport as <out_path> (native 640x360) and <out>_1080p.png (3x nearest).
+## Saves the drawn window as <out>_1080p.png (1920x1080: the world scaled up 3x by whole pixels,
+## the UI drawn at full resolution) and <out_path> (640x360, filtered down for quick previews).
 func _save_capture(out_path: String) -> bool:
 	var img: Image = get_viewport().get_texture().get_image()
 	if img == null or img.is_empty():
 		push_error("main: viewport capture failed")
 		return false
-	var native := Vector2i(640, 360)
-	if img.get_size() != native:  # window-sized capture: the 640x360 frame scaled up by an integer
-		img.resize(native.x, native.y, Image.INTERPOLATE_NEAREST)
+	var full := Vector2i(1920, 1080)
+	if img.get_size() != full:
+		img.resize(full.x, full.y, Image.INTERPOLATE_NEAREST if img.get_size().x < full.x else Image.INTERPOLATE_LANCZOS)
 	var abs_path: String = _abs_png(out_path)
-	var err: Error = img.save_png(abs_path)
-	var big: Image = img.duplicate()
-	big.resize(native.x * 3, native.y * 3, Image.INTERPOLATE_NEAREST)
 	var big_path: String = abs_path.get_basename() + "_1080p.png"
+	var err: Error = img.save_png(big_path)
+	var small: Image = img.duplicate()
+	small.resize(640, 360, Image.INTERPOLATE_LANCZOS)
 	if err == OK:
-		err = big.save_png(big_path)
+		err = small.save_png(abs_path)
 	if err != OK:
 		push_error("main: cannot save %s (%s)" % [abs_path, error_string(err)])
 		return false

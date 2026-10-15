@@ -494,5 +494,6 @@ def export(out=OUT):
     save(ui.steel_plate(), "ui_steel.png")
     save(ui.vignette(), "ui_vignette.png")
     save(ui.logo(), "ui_logo.png")
+    save(ui.logo(words=False), "ui_logo_plate.png")
     save(ui.splat(), "ui_splat.png")
     print("wrote game assets to", os.path.normpath(out))
