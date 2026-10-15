@@ -340,12 +340,12 @@ func _draw() -> void:
 	draw_rect(scr, Gfx.CRT_BG)
 	var x0: float = scr.position.x + 8.0
 	var y: float = scr.position.y + 6.0
-	var px: float = PixelFont.draw_big(self, "DOCTRINE.SYS - RULE EDITOR", Vector2(x0, y - 1), Gfx.CRT_HI)
+	var px: float = UiFont.draw_big(self, "DOCTRINE.SYS - RULE EDITOR", Vector2(x0, y - 1), Gfx.CRT_HI)
 	if fmod(_blink, 1.0) < 0.5:
 		draw_rect(Rect2(px + 2, y - 1, 4, 7), Gfx.CRT_TEXT)
-	_chip("CLOSE  (P)", Vector2(scr.end.x - 8 - PixelFont.width("CLOSE  (P)"), y), false, "close", null)
+	_chip("CLOSE  (P)", Vector2(scr.end.x - 8 - UiFont.width("CLOSE  (P)"), y), false, "close", null)
 	y += 10.0
-	PixelFont.draw(self, "RULES RUN TOP TO BOTTOM: THE FIRST MATCHING RULE OF EACH KIND WINS. NOTHING MATCHES: BASE SETTING.", Vector2(x0, y), Gfx.CRT_DIM)
+	UiFont.draw_small(self, "RULES RUN TOP TO BOTTOM: THE FIRST MATCHING RULE OF EACH KIND WINS. NOTHING MATCHES: BASE SETTING.", Vector2(x0, y), Gfx.CRT_DIM)
 	y += 14.0
 	_draw_tabs(v, Vector2(x0, y), scr)
 	y += 16.0
@@ -359,7 +359,7 @@ func _draw() -> void:
 	for sy in range(int(scr.position.y) + 1, int(scr.end.y), 2):
 		draw_rect(Rect2(scr.position.x, sy, scr.size.x, 1), Color(0, 0, 0, 0.18))
 	draw_rect(Rect2(scr.position.x + 2, scr.position.y + 1, scr.size.x - 4, 1), Color(1, 0.8, 0.5, 0.08))
-	PixelFont.draw(self, "COLONY NAV-COMP  -  BEHAVIOUR PROGRAMMING", Vector2(PANEL.position.x + 8, PANEL.end.y - 11), Gfx.STEEL[4], Gfx.STEEL[0])
+	UiFont.draw_small(self, "COLONY NAV-COMP  -  BEHAVIOUR PROGRAMMING", Vector2(PANEL.position.x + 8, PANEL.end.y - 11), Gfx.STEEL[4], Gfx.STEEL[0])
 	draw_rect(Rect2(PANEL.end.x - 12, PANEL.end.y - 10, 3, 3), Gfx.CRT_TEXT)
 	if not _menu.is_empty():
 		_draw_menu()
@@ -376,10 +376,10 @@ func _draw_tabs(v: SimVehicle, pos: Vector2, scr: Rect2) -> void:
 		var n: int = (v.rules if t[0] == Doctrine.SCOPE_RIG else Doctrine.weapon_doc(v, t[0])["rules"]).size()
 		if n > 0:
 			label += " (%d)" % n
-		var r := Rect2(x - 3, pos.y - 3, PixelFont.width(label) + 14, 11)
+		var r := Rect2(x - 3, pos.y - 3, UiFont.width(label) + 14, 11)
 		draw_rect(r, Gfx.CRT_TEXT if on else (Gfx.CRT_DIM * Color(1, 1, 1, 0.35) if _is_hover("tab", t[0]) else Color(0, 0, 0, 0)))
 		UiKit.outline_rect(self, r, Gfx.CRT_TEXT if on else Gfx.CRT_DIM)
-		PixelFont.draw(self, label, Vector2(x, pos.y), Gfx.CRT_BG if on else Gfx.CRT_TEXT)
+		UiFont.draw(self, label, Vector2(x, pos.y), Gfx.CRT_BG if on else Gfx.CRT_TEXT)
 		_lamp(Vector2(r.end.x - 7, pos.y + 1), int(t[2]) != 0, on)
 		_hits.append([r, "tab", t[0]])
 		x = r.end.x + 5.0
@@ -388,12 +388,12 @@ func _draw_tabs(v: SimVehicle, pos: Vector2, scr: Rect2) -> void:
 
 func _draw_base_rig(v: SimVehicle, pos: Vector2) -> void:
 	var y: float = pos.y
-	PixelFont.draw(self, "BASE DRIVE", Vector2(pos.x, y), Gfx.CRT_DIM)
+	UiFont.draw(self, "BASE DRIVE", Vector2(pos.x, y), Gfx.CRT_DIM)
 	var x: float = pos.x + 62.0
 	for d in Doctrine.BASE_DRIVES:
 		x = _chip(ACTION_LABELS["drive:" + d], Vector2(x, y), str(v.doctrine["drive"]) == d, "base_drive", d) + 5.0
 	y += 11.0
-	PixelFont.draw(self, "BASE TARGET", Vector2(pos.x, y), Gfx.CRT_DIM)
+	UiFont.draw(self, "BASE TARGET", Vector2(pos.x, y), Gfx.CRT_DIM)
 	x = pos.x + 62.0
 	for t in Doctrine.RIG_TARGETS:
 		x = _chip(ACTION_LABELS["target:" + t].trim_prefix("TGT "), Vector2(x, y), str(v.doctrine["target"]) == t, "base_target", t) + 5.0
@@ -407,9 +407,9 @@ func _draw_base_weapon(v: SimVehicle, pos: Vector2) -> void:
 			wp = w
 	var info := "RANGE %d  DAMAGE %s  SHOTS/S %s" % [roundi(float(wp.get("range", 0.0))), UiKit.num(float(wp.get("damage", 0.0)) * float(wp.get("pellets", 1))),
 		UiKit.num(float(SimWorld.TICK_RATE) / maxf(float(wp.get("cooldown_ticks", 1)), 1.0))]
-	PixelFont.draw(self, info, Vector2(pos.x, y), Gfx.CRT_DIM)
+	UiFont.draw(self, info, Vector2(pos.x, y), Gfx.CRT_DIM)
 	y += 11.0
-	PixelFont.draw(self, "BASE TARGET", Vector2(pos.x, y), Gfx.CRT_DIM)
+	UiFont.draw(self, "BASE TARGET", Vector2(pos.x, y), Gfx.CRT_DIM)
 	var x: float = pos.x + 62.0
 	var cur: String = Doctrine.weapon_doc(v, scope)["target"]
 	for t in Doctrine.WEAPON_TARGETS:
@@ -420,9 +420,9 @@ func _draw_rules(v: SimVehicle, scr: Rect2) -> void:
 	var x0: float = scr.position.x + 8.0
 	var slots: int = Doctrine.slots(v)
 	var y: float = ROWS_Y - 14.0
-	PixelFont.draw(self, "RULES  %d/%d SLOTS" % [mini(_work.size(), slots), slots], Vector2(x0, y), Gfx.CRT_HI)
+	UiFont.draw(self, "RULES  %d/%d SLOTS" % [mini(_work.size(), slots), slots], Vector2(x0, y), Gfx.CRT_HI)
 	var note := "+1 SLOT PER ELECTRONICS TIER" if slots < Doctrine.MAX_SLOTS else "ALL SLOTS UNLOCKED"
-	PixelFont.draw(self, note, Vector2(scr.end.x - 8 - PixelFont.width(note), y), Gfx.CRT_DIM)
+	UiFont.draw(self, note, Vector2(scr.end.x - 8 - UiFont.width(note), y), Gfx.CRT_DIM)
 	var live: int = v.rule_live
 	if scope != Doctrine.SCOPE_RIG:
 		live = 0
@@ -443,31 +443,31 @@ func _draw_rules(v: SimVehicle, scr: Rect2) -> void:
 	if _work.size() < slots:
 		_chip("+ ADD RULE", Vector2(x0, ay), false, "add_rule", null)
 	elif _work.size() < Doctrine.MAX_SLOTS:
-		PixelFont.draw(self, "SLOTS FULL - BUILD ELECTRONICS TECH FOR MORE", Vector2(x0, ay), Gfx.CRT_DIM)
+		UiFont.draw(self, "SLOTS FULL - BUILD ELECTRONICS TECH FOR MORE", Vector2(x0, ay), Gfx.CRT_DIM)
 	if _work.is_empty():
-		PixelFont.draw(self, "NO RULES: THIS %s ALWAYS USES ITS BASE SETTING." % ("RIG" if scope == Doctrine.SCOPE_RIG else "GUN"), Vector2(x0 + 60, ay), Gfx.CRT_DIM)
+		UiFont.draw(self, "NO RULES: THIS %s ALWAYS USES ITS BASE SETTING." % ("RIG" if scope == Doctrine.SCOPE_RIG else "GUN"), Vector2(x0 + 60, ay), Gfx.CRT_DIM)
 
 
 func _draw_rule(i: int, rule: Dictionary, pos: Vector2, row: Rect2, locked: bool, lit: bool) -> void:
 	var col: Color = Gfx.CRT_DIM if locked else Gfx.CRT_TEXT
-	var x: float = PixelFont.draw(self, "%d" % (i + 1), pos, Gfx.CRT_HI if lit else col) + 3.0
+	var x: float = UiFont.draw(self, "%d" % (i + 1), pos, Gfx.CRT_HI if lit else col) + 3.0
 	_lamp(Vector2(x, pos.y + 1), lit, false)
 	x += 9.0
 	if locked:
-		PixelFont.draw(self, "LOCKED: THIS RIG HAS ONLY %d SLOTS - BUILD ELECTRONICS TECH TO RUN IT" % Doctrine.slots(_local()), Vector2(x, pos.y), Gfx.CRT_DIM)
+		UiFont.draw(self, "LOCKED: THIS RIG HAS ONLY %d SLOTS - BUILD ELECTRONICS TECH TO RUN IT" % Doctrine.slots(_local()), Vector2(x, pos.y), Gfx.CRT_DIM)
 		_chip("X", Vector2(row.end.x - 12, pos.y), false, "delete", i)
 		return
 	var conds: Array = rule["if"]
-	PixelFont.draw(self, sentence(rule, scope), Vector2(pos.x + 12, pos.y + 10), Gfx.CRT_DIM)
-	x = PixelFont.draw(self, "IF" if not conds.is_empty() else "ALWAYS", Vector2(x, pos.y), Gfx.CRT_DIM) + 5.0
+	UiFont.draw_small(self, sentence(rule, scope), Vector2(pos.x + 12, pos.y + 11), Gfx.CRT_DIM)
+	x = UiFont.draw(self, "IF" if not conds.is_empty() else "ALWAYS", Vector2(x, pos.y), Gfx.CRT_DIM) + 5.0
 	for ci in conds.size():
 		if ci > 0:
-			x = PixelFont.draw(self, "AND", Vector2(x, pos.y), Gfx.CRT_DIM) + 5.0
+			x = UiFont.draw(self, "AND", Vector2(x, pos.y), Gfx.CRT_DIM) + 5.0
 		x = _draw_cond(i, ci, conds[ci], Vector2(x, pos.y)) + 6.0
 	if conds.size() < Doctrine.MAX_CONDS:
 		x = _chip("+ IF" if conds.is_empty() else "+ AND", Vector2(x, pos.y), false, "add_cond", i) + 6.0
 	x = maxf(x, row.position.x + 404.0)
-	x = PixelFont.draw(self, "THEN", Vector2(x, pos.y), Gfx.CRT_DIM) + 5.0
+	x = UiFont.draw(self, "THEN", Vector2(x, pos.y), Gfx.CRT_DIM) + 5.0
 	_chip(ACTION_LABELS[rule["do"]], Vector2(x, pos.y), false, "action", i, true)
 	var bx: float = row.end.x - 44.0
 	if i > 0:
@@ -538,7 +538,7 @@ func _draw_cond(ri: int, ci: int, c: Array, pos: Vector2) -> float:
 		return _chip("YES" if int(c[2]) == 1 else "NO", Vector2(x, pos.y), false, "op", [ri, ci])
 	x = _chip(str(c[1]), Vector2(x, pos.y), false, "op", [ri, ci]) + 3.0
 	x = _chip("-", Vector2(x, pos.y), false, "dec", [ri, ci]) + 2.0
-	x = PixelFont.draw(self, "%d%s" % [int(c[2]), str(m["unit"])], Vector2(x, pos.y), Gfx.CRT_HI) + 3.0
+	x = UiFont.draw(self, "%d%s" % [int(c[2]), str(m["unit"])], Vector2(x, pos.y), Gfx.CRT_HI) + 3.0
 	return _chip("+", Vector2(x, pos.y), false, "inc", [ri, ci])
 
 
@@ -546,7 +546,7 @@ func _draw_footer(v: SimVehicle, scr: Rect2) -> void:
 	var x0: float = scr.position.x + 8.0
 	var y: float = scr.end.y - 46.0
 	draw_rect(Rect2(scr.position.x + 4, y - 5, scr.size.x - 8, 1), Gfx.CRT_DIM)
-	PixelFont.draw(self, "QUICK ADD", Vector2(x0, y), Gfx.CRT_DIM)
+	UiFont.draw(self, "QUICK ADD", Vector2(x0, y), Gfx.CRT_DIM)
 	var x: float = x0 + 50.0
 	for t: Array in (TEMPLATES_RIG if scope == Doctrine.SCOPE_RIG else TEMPLATES_WEAPON):
 		x = _chip(str(t[0]), Vector2(x, y), false, "template", t[1]) + 7.0
@@ -554,12 +554,12 @@ func _draw_footer(v: SimVehicle, scr: Rect2) -> void:
 	var help: String = _help_text()
 	if _toast_left > 0.0:
 		help = _toast
-	for line in PixelFont.wrap(help, int(scr.size.x) - 20).slice(0, 2):
-		PixelFont.draw(self, line, Vector2(x0, y), Gfx.CRT_HI if _toast_left > 0.0 else Gfx.CRT_TEXT)
+	for line in UiFont.wrap(help, int(scr.size.x) - 20).slice(0, 2):
+		UiFont.draw(self, line, Vector2(x0, y), Gfx.CRT_HI if _toast_left > 0.0 else Gfx.CRT_TEXT)
 		y += 8.0
 	if world.phase == SimWorld.PHASE_COMBAT:
 		var s := "LIVE: A LIT LAMP MEANS THE RULE MATCHES RIGHT NOW"
-		PixelFont.draw(self, s, Vector2(scr.end.x - 8 - PixelFont.width(s), scr.end.y - 46.0), Gfx.CRT_DIM)
+		UiFont.draw(self, s, Vector2(scr.end.x - 8 - UiFont.width(s), scr.end.y - 46.0), Gfx.CRT_DIM)
 
 
 func _help_text() -> String:
@@ -612,15 +612,15 @@ func _draw_menu() -> void:
 		var hov: bool = _is_hover("menu_pick", o[0])
 		if hov or o[0] == cur:
 			draw_rect(orow, Gfx.CRT_TEXT if hov else Color(Gfx.CRT_TEXT, 0.25))
-		PixelFont.draw(self, o[1], Vector2(r.position.x + 5, y), Gfx.CRT_BG if hov else (Gfx.UI_BAD if o[0] == "" else Gfx.CRT_TEXT))
+		UiFont.draw(self, o[1], Vector2(r.position.x + 5, y), Gfx.CRT_BG if hov else (Gfx.UI_BAD if o[0] == "" else Gfx.CRT_TEXT))
 		_hits.append([orow, "menu_pick", o[0]])
 		y += 9.0
 
 
 ## A CRT button; `drop` adds a small down-arrow (opens a list). Returns the x after it.
 func _chip(text: String, pos: Vector2, on: bool, action: String, arg: Variant, drop: bool = false) -> float:
-	var w: float = PixelFont.width(text) + (10.0 if drop else 5.0)
-	var r := Rect2(pos - Vector2(2, 2), Vector2(w, 9))
+	var w: float = UiFont.width(text) + (10.0 if drop else 5.0)
+	var r := Rect2(pos - Vector2(2, 2), Vector2(w, 10))
 	var hov: bool = _menu.is_empty() and _is_hover(action, arg)
 	if on:
 		draw_rect(r, Gfx.CRT_TEXT)
@@ -628,11 +628,11 @@ func _chip(text: String, pos: Vector2, on: bool, action: String, arg: Variant, d
 		draw_rect(r, Color(Gfx.CRT_TEXT, 0.22))
 	UiKit.outline_rect(self, r, Gfx.CRT_TEXT if on or hov else Gfx.CRT_DIM)
 	var tc: Color = Gfx.CRT_BG if on else (Gfx.CRT_HI if hov else Gfx.CRT_TEXT)
-	PixelFont.draw(self, text, pos + Vector2(1, 0), tc)
+	UiFont.draw(self, text, pos + Vector2(1, 0), tc)
 	if drop:
 		var ax: float = r.end.x - 6.0
-		draw_rect(Rect2(ax, pos.y + 1, 3, 1), tc)
-		draw_rect(Rect2(ax + 1, pos.y + 2, 1, 1), tc)
+		draw_rect(Rect2(ax, pos.y + 2, 3, 1), tc)
+		draw_rect(Rect2(ax + 1, pos.y + 3, 1, 1), tc)
 	_hits.append([r, action, arg])
 	return r.end.x
 

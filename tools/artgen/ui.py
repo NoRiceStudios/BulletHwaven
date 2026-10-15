@@ -402,7 +402,8 @@ def _spray(cv, m, ramp, seed):
     cv.put(chips, RUST[2])
 
 
-def logo(seed=21):
+def logo(seed=21, words=True):
+    """Title plate. words=False leaves the sheet blank: the game sets the title in its display font."""
     W, H = 316, 62
     cv = Canvas(W, H)
     rng = np.random.default_rng(seed)
@@ -416,6 +417,17 @@ def logo(seed=21):
     weld(cv, [(177, 4), (178, 57)])
     rivets(cv, [(7, 10), (170, 7), (8, 53), (171, 52), (183, 8), (306, 7), (184, 52), (305, 51)]
            + [(40 + 33 * i, 6 - i // 3) for i in range(4)] + [(214 + 30 * i, 5) for i in range(3)])
+    if not words:
+        for _ in range(9):
+            cx, cy = rng.uniform(12, W - 12), rng.uniform(10, H - 10)
+            if cy > 14 and cy < 50:  # keep the lettering band clear of holes
+                continue
+            rim = circle(W, H, cx, cy, 2.4) & sheet
+            cv.put(rim & ~shift(rim, -1, -1), STEEL[4])
+            cv.put(rim & ~shift(rim, 1, 1), RUST[0])
+            cv.a[circle(W, H, cx, cy, 1.3)] = 0
+        outline(cv, OUTLINE)
+        return cv
     # the words, stencilled across the seam
     scale = 4
     a = _stencil_mask("BULLET", scale)

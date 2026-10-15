@@ -345,6 +345,7 @@ The aliens look like **plausible desert ecology**, not like classic sci-fi monst
 
 ### 11f. UI style
 - **Diegetic and improvised:** rusty metal sheets, stencil fonts, tape labels, hand-written markings.
+- **Readability first:** the world is pixel art, but all UI text is set in clean, condensed fonts drawn at full screen resolution (a stencil display face only for the logo and big titles). Panels are dark and calm inside a rusty frame so text never sits on noisy texture; every line of text has room to breathe (no stacked rows touching).
 - **Workshop:** a top-down view of the vehicle on a garage floor. Cards are like scrap tags or crumpled blueprints.
 - **Doctrine:** looks like an old onboard computer / CRT terminal salvaged from the colony ship (green or amber monochrome), a nice contrast to the warm desert.
 

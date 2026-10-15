@@ -92,6 +92,7 @@ func _draw() -> void:
 			_draw_drain_warning(me)
 		_draw_feed(vs)
 		_draw_grace(vs, watching)
+		_draw_rival_tags()
 		if v != null and (watching or not (me != null and me.eliminated)):
 			_draw_rival_arrows(vs, v)
 		if me != null and me.eliminated and not watching:
@@ -109,6 +110,22 @@ func _draw() -> void:
 			_banner(vs, "HIVE RETREATS", "MAKE CAMP - %s ON THE CLOCK" % UiKit.clock(world.workshop_duration()), el, 112.0)
 
 
+## Name tag and hp bar over every rival rig on screen (screen space, so the text stays crisp).
+func _draw_rival_tags() -> void:
+	if view == null or view.attract:
+		return
+	for r in world.vehicles:
+		if not r.alive or r.peer_id == local_peer:
+			continue
+		var p: Vector2 = view.screen_pos(r)
+		var top: float = p.y - view.rig_radius(r) - 11.0
+		var tag: String = UiKit.player_name(r)
+		UiKit.paint_text(self, tag, Vector2(p.x - floorf(UiFont.width(tag) / 2.0), top), r.color_index)
+		var bw: float = 22.0
+		draw_rect(Rect2(p.x - bw / 2.0 - 1.0, top + 8.0, bw + 2.0, 3.0), Gfx.OUTLINE)
+		draw_rect(Rect2(p.x - bw / 2.0, top + 9.0, floorf(bw * clampf(r.hp / r.max_hp, 0.0, 1.0)), 1.0), UiKit.bar_color(r.color_index))
+
+
 func _last_wreck(v: SimVehicle) -> Dictionary:
 	if view == null:
 		return {}
@@ -121,17 +138,17 @@ func _last_wreck(v: SimVehicle) -> Dictionary:
 # ---------------------------------------------------------------- combat panels
 
 func _draw_status(v: SimVehicle) -> void:
-	var r := Rect2(6, 6, 150, 46)
+	var r := Rect2(6, 6, 158, 53)
 	_panels.append(r)
 	UiKit.plate(self, r)
-	var x0: float = r.position.x + 6.0
-	PixelFont.draw(self, "ROUND %d" % world.round, Vector2(x0, 11), Gfx.UI_TEXT, Gfx.UI_SHADOW)
+	var x0: float = r.position.x + 7.0
+	var xr: float = r.end.x - 7.0
+	UiFont.draw_big(self, "ROUND %d" % world.round, Vector2(x0, 11), Gfx.UI_TEXT, Gfx.OUTLINE)
 	var t: String = UiKit.clock(world.phase_ticks_left)
-	PixelFont.draw(self, t, Vector2(r.end.x - 6 - PixelFont.width(t), 11), Gfx.FIRE[4], Gfx.UI_SHADOW)
-	PixelFont.draw(self, "HP", Vector2(x0, 19), Gfx.UI_TEXT, Gfx.UI_SHADOW)
-	PixelFont.draw(self, "FUEL", Vector2(x0, 27), Gfx.UI_TEXT, Gfx.UI_SHADOW)
+	UiFont.draw_big(self, t, Vector2(xr - UiFont.width_big(t), 11), Gfx.FIRE[4], Gfx.OUTLINE)
+	UiFont.draw_small(self, "HP", Vector2(x0, 23), Gfx.UI_DIM, Gfx.UI_SHADOW)
+	UiFont.draw_small(self, "FUEL", Vector2(x0, 32), Gfx.UI_DIM, Gfx.UI_SHADOW)
 	var bx: float = x0 + 20.0
-	var bw: float = r.end.x - 6.0 - bx
 	var hp_frac: float = 0.0
 	var fuel: int = 0
 	if v != null:
@@ -140,42 +157,55 @@ func _draw_status(v: SimVehicle) -> void:
 	var hp_txt: String = "%d/%d" % [ceili(maxf(v.hp, 0.0)) if v.alive else 0, roundi(v.max_hp)] if v else "0"
 	var low: bool = v != null and v.alive and hp_frac < LOW_HP
 	var hp_col: Color = Gfx.UI_BAD if low else Gfx.UI_TEXT
-	UiKit.bar(self, Rect2(bx, 19, bw - PixelFont.width(hp_txt) - 4, 5), hp_frac, UiKit.bar_color(v.color_index) if v else Gfx.UI_DIM)
-	PixelFont.draw(self, hp_txt, Vector2(r.end.x - 6 - PixelFont.width(hp_txt), 19), hp_col, Gfx.UI_SHADOW)
+	var num_w: float = 42.0  # right column for the numbers, so both bars line up
+	UiKit.bar(self, Rect2(bx, 23, xr - num_w - bx, 6), hp_frac, UiKit.bar_color(v.color_index) if v else Gfx.UI_DIM)
+	UiFont.draw(self, hp_txt, Vector2(xr - UiFont.width(hp_txt), 23), hp_col, Gfx.UI_SHADOW)
 	var fuel_col: Color = Gfx.FIRE[3] if fuel > 40 else Gfx.UI_BAD
-	UiKit.bar(self, Rect2(bx, 27, bw - 16, 5), float(fuel) / float(SimWorld.START_FUEL), fuel_col)
+	UiKit.bar(self, Rect2(bx, 32, xr - num_w - bx, 6), float(fuel) / float(SimWorld.START_FUEL), fuel_col)
 	var ft := str(fuel)
-	PixelFont.draw(self, ft, Vector2(r.end.x - 6 - PixelFont.width(ft), 27), fuel_col, Gfx.UI_SHADOW)
-	PixelFont.draw(self, "SCRAP %d" % (v.scrap if v else 0), Vector2(x0, 37), Gfx.UI_TEXT, Gfx.UI_SHADOW)
-	var k := "KILLS %d" % (v.kills if v else 0)
-	PixelFont.draw(self, k, Vector2(r.end.x - 6 - PixelFont.width(k), 37), Gfx.UI_DIM, Gfx.UI_SHADOW)
+	UiFont.draw(self, ft, Vector2(xr - UiFont.width(ft), 32), fuel_col, Gfx.UI_SHADOW)
+	draw_rect(Rect2(x0 - 1, 42, xr - x0 + 2, 1), Color(Gfx.OUTLINE, 0.8))
+	var sx: float = UiFont.draw_small(self, "SCRAP ", Vector2(x0, 46), Gfx.UI_DIM, Gfx.UI_SHADOW)
+	UiFont.draw(self, str(v.scrap if v else 0), Vector2(sx, 46), Gfx.FIRE[4], Gfx.UI_SHADOW)
+	var k := str(v.kills if v else 0)
+	var kx: float = xr - UiFont.width(k)
+	UiFont.draw(self, k, Vector2(kx, 46), Gfx.UI_TEXT, Gfx.UI_SHADOW)
+	UiFont.draw_small(self, "KILLS ", Vector2(kx - UiFont.width_small("KILLS "), 46), Gfx.UI_DIM, Gfx.UI_SHADOW)
 
 
 func _draw_hive(vs: Vector2) -> void:
 	var l1 := "HIVE: %d ALIVE" % world.enemy_count
 	var boost: float = SimWorld.enemy_hp_mult(world.round) - 1.0
 	var l2 := ("HIVE HP +%s" % UiKit.pct(boost)) if boost > 0.001 else "HIVE HP BASE"
-	var pw: float = maxf(PixelFont.width(l1), PixelFont.width(l2)) + 14.0
-	UiKit.plate(self, Rect2(vs.x - pw - 6, 6, pw, 25))
-	_panels.append(Rect2(vs.x - pw - 6, 6, pw, 25))
-	PixelFont.draw(self, l1, Vector2(vs.x - pw + 1, 11), Gfx.GLOW[3], Gfx.UI_SHADOW)
-	PixelFont.draw(self, l2, Vector2(vs.x - pw + 1, 20), Gfx.UI_DIM, Gfx.UI_SHADOW)
+	var pw: float = maxf(UiFont.width(l1), UiFont.width(l2)) + 16.0
+	UiKit.plate(self, Rect2(vs.x - pw - 6, 6, pw, 28))
+	_panels.append(Rect2(vs.x - pw - 6, 6, pw, 28))
+	UiFont.draw(self, l1, Vector2(vs.x - pw + 2, 12), Gfx.GLOW[3], Gfx.UI_SHADOW)
+	UiFont.draw(self, l2, Vector2(vs.x - pw + 2, 22), Gfx.UI_DIM, Gfx.UI_SHADOW)
 
 
 func _draw_doctrine(v: SimVehicle, vs: Vector2) -> void:
 	if v == null:
 		return
-	var doc := "DOCTRINE: %s  /  TARGET: %s" % [str(v.doctrine["drive"]), str(v.doctrine["target"]).replace("_", " ")]
+	var drive: String = str(v.doctrine["drive"]).to_upper()
+	var target: String = str(v.doctrine["target"]).replace("_", " ").to_upper()
 	var live := PackedStringArray()
 	for i in Doctrine.MAX_SLOTS:
 		if (v.rule_live >> i) & 1 == 1:
 			live.append(str(i + 1))
-	doc += "  /  RULE %s" % " ".join(live) if not live.is_empty() else ""
-	doc += "  /  P: PROGRAM"
-	var dw: float = PixelFont.width(doc) + 14.0
-	UiKit.plate(self, Rect2(6, vs.y - 22, dw, 16))
-	_panels.append(Rect2(6, vs.y - 22, dw, 16))
-	PixelFont.draw(self, doc, Vector2(13, vs.y - 16), Gfx.UI_TEXT, Gfx.UI_SHADOW)
+	var rules: String = " ".join(live) if not live.is_empty() else "-"
+	var dw: float = UiFont.width_small("DRIVE ") + UiFont.width(drive) + UiFont.width_small("    TARGET ") + UiFont.width(target) \
+		+ UiFont.width_small("    RULE ") + UiFont.width(rules) + UiFont.width_small("    P: PROGRAM") + 16.0
+	var r := Rect2(6, vs.y - 23, dw, 17)
+	UiKit.plate(self, r)
+	_panels.append(r)
+	var x: float = UiFont.draw_small(self, "DRIVE ", Vector2(14, vs.y - 17), Gfx.UI_DIM, Gfx.UI_SHADOW)
+	x = UiFont.draw(self, drive, Vector2(x, vs.y - 17), Gfx.CRT_TEXT, Gfx.UI_SHADOW)
+	x = UiFont.draw_small(self, "    TARGET ", Vector2(x, vs.y - 17), Gfx.UI_DIM, Gfx.UI_SHADOW)
+	x = UiFont.draw(self, target, Vector2(x, vs.y - 17), Gfx.CRT_TEXT, Gfx.UI_SHADOW)
+	x = UiFont.draw_small(self, "    RULE ", Vector2(x, vs.y - 17), Gfx.UI_DIM, Gfx.UI_SHADOW)
+	x = UiFont.draw(self, rules, Vector2(x, vs.y - 17), Gfx.CRT_HI if not live.is_empty() else Gfx.UI_DIM, Gfx.UI_SHADOW)
+	UiFont.draw_small(self, "    P: PROGRAM", Vector2(x, vs.y - 17), Gfx.UI_DIM, Gfx.UI_SHADOW)
 
 
 # ---------------------------------------------------------------- overlays
@@ -214,11 +244,11 @@ func _wreck_cause(v: SimVehicle, cx: float, y: float) -> void:
 	var pre := "WRECKED BY "
 	var post: String = (" - %s" % weapon) if weapon != "" else ""
 	var nm: String = UiKit.player_name(killer)
-	var w: float = PixelFont.width(pre) + PixelFont.width(nm) + PixelFont.width(post)
+	var w: float = UiFont.width(pre) + UiFont.width(nm) + UiFont.width(post)
 	var x: float = floorf(cx - w / 2.0)
-	x = PixelFont.draw(self, pre, Vector2(x, y), Gfx.UI_BAD, Gfx.UI_SHADOW)
+	x = UiFont.draw(self, pre, Vector2(x, y), Gfx.UI_BAD, Gfx.UI_SHADOW)
 	x = UiKit.paint_text(self, nm, Vector2(x, y), killer.color_index)
-	PixelFont.draw(self, post, Vector2(x, y), Gfx.FIRE[4] if weapon == "RAMMED" else Gfx.UI_TEXT, Gfx.UI_SHADOW)
+	UiFont.draw(self, post, Vector2(x, y), Gfx.FIRE[4] if weapon == "RAMMED" else Gfx.UI_TEXT, Gfx.UI_SHADOW)
 
 
 func _draw_eliminated(vs: Vector2) -> void:
@@ -242,7 +272,7 @@ func _draw_feed(vs: Vector2) -> void:
 	if view == null:
 		return
 	var me: SimVehicle = view.focus_vehicle()
-	var y: float = 34.0
+	var y: float = 38.0
 	var shown: int = 0
 	for i in range(view.kill_log.size() - 1, -1, -1):
 		var e: Dictionary = view.kill_log[i]
@@ -256,15 +286,15 @@ func _draw_feed(vs: Vector2) -> void:
 		if kv == null or vv == null:
 			continue
 		if age > FEED_TICKS - 15 and (age / 3) % 2 == 0:
-			y += 11.0
+			y += 13.0
 			shown += 1
 			continue
 		var weapon: int = int(e["weapon"])
 		var wt: String = "RAMMED" if weapon == SimWorld.WEAPON_RAM else UiKit.weapon_short(weapon)
 		var kn: String = UiKit.player_name(kv)
 		var vn: String = UiKit.player_name(vv)
-		var w: float = PixelFont.width(kn) + 5.0 + 6.0 + 5.0 + PixelFont.width(vn) + 6.0 + PixelFont.width(wt) + 12.0
-		var r := Rect2(vs.x - 6.0 - w, y, w, 10)
+		var w: float = UiFont.width(kn) + 5.0 + 6.0 + 5.0 + UiFont.width(vn) + 6.0 + UiFont.width(wt) + 12.0
+		var r := Rect2(vs.x - 6.0 - w, y, w, 12)
 		var mine: bool = me != null and (kv == me or vv == me)
 		draw_rect(r, Gfx.OUTLINE)
 		draw_rect(r.grow(-1.0), FEED_BG if not mine else Color(0.22, 0.13, 0.08, 0.9))
@@ -273,11 +303,11 @@ func _draw_feed(vs: Vector2) -> void:
 			UiKit.outline_rect(self, r, Gfx.HAZARD)
 		var x: float = r.position.x + 6.0
 		x = UiKit.paint_text(self, kn, Vector2(x, y + 3), kv.color_index) + 4.0
-		x = UiKit.arrow_glyph(self, Vector2(x, y + 3), Gfx.UI_TEXT, Gfx.UI_SHADOW) + 5.0
+		x = UiKit.arrow_glyph(self, Vector2(x, y + 3.5), Gfx.UI_TEXT, Gfx.UI_SHADOW) + 5.0
 		x = UiKit.paint_text(self, vn, Vector2(x, y + 3), vv.color_index) + 6.0
-		PixelFont.draw(self, wt, Vector2(x, y + 3), Gfx.FIRE[4] if weapon == SimWorld.WEAPON_RAM else Gfx.UI_DIM, Gfx.UI_SHADOW)
+		UiFont.draw(self, wt, Vector2(x, y + 3), Gfx.FIRE[4] if weapon == SimWorld.WEAPON_RAM else Gfx.UI_DIM, Gfx.UI_SHADOW)
 		_panels.append(r)
-		y += 11.0
+		y += 13.0
 		shown += 1
 		if shown >= FEED_MAX:
 			break
@@ -374,9 +404,9 @@ func _draw_drain_warning(v: SimVehicle) -> void:
 	if drain <= 0 or world.phase_ticks_left > DRAIN_WARN_TICKS:
 		return
 	var text := "CAMP DRAINS %d FUEL - KILLS REFUEL" % drain
-	var r := Rect2(6, 55, PixelFont.width(text) + 10.0, 9)
+	var r := Rect2(6, 63, UiFont.width(text) + 10.0, 10)
 	UiKit.tape(self, r, Color("#f0b090"))
-	PixelFont.draw(self, text, Vector2(r.position.x + 5, r.position.y + 2), Gfx.INK)
+	UiFont.draw(self, text, Vector2(r.position.x + 5, r.position.y + 2), Gfx.INK)
 	_panels.append(r)
 
 
@@ -388,11 +418,11 @@ func _draw_spectating(vs: Vector2, v: SimVehicle) -> void:
 		return
 	var cx: float = floorf(vs.x / 2.0)
 	var nm: String = UiKit.player_name(v)
-	var w: float = maxf(PixelFont.width_big(nm) + PixelFont.width("SPECTATING") + 30.0, 150.0)
+	var w: float = maxf(UiFont.width_big(nm) + UiFont.width("SPECTATING") + 30.0, 150.0)
 	var r := Rect2(cx - floorf(w / 2.0), 6, w, 27)
 	UiKit.plate(self, r)
-	var x0: float = cx - floorf((PixelFont.width("SPECTATING") + 6.0 + PixelFont.width_big(nm)) / 2.0)
-	var x: float = PixelFont.draw(self, "SPECTATING", Vector2(x0, r.position.y + 7), Gfx.UI_DIM, Gfx.UI_SHADOW) + 6.0
+	var x0: float = cx - floorf((UiFont.width("SPECTATING") + 6.0 + UiFont.width_big(nm)) / 2.0)
+	var x: float = UiFont.draw(self, "SPECTATING", Vector2(x0, r.position.y + 7), Gfx.UI_DIM, Gfx.UI_SHADOW) + 6.0
 	UiKit.paint_big(self, nm, Vector2(x, r.position.y + 6), v.color_index)
 	var auto: bool = view.spectate_id < 0
 	var keys: String = ("AUTO CAM - " if auto else "") + "TAB  < >  SWITCH RIG"
@@ -403,29 +433,29 @@ func _draw_spectating(vs: Vector2, v: SimVehicle) -> void:
 ## Live standings under the status plate while spectating (fuel, kills; the watched rig marked).
 func _draw_standings(watched: SimVehicle) -> void:
 	var rows: Array[SimVehicle] = UiKit.standings(world)
-	var r := Rect2(6, 56, 150, 16 + rows.size() * 8)
+	var r := Rect2(6, 63, 158, 18 + rows.size() * 10)
 	UiKit.plate(self, r)
 	_panels.append(r)
-	PixelFont.draw(self, "STANDINGS", r.position + Vector2(6, 5), Gfx.UI_DIM, Gfx.UI_SHADOW)
-	PixelFont.draw(self, "FUEL  KILLS", Vector2(r.end.x - 6 - PixelFont.width("FUEL  KILLS"), r.position.y + 5), Gfx.UI_DIM, Gfx.UI_SHADOW)
-	var y: float = r.position.y + 14.0
+	UiFont.draw(self, "STANDINGS", r.position + Vector2(6, 5), Gfx.UI_DIM, Gfx.UI_SHADOW)
+	UiFont.draw(self, "FUEL  KILLS", Vector2(r.end.x - 6 - UiFont.width("FUEL  KILLS"), r.position.y + 5), Gfx.UI_DIM, Gfx.UI_SHADOW)
+	var y: float = r.position.y + 16.0
 	for i in rows.size():
 		var o: SimVehicle = rows[i]
 		var out: bool = o.eliminated
 		if o == watched:
-			draw_rect(Rect2(r.position.x + 3, y - 2, r.size.x - 6, 9), Color(1.0, 0.8, 0.5, 0.12))
+			draw_rect(Rect2(r.position.x + 3, y - 2, r.size.x - 6, 10), Color(1.0, 0.8, 0.5, 0.12))
 			UiKit.arrow_glyph(self, Vector2(r.position.x + 4, y), Gfx.HAZARD)
-		PixelFont.draw(self, str(i + 1), Vector2(r.position.x + 12, y), Gfx.UI_DIM if out else Gfx.UI_TEXT, Gfx.UI_SHADOW)
+		UiFont.draw(self, str(i + 1), Vector2(r.position.x + 12, y), Gfx.UI_DIM if out else Gfx.UI_TEXT, Gfx.UI_SHADOW)
 		UiKit.swatch(self, Rect2(r.position.x + 18, y - 1, 7, 7), o.color_index)
 		if out:
-			PixelFont.draw(self, UiKit.player_name(o), Vector2(r.position.x + 28, y), Gfx.UI_DIM, Gfx.UI_SHADOW)
+			UiFont.draw(self, UiKit.player_name(o), Vector2(r.position.x + 28, y), Gfx.UI_DIM, Gfx.UI_SHADOW)
 		else:
 			UiKit.paint_text(self, UiKit.player_name(o), Vector2(r.position.x + 28, y), o.color_index)
 		var ft: String = "OUT" if out else str(maxi(o.fuel, 0))
-		PixelFont.draw(self, ft, Vector2(r.end.x - 34 - PixelFont.width(ft), y), Gfx.UI_DIM if out else Gfx.FIRE[3], Gfx.UI_SHADOW)
+		UiFont.draw(self, ft, Vector2(r.end.x - 34 - UiFont.width(ft), y), Gfx.UI_DIM if out else Gfx.FIRE[3], Gfx.UI_SHADOW)
 		var kt := str(o.kills)
-		PixelFont.draw(self, kt, Vector2(r.end.x - 6 - PixelFont.width(kt), y), Gfx.UI_DIM if out else Gfx.UI_TEXT, Gfx.UI_SHADOW)
-		y += 8.0
+		UiFont.draw(self, kt, Vector2(r.end.x - 6 - UiFont.width(kt), y), Gfx.UI_DIM if out else Gfx.UI_TEXT, Gfx.UI_SHADOW)
+		y += 10.0
 
 
 ## Pulsing warm-red edge bands (banded, dithered pixel style) while the rig is nearly wrecked.
@@ -462,7 +492,7 @@ func _pvp_banner(vs: Vector2, el: int) -> void:
 	UiKit.center_big(self, "PVP ON", cx, y + 9, flick, Gfx.OUTLINE, 2)
 	UiKit.center_text(self, "RIVAL RIGS ARE FAIR GAME - BOUNTY ON THE LEADER", cx, y + 27, Gfx.UI_TEXT, Gfx.UI_SHADOW)
 	var s := Vector2(Gfx.TEX_SKULL.get_size())
-	var tw: float = PixelFont.width_big("PVP ON") * 2.0
+	var tw: float = UiFont.width_big("PVP ON") * 2.0
 	for sx: float in [cx - tw / 2.0 - 18.0 - s.x, cx + tw / 2.0 + 18.0]:
 		draw_texture(Gfx.TEX_SKULL, Vector2(floorf(sx), y + 13))
 
@@ -470,7 +500,7 @@ func _pvp_banner(vs: Vector2, el: int) -> void:
 ## Tape banner that slides in and stays; `el` = ticks since the phase started.
 func _banner(vs: Vector2, title: String, sub: String, el: int, y: float) -> void:
 	var cx: float = floorf(vs.x / 2.0)
-	var tw: float = maxf(PixelFont.width_big(title), PixelFont.width(sub)) + 24.0
+	var tw: float = maxf(UiFont.width_big(title), UiFont.width(sub)) + 24.0
 	var slide: float = clampf(1.0 - float(el) / 8.0, 0.0, 1.0)
 	var r := Rect2(floorf(cx - tw / 2.0 - slide * 60.0), y, tw, 22)
 	UiKit.tape(self, r, Color("#e8dcc4"))

@@ -6,5 +6,19 @@
 [node name="Main" type="Node"]
 script = ExtResource("1_main")
 
-[node name="WorldView" type="Node2D" parent="."]
+[node name="Stage" type="SubViewportContainer" parent="."]
+texture_filter = 1
+offset_right = 640.0
+offset_bottom = 360.0
+mouse_filter = 2
+stretch = true
+
+[node name="World" type="SubViewport" parent="Stage"]
+handle_input_locally = false
+snap_2d_transforms_to_pixel = true
+canvas_item_default_texture_filter = 0
+size = Vector2i(640, 360)
+render_target_update_mode = 4
+
+[node name="WorldView" type="Node2D" parent="Stage/World"]
 script = ExtResource("2_view")

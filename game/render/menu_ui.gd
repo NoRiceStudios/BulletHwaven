@@ -264,7 +264,7 @@ func _draw() -> void:
 
 ## Dark wash over the battlefield, heavier on the left where the menu sits.
 func _backdrop(vs: Vector2) -> void:
-	draw_rect(Rect2(Vector2.ZERO, vs), Color(0.07, 0.045, 0.05, 0.42))
+	draw_rect(Rect2(Vector2.ZERO, vs), Color(0.07, 0.045, 0.05, 0.5))
 	var steps: int = 6
 	for i in steps:
 		var w: float = 250.0 - float(i) * 24.0
@@ -283,7 +283,7 @@ func _button(r: Rect2, title: String, sub: String, act: String, arg: Variant = n
 	if sub != "":
 		UiKit.center_text(self, sub, r.get_center().x, r.position.y + 15, Gfx.UI_TEXT if hot else Gfx.BONE_LIGHT.darkened(0.25), Gfx.OUTLINE)
 	if hot:
-		PixelFont.draw_big(self, ">", Vector2(r.position.x - 9, ty), Gfx.FIRE[4], Gfx.OUTLINE)
+		UiFont.draw_big(self, ">", Vector2(r.position.x - 9, ty), Gfx.FIRE[4], Gfx.OUTLINE)
 	_hits.append([r, act, arg, enabled])
 	if enabled:
 		_nav.append([act, arg])
@@ -298,37 +298,37 @@ func _field(r: Rect2, id: String, text: String, placeholder: String) -> void:
 	for y in range(int(r.position.y) + 2, int(r.end.y) - 1, 2):
 		draw_rect(Rect2(r.position.x + 1, y, r.size.x - 2, 1), Color(0, 0, 0, 0.18))
 	UiKit.outline_rect(self, r.grow(-1.0), Gfx.CRT_HI if focused else (Gfx.CRT_DIM if hot else Color(Gfx.CRT_DIM, 0.5)))
-	var tp := Vector2(r.position.x + 4, floorf(r.get_center().y - 2.0))
+	var tp := Vector2(r.position.x + 4, floorf(r.get_center().y - 3.0))
 	var x: float = tp.x
 	if text == "" and not focused:
-		PixelFont.draw(self, placeholder, tp, Gfx.CRT_DIM)
+		UiFont.draw(self, placeholder, tp, Gfx.CRT_DIM)
 	else:
-		x = PixelFont.draw(self, text, tp, Gfx.CRT_HI if focused else Gfx.CRT_TEXT)
+		x = UiFont.draw(self, text, tp, Gfx.CRT_HI if focused else Gfx.CRT_TEXT)
 	if focused and fmod(_t, 0.9) < 0.55:
-		draw_rect(Rect2(x + 1, tp.y, 3, 5), Gfx.CRT_HI)
+		draw_rect(Rect2(x + 1, tp.y, 3, 6), Gfx.CRT_HI)
 	_hits.append([r, "focus", id, true])
 
 
 ## Tape header with a stencil title (scale 2) and a small line under it.
 func _header(title: String, sub: String, x: float, y: float) -> void:
-	var tw: float = PixelFont.width_big(title, 2) + 20.0
+	var tw: float = UiFont.width_big(title, 2) + 20.0
 	UiKit.tape(self, Rect2(x, y, tw, 22), Color("#e8dcc4"))
-	PixelFont.draw_big(self, title, Vector2(x + 10, y + 4), Gfx.INK, Color(0, 0, 0, 0), 2)
+	UiFont.draw_big(self, title, Vector2(x + 10, y + 4), Gfx.INK, Color(0, 0, 0, 0), 2)
 	if sub != "":
-		PixelFont.draw(self, sub, Vector2(x + 4, y + 27), Gfx.UI_TEXT, Gfx.OUTLINE)
+		UiFont.draw(self, sub, Vector2(x + 4, y + 27), Gfx.UI_TEXT, Gfx.OUTLINE)
 
 
 func _status_line(cx: float, y: float) -> void:
 	if status == "":
 		return
-	var w: float = PixelFont.width(status) + 14.0
+	var w: float = UiFont.width(status) + 14.0
 	var r := Rect2(floorf(cx - w / 2.0), y, w, 11)
 	UiKit.tape(self, r, Color("#e88a6a") if status_error else Color("#e8dcc4"))
-	PixelFont.draw(self, status, Vector2(r.position.x + 7, y + 3), Gfx.INK)
+	UiFont.draw(self, status, Vector2(r.position.x + 7, y + 3), Gfx.INK)
 
 
 func _footer(vs: Vector2, text: String) -> void:
-	PixelFont.draw(self, text, Vector2(12, vs.y - 11), Gfx.UI_DIM, Gfx.OUTLINE)
+	UiFont.draw(self, text, Vector2(12, vs.y - 11), Gfx.UI_DIM, Gfx.OUTLINE)
 
 
 # ---------------------------------------------------------------- main menu
@@ -337,11 +337,12 @@ func _draw_main(vs: Vector2) -> void:
 	_backdrop(vs)
 	var logo := Vector2(18, 16)
 	draw_texture(Gfx.TEX_LOGO, logo)
+	_logo_words(logo)
 	var tag := "LAST CONVOY STANDING"
-	var tw: float = PixelFont.width(tag) + 16.0
+	var tw: float = UiFont.width(tag) + 16.0
 	var tr := Rect2(logo.x + Gfx.TEX_LOGO.get_width() - tw - 10, logo.y + Gfx.TEX_LOGO.get_height() - 4, tw, 11)
 	UiKit.tape(self, tr, Color("#e8dcc4"))
-	PixelFont.draw(self, tag, Vector2(tr.position.x + 8, tr.position.y + 3), Gfx.INK_RED)
+	UiFont.draw(self, tag, Vector2(tr.position.x + 8, tr.position.y + 3), Gfx.INK_RED)
 
 	var bx: float = 40.0
 	var by: float = 110.0
@@ -360,6 +361,22 @@ func _draw_main(vs: Vector2) -> void:
 	_footer(vs, "MOUSE OR ARROWS + ENTER    CLICK THE NAME TO TYPE")
 
 
+## "BULLET" in bone on the rusty sheet, "HWAVEN" in fire on the steel one (seam at x 177 of the plate).
+func _logo_words(o: Vector2) -> void:
+	var sheets: Array = [["BULLET", 4.0, 175.0, Gfx.BONE_LIGHT], ["HWAVEN", 180.0, 310.0, Gfx.FIRE[4]]]
+	var size: int = 34
+	for s: Array in sheets:
+		while size > 16 and UiFont.width_title(s[0], size) > (float(s[2]) - float(s[1])) - 14.0:
+			size -= 1
+	var cap: float = roundf(UiFont.TITLE_CAP * float(size))
+	var y: float = o.y + floorf((float(Gfx.TEX_LOGO.get_height()) - cap) / 2.0)
+	for s: Array in sheets:
+		var w: float = UiFont.width_title(s[0], size)
+		var x: float = o.x + floorf((float(s[1]) + float(s[2]) - w) / 2.0)
+		UiFont.draw_title(self, s[0], Vector2(x + 1, y + 2), Color(Gfx.OUTLINE, 0.85), size)
+		UiFont.draw_title(self, s[0], Vector2(x, y), s[3], size)
+
+
 # ---------------------------------------------------------------- driver profile
 
 ## Name field, paint picker (colours in `taken` are crossed out) and a turning preview of the rig.
@@ -368,13 +385,13 @@ func _profile_panel(r: Rect2, taken: Dictionary) -> void:
 	UiKit.tape_label(self, "DRIVER", r.get_center().x, r.position.y - 4, Color("#e8dcc4"))
 	var x0: float = r.position.x + 9.0
 	var y: float = r.position.y + 12.0
-	PixelFont.draw(self, "NAME", Vector2(x0, y), Gfx.UI_DIM, Gfx.UI_SHADOW)
+	UiFont.draw(self, "NAME", Vector2(x0, y), Gfx.UI_DIM, Gfx.UI_SHADOW)
 	_field(Rect2(x0, y + 7, r.size.x - 18, 14), "name", _edit if _focus == "name" else _shown_name(), "TYPE A NAME")
 	y += 28.0
 	var col: int = _shown_color()
-	PixelFont.draw(self, "PAINT", Vector2(x0, y), Gfx.UI_DIM, Gfx.UI_SHADOW)
+	UiFont.draw(self, "PAINT", Vector2(x0, y), Gfx.UI_DIM, Gfx.UI_SHADOW)
 	var pname: String = Gfx.PLAYER_NAMES[Gfx.color_slot(col)]
-	var px: float = r.end.x - 9.0 - PixelFont.width(pname)
+	var px: float = r.end.x - 9.0 - UiFont.width(pname)
 	UiKit.paint_text(self, pname, Vector2(px, y), col)
 	# test strip: paint splats on masking tape
 	var n: int = Gfx.PLAYER_COLORS.size()
@@ -411,7 +428,7 @@ func _profile_panel(r: Rect2, taken: Dictionary) -> void:
 	var piv: Vector2 = Gfx.snap(Gfx.TURRET_PIVOT.rotated(Gfx.frame_rotation(frame, Gfx.VEHICLE_DIRS)))
 	draw_texture_rect_region(Gfx.TEX_TURRET, Rect2(c + piv - Vector2(18, 18), Vector2(36, 36)), Rect2(frame * 36, 0, 36, 36))
 	var nm: String = _edit if _focus == "name" else _shown_name()
-	UiKit.paint_text(self, nm, Vector2(floorf(c.x - PixelFont.width(nm) / 2.0), inner.position.y + 3), col)
+	UiKit.paint_text(self, nm, Vector2(floorf(c.x - UiFont.width(nm) / 2.0), inner.position.y + 3), col)
 
 
 # ---------------------------------------------------------------- join screen
@@ -426,7 +443,7 @@ func _draw_join(vs: Vector2) -> void:
 	var cols: Array[float] = [scr.position.x + 11, scr.position.x + 128, scr.position.x + 236, scr.position.x + 286]
 	var y: float = scr.position.y + 6.0
 	for i in 4:
-		PixelFont.draw(self, ["HOST", "ADDRESS", "RIGS", "STATUS"][i], Vector2(cols[i], y), Gfx.CRT_DIM)
+		UiFont.draw(self, ["HOST", "ADDRESS", "RIGS", "STATUS"][i], Vector2(cols[i], y), Gfx.CRT_DIM)
 	y += 8.0
 	draw_rect(Rect2(scr.position.x + 4, y, scr.size.x - 8, 1), Gfx.CRT_DIM)
 	y += 4.0
@@ -438,35 +455,35 @@ func _draw_join(vs: Vector2) -> void:
 		var hot: bool = ok and _is_hot("join", hd)
 		if hot:
 			draw_rect(row, Color(Gfx.CRT_DIM, 0.45))
-			PixelFont.draw(self, ">", Vector2(row.position.x + 1, y + 1), Gfx.CRT_HI)
+			UiFont.draw(self, ">", Vector2(row.position.x + 1, y + 1), Gfx.CRT_HI)
 		var tc: Color = (Gfx.CRT_HI if hot else Gfx.CRT_TEXT) if ok else Color(Gfx.CRT_DIM, 0.8)
 		var hn: String = str(hd.get("name", ""))
-		PixelFont.draw(self, hn if hn != "" else "UNNAMED RIG", Vector2(cols[0], y + 1), tc)
-		PixelFont.draw(self, "%s:%d" % [hd.get("address", "?"), int(hd.get("port", 0))], Vector2(cols[1], y + 1), tc)
-		PixelFont.draw(self, "%d/%d" % [int(hd.get("players", 0)), MAX_ROWS], Vector2(cols[2], y + 1), tc)
-		PixelFont.draw(self, "IN MATCH" if playing else ("FULL" if full else "LOBBY OPEN"), Vector2(cols[3], y + 1), tc)
+		UiFont.draw(self, hn if hn != "" else "UNNAMED RIG", Vector2(cols[0], y + 1), tc)
+		UiFont.draw(self, "%s:%d" % [hd.get("address", "?"), int(hd.get("port", 0))], Vector2(cols[1], y + 1), tc)
+		UiFont.draw(self, "%d/%d" % [int(hd.get("players", 0)), MAX_ROWS], Vector2(cols[2], y + 1), tc)
+		UiFont.draw(self, "IN MATCH" if playing else ("FULL" if full else "LOBBY OPEN"), Vector2(cols[3], y + 1), tc)
 		if playing:
-			draw_rect(Rect2(cols[0], y + 3, PixelFont.width(hn if hn != "" else "UNNAMED RIG"), 1), Gfx.CRT_DIM)
+			draw_rect(Rect2(cols[0], y + 4, UiFont.width(hn if hn != "" else "UNNAMED RIG"), 1), Gfx.CRT_DIM)
 		_hits.append([row, "join", hd, ok])
 		if ok:
 			_nav.append(["join", hd])
 		y += 13.0
 	if hosts.is_empty():
 		var msg: String = "SCANNING THE AIRWAVES" if scanning else "LAN SCAN UNAVAILABLE - USE DIRECT IP"
-		PixelFont.draw(self, msg + ("..." if scanning else ""), Vector2(cols[0], y + 2), Gfx.CRT_TEXT)
+		UiFont.draw(self, msg + ("..." if scanning else ""), Vector2(cols[0], y + 2), Gfx.CRT_TEXT)
 		if scanning and fmod(_t, 1.0) < 0.5:
-			draw_rect(Rect2(cols[0] + PixelFont.width(msg + "...") + 3, y + 2, 4, 5), Gfx.CRT_TEXT)
+			draw_rect(Rect2(cols[0] + UiFont.width(msg + "...") + 3, y + 2, 4, 6), Gfx.CRT_TEXT)
 	if busy != "":
 		var by: float = scr.end.y - 12.0
 		draw_rect(Rect2(scr.position.x + 4, by - 4, scr.size.x - 8, 1), Gfx.CRT_DIM)
-		PixelFont.draw(self, busy + ".".repeat(int(_t * 3.0) % 4), Vector2(cols[0], by), Gfx.CRT_HI)
+		UiFont.draw(self, busy + ".".repeat(int(_t * 3.0) % 4), Vector2(cols[0], by), Gfx.CRT_HI)
 	for sy in range(int(scr.position.y), int(scr.end.y), 2):
 		draw_rect(Rect2(scr.position.x, sy, scr.size.x, 1), Color(0, 0, 0, 0.16))
 
 	# direct IP
 	var ry: float = crt.end.y + 8.0
 	UiKit.plate(self, Rect2(crt.position.x, ry, crt.size.x, 30))
-	PixelFont.draw(self, "DIRECT IP", Vector2(crt.position.x + 8, ry + 12), Gfx.UI_TEXT, Gfx.UI_SHADOW)
+	UiFont.draw(self, "DIRECT IP", Vector2(crt.position.x + 8, ry + 12), Gfx.UI_TEXT, Gfx.UI_SHADOW)
 	_field(Rect2(crt.position.x + 52, ry + 8, 200, 14), "ip", ip_text, "E.G. 192.168.1.20")
 	_button(Rect2(crt.position.x + 260, ry + 6, 112, 18), "CONNECT", "", "join_ip", ip_text, ip_text.strip_edges() != "" and busy == "")
 	_button(Rect2(crt.position.x, vs.y - 34, 90, 18), "BACK", "", "back")
@@ -489,17 +506,17 @@ func _draw_lobby(vs: Vector2) -> void:
 			need += 1
 			ready_n += 1 if bool(e.get("ready", false)) else 0
 	var head: String = "%d / %d RIGS" % [lobby_players.size(), MAX_ROWS]
-	PixelFont.draw(self, head, Vector2(r.position.x + 10, r.position.y + 14), Gfx.UI_DIM, Gfx.UI_SHADOW)
+	UiFont.draw(self, head, Vector2(r.position.x + 10, r.position.y + 14), Gfx.UI_DIM, Gfx.UI_SHADOW)
 	var rd: String = "%d / %d READY" % [ready_n, need] if need > 0 else "WAITING FOR DRIVERS"
-	PixelFont.draw(self, rd, Vector2(r.end.x - 10 - PixelFont.width(rd), r.position.y + 14), Gfx.HAZARD if need > 0 and ready_n == need else Gfx.UI_DIM, Gfx.UI_SHADOW)
+	UiFont.draw(self, rd, Vector2(r.end.x - 10 - UiFont.width(rd), r.position.y + 14), Gfx.HAZARD if need > 0 and ready_n == need else Gfx.UI_DIM, Gfx.UI_SHADOW)
 	var taken: Dictionary = {}
 	var y: float = r.position.y + 24.0
 	for i in MAX_ROWS:
 		var row := Rect2(r.position.x + 6, y, r.size.x - 12, 19)
 		draw_rect(row, Color(0.06, 0.04, 0.04, 0.35 if i % 2 == 0 else 0.2))
-		PixelFont.draw_big(self, str(i + 1), Vector2(row.position.x + 5, y + 6), Gfx.UI_DIM, Gfx.OUTLINE)
+		UiFont.draw_big(self, str(i + 1), Vector2(row.position.x + 5, y + 6), Gfx.UI_DIM, Gfx.OUTLINE)
 		if i >= lobby_players.size():
-			PixelFont.draw(self, "- OPEN SLOT -", Vector2(row.position.x + 40, y + 7), Color(Gfx.UI_DIM, 0.6))
+			UiFont.draw(self, "- OPEN SLOT -", Vector2(row.position.x + 40, y + 7), Color(Gfx.UI_DIM, 0.6))
 			y += 21.0
 			continue
 		var e: Dictionary = lobby_players[i]
@@ -513,11 +530,11 @@ func _draw_lobby(vs: Vector2) -> void:
 		var nm: String = str(e.get("name", "?"))
 		var nx: float = UiKit.paint_big(self, nm, Vector2(row.position.x + 40, y + 6), ci)
 		if me:
-			nx = PixelFont.draw(self, "(YOU)", Vector2(nx + 5, y + 8), Gfx.UI_TEXT, Gfx.UI_SHADOW)
+			nx = UiFont.draw(self, "(YOU)", Vector2(nx + 5, y + 8), Gfx.UI_TEXT, Gfx.UI_SHADOW)
 		if bool(e.get("is_host", false)):
 			var hr := Rect2(nx + 6, y + 5, 26, 9)
 			UiKit.tape(self, hr, Gfx.HAZARD.lightened(0.25))
-			PixelFont.draw(self, "HOST", Vector2(hr.position.x + 5, y + 7), Gfx.INK)
+			UiFont.draw(self, "HOST", Vector2(hr.position.x + 5, y + 7), Gfx.INK)
 		var st: String
 		var sc: Color
 		if bool(e.get("is_host", false)):
@@ -530,12 +547,12 @@ func _draw_lobby(vs: Vector2) -> void:
 			st = "NOT READY"
 			sc = Gfx.UI_BAD
 		if st == "READY":
-			var sw: float = PixelFont.width_big(st) + 10.0
+			var sw: float = UiFont.width_big(st) + 10.0
 			var sr := Rect2(row.end.x - 6 - sw, y + 3, sw, 13)
 			UiKit.outline_rect(self, sr, sc)
-			PixelFont.draw_big(self, st, Vector2(sr.position.x + 5, y + 6), sc, Gfx.OUTLINE)
+			UiFont.draw_big(self, st, Vector2(sr.position.x + 5, y + 6), sc, Gfx.OUTLINE)
 		else:
-			PixelFont.draw(self, st, Vector2(row.end.x - 10 - PixelFont.width(st), y + 8), sc, Gfx.UI_SHADOW)
+			UiFont.draw(self, st, Vector2(row.end.x - 10 - UiFont.width(st), y + 8), sc, Gfx.UI_SHADOW)
 		y += 21.0
 
 	# buttons
@@ -549,7 +566,7 @@ func _draw_lobby(vs: Vector2) -> void:
 		var rdy: bool = _local_ready()
 		_button(Rect2(r.position.x, by, 150, BUTTON_H), "NOT READY" if rdy else "READY UP", "SPACE - TOGGLE" if rdy else "SPACE - I AM READY", "ready", not rdy, true, not rdy)
 		var wait: String = "WAITING FOR THE HOST TO ROLL OUT"
-		PixelFont.draw(self, wait, Vector2(r.position.x + 160, by + 10), Gfx.UI_DIM, Gfx.OUTLINE)
+		UiFont.draw(self, wait, Vector2(r.position.x + 160, by + 10), Gfx.UI_DIM, Gfx.OUTLINE)
 	_button(Rect2(r.end.x - 90, by, 90, BUTTON_H), "LEAVE", "", "leave")
 	_status_line(r.get_center().x, by + BUTTON_H + 6.0)
 	_profile_panel(Rect2(vs.x - PANEL_W - 18, 62, PANEL_W, 196), taken)
@@ -583,14 +600,14 @@ func _draw_pause(vs: Vector2) -> void:
 		["ESC", "THIS MENU"],
 	]
 	var y: float = scr.position.y + 5.0
-	PixelFont.draw(self, "> CONTROLS", Vector2(scr.position.x + 5, y), Gfx.CRT_HI)
+	UiFont.draw(self, "> CONTROLS", Vector2(scr.position.x + 5, y), Gfx.CRT_HI)
 	y += 10.0
 	for l: Array in lines:
 		if l[1] == "":
-			PixelFont.draw(self, str(l[0]), Vector2(scr.position.x + 5, y), Gfx.CRT_DIM)
+			UiFont.draw(self, str(l[0]), Vector2(scr.position.x + 5, y), Gfx.CRT_DIM)
 		else:
-			PixelFont.draw(self, str(l[0]), Vector2(scr.position.x + 12, y), Gfx.CRT_HI)
-			PixelFont.draw(self, str(l[1]), Vector2(scr.position.x + 62, y), Gfx.CRT_TEXT)
+			UiFont.draw(self, str(l[0]), Vector2(scr.position.x + 12, y), Gfx.CRT_HI)
+			UiFont.draw(self, str(l[1]), Vector2(scr.position.x + 62, y), Gfx.CRT_TEXT)
 		y += 9.0
 	for sy in range(int(scr.position.y), int(scr.end.y), 2):
 		draw_rect(Rect2(scr.position.x, sy, scr.size.x, 1), Color(0, 0, 0, 0.16))
