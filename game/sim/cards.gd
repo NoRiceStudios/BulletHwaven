@@ -11,7 +11,9 @@ extends RefCounted
 ##   creduce (fraction of enemy contact damage ignored, total capped at MAX_CONTACT_REDUCTION),
 ##   thorns (fraction of the contact damage an enemy deals that it takes back, per touching enemy and tick),
 ##   dmg / range / rate (weapon damage, range and fire rate multipliers, additive).
-##   Tech adds `slots` (weapon slots) and `interest` (interest cap) on top (see tech.gd).
+##   Tech adds `slots` (weapon slots), `interest` (interest cap), `pierce`, `reroll` (reroll discount),
+##   `luck` (offer weight bonus for rare+ cards) and per-weapon keys `dmg_<kind>`, `rate_<kind>`,
+##   `range_<kind>`, `pellets_<kind>`, `splash_<kind>` on top (see tech.gd).
 
 const MAX_LEVEL := 3
 const BASE_WEAPON_SLOTS := 2
@@ -201,6 +203,8 @@ static func roll_offers(rng: RandomNumberGenerator, v: SimVehicle, count: int = 
 
 static func _offer_weight(v: SimVehicle, d: Dictionary, round_no: int) -> int:
 	var w: int = int(d["weight"])
+	if v.card_luck > 0.0 and str(d["rarity"]) != "common":
+		w = roundi(float(w) * (1.0 + v.card_luck))
 	if round_no >= 1 and round_no <= EARLY_ROUNDS and str(d["category"]) == "weapon" and int(v.cards.get(str(d["id"]), 0)) == 0:
 		w *= 2
 	return w
@@ -256,14 +260,14 @@ static func recompute(v: SimVehicle, rebuild_weapons: bool = true, adjust_hp: bo
 		var lvl: int = clampi(int(v.cards[id]), 0, MAX_LEVEL)
 		var fx: Dictionary = d["fx"]
 		for k: String in fx:
-			st[k] = float(st[k]) + float(fx[k]) * float(lvl)
+			st[k] = float(st.get(k, 0.0)) + float(fx[k]) * float(lvl)
 	for id in v.tech:
 		var td: Dictionary = Tech.def(id)
 		if td.is_empty():
 			continue
 		var tfx: Dictionary = td["fx"]
 		for k: String in tfx:
-			st[k] = float(st[k]) + float(tfx[k])
+			st[k] = float(st.get(k, 0.0)) + float(tfx[k])
 
 	var old_max: float = v.max_hp
 	v.max_hp = maxf(SimVehicle.MAX_HP + float(st["hp"]), 1.0)
@@ -282,11 +286,15 @@ static func recompute(v: SimVehicle, rebuild_weapons: bool = true, adjust_hp: bo
 	v.vulture = float(st["vulture"])
 	v.weapon_slots = BASE_WEAPON_SLOTS + int(st["slots"])
 	v.interest_cap = BASE_INTEREST_CAP + int(st["interest"])
+	v.reroll_discount = int(st.get("reroll", 0.0))
+	v.card_luck = maxf(float(st.get("luck", 0.0)), 0.0)
 	if rebuild_weapons:
-		_rebuild_weapons(v, 1.0 + float(st["dmg"]), 1.0 + float(st["range"]), 1.0 + float(st["rate"]))
+		_rebuild_weapons(v, st)
 
 
-static func _rebuild_weapons(v: SimVehicle, dmg_mult: float, range_mult: float, rate_mult: float) -> void:
+## Rebuilds the weapon list. `st` holds the summed fx: dmg / range / rate apply to every weapon,
+## `<key>_<kind>` only to that kind (multipliers add up), pierce / pellets / splash are flat.
+static func _rebuild_weapons(v: SimVehicle, st: Dictionary) -> void:
 	var old: Dictionary = {}
 	for w in v.weapons:
 		old[str(w.get("kind", ""))] = w
@@ -298,6 +306,10 @@ static func _rebuild_weapons(v: SimVehicle, dmg_mult: float, range_mult: float, 
 		var b: Dictionary = WEAPONS[id]
 		var li: int = lvl - 1
 		var prev: Dictionary = old.get(id, {})
+		var dmg_mult: float = 1.0 + float(st.get("dmg", 0.0)) + float(st.get("dmg_" + id, 0.0))
+		var range_mult: float = maxf(1.0 + float(st.get("range", 0.0)) + float(st.get("range_" + id, 0.0)), 0.3)
+		var rate_mult: float = maxf(1.0 + float(st.get("rate", 0.0)) + float(st.get("rate_" + id, 0.0)), 0.3)
+		var base_splash: float = float((b["splash"] as Array)[li])
 		fresh.append({
 			"kind": id,
 			"damage": float((b["damage"] as Array)[li]) * dmg_mult,
@@ -305,10 +317,10 @@ static func _rebuild_weapons(v: SimVehicle, dmg_mult: float, range_mult: float, 
 			"cooldown_ticks": maxi(1, roundi(float((b["cooldown"] as Array)[li]) / rate_mult)),
 			"cooldown": int(prev.get("cooldown", 0)),
 			"aim": float(prev.get("aim", 0.0)),
-			"pellets": int((b["pellets"] as Array)[li]),
+			"pellets": int((b["pellets"] as Array)[li]) + int(st.get("pellets_" + id, 0.0)),
 			"spread": float(b["spread"]),
-			"pierce": int((b["pierce"] as Array)[li]),
-			"splash": float((b["splash"] as Array)[li]),
+			"pierce": int((b["pierce"] as Array)[li]) + int(st.get("pierce", 0.0)),
+			"splash": base_splash + float(st.get("splash_" + id, 0.0)),
 			"speed": float(b["speed"]),
 		})
 	v.weapons = fresh

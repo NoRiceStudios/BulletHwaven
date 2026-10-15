@@ -6,6 +6,9 @@ extends RefCounted
 ## Round-loop scenarios use fast_rounds (4 s combat) and auto-ready through early workshops:
 ## - "workshop"     (about 400 ticks): the workshop after round 3, red with scrap, cards and tech,
 ##                  magenta already picked and ready.
+## - "tech_tree"    (about 400 ticks): the same workshop later in a match: red owns 16 tech nodes
+##                  (both ballistics forks taken, a fusion) and 640 scrap. Open the full tree with
+##                  --click=560,146 (the TECH TREE button), then --hover a node.
 ## - "gameover"     (about 300 ticks): solo, the last fuel burns in round 2, YOUR CONVOY IS LOST.
 ## - "gameover_mp"  (about 200 ticks): magenta runs dry, red is the last rig standing.
 ## - "eliminated"   (about 220 ticks): three rigs; red runs dry and spectates (ELIMINATED).
@@ -40,7 +43,7 @@ extends RefCounted
 ## - "rematch"  gameover_mp seen by the host: REMATCH and LEAVE TO MENU.
 ## - "waiting"  gameover_mp seen by the loser (a client): waiting for the host's rematch.
 
-const NAMES: PackedStringArray = ["skirmish", "horde", "workshop", "gameover", "gameover_mp", "eliminated",
+const NAMES: PackedStringArray = ["skirmish", "horde", "workshop", "tech_tree", "gameover", "gameover_mp", "eliminated",
 	"menu", "join", "lobby", "pause", "rematch", "waiting", "rig_growth", "late_round", "pvp_on", "rig_kill",
 	"recap", "recap_pvp", "scouting", "combat_feed", "pvp_grace", "spectator", "spectator_ws", "awards"]
 ## Info-UI line-up: [name, paint, GROWTH_BUILDS index, drive, target, extra tech].
@@ -73,7 +76,7 @@ static func build(name: String, p_seed: int) -> SimWorld:
 			return _skirmish(p_seed)
 		"horde":
 			return _horde(p_seed)
-		"workshop":
+		"workshop", "tech_tree":
 			var w: SimWorld = _skirmish(p_seed)
 			w.fast_rounds = true
 			return w
@@ -215,12 +218,14 @@ static func step(name: String, w: SimWorld) -> void:
 		"menu", "join", "lobby":
 			if w.phase == SimWorld.PHASE_WORKSHOP:
 				_ready_all(w)
-		"workshop":
+		"workshop", "tech_tree":
 			if w.phase == SimWorld.PHASE_WORKSHOP:
 				if w.round < WORKSHOP_ROUND:
 					_ready_all(w)
 				elif not w.has_meta("staged"):
 					_stage_workshop(w)
+					if name == "tech_tree":
+						_stage_tech_tree(w.vehicles[0])
 		"gameover":
 			if w.phase == SimWorld.PHASE_WORKSHOP:
 				_ready_all(w)
@@ -252,6 +257,18 @@ static func _swarm(w: SimWorld, v: SimVehicle) -> void:
 static func _ready_all(w: SimWorld) -> void:
 	for v in w.vehicles:
 		w.apply_command(v.peer_id, {"type": "ready"})
+
+
+## Later in a match: a deep ballistics line with both forks taken, electronics to tier 3, the Smart
+## Rounds fusion, an engineering fork, and scrap for the next big node.
+static func _stage_tech_tree(red: SimVehicle) -> void:
+	red.scrap = 99999
+	for id: String in ["ballistics_1", "ballistics_2", "ballistics_3", "ballistics_belt_feed", "ballistics_4",
+			"ballistics_napalm", "engineering_1", "engineering_2",
+			"engineering_welder", "electronics_1", "electronics_2", "electronics_3", "fusion_smart_rounds",
+			"salvage_1", "propulsion_1", "engineering_3"]:
+		Tech.buy(red, id)
+	red.scrap = 640
 
 
 ## A mid-game workshop: some scrap, a few cards and tech, 19 s on the clock, rival ready.
@@ -517,8 +534,10 @@ static func replay_apply(w: SimWorld, v: SimVehicle, cmd: Dictionary) -> String:
 				return "%s -> IGNORED (unknown tech id)" % label
 			if v.tech.has(id2):
 				return "%s -> IGNORED (already owned)" % label
-			var pre: String = Tech.prerequisite(id2)
-			if pre != "" and not v.tech.has(pre):
+			if Tech.blocked_by(v, id2) != "":
+				return "%s -> IGNORED (excluded by %s)" % [label, Tech.blocked_by(v, id2)]
+			var pre: String = Tech.missing(v, id2)
+			if pre != "":
 				return "%s -> IGNORED (needs %s first)" % [label, pre]
 			return "%s -> IGNORED (costs %d, you have %d)" % [label, Tech.cost(id2), v.scrap]
 		"ready":

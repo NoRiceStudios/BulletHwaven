@@ -409,6 +409,7 @@ func _load_profile() -> void:
 
 func _save_profile() -> void:
 	var cfg := ConfigFile.new()
+	cfg.load(PROFILE_PATH)  # keep the other sections ([ui] from render/minimap.gd)
 	cfg.set_value("profile", "name", _menu.profile_name)
 	cfg.set_value("profile", "color_index", _menu.profile_color)
 	var err: Error = cfg.save(PROFILE_PATH)

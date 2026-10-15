@@ -42,6 +42,7 @@ var _halos: Node2D
 var _labels: Node2D
 var _camera: Camera2D
 var _hud: Hud
+var minimap: Minimap
 var _hud_layer: CanvasLayer
 var workshop: WorkshopUi
 var game_over: GameOverUi
@@ -156,6 +157,9 @@ func _ready() -> void:
 	_hud = Hud.new()
 	_hud.view = self
 	hud_layer.add_child(_hud)
+	minimap = Minimap.new()
+	minimap.view = self
+	hud_layer.add_child(minimap)
 	workshop = WorkshopUi.new()
 	workshop.view = self
 	hud_layer.add_child(workshop)
@@ -450,7 +454,7 @@ func _log_event(e: Dictionary, tick: int, rnd: int) -> void:
 			entry.merge({"killer": int(e.get("owner", -1)), "victim": int(e["victim"]), "weapon": int(e.get("weapon", -1))})
 			log = kill_log
 		"vehicle_destroyed":
-			entry.merge({"id": int(e.get("owner", -1)), "cause": int(e.get("cause", -1)), "killer": int(e.get("killer", -1))})
+			entry.merge({"id": int(e.get("owner", -1)), "cause": int(e.get("cause", -1)), "killer": int(e.get("killer", -1)), "pos": e.get("pos", Vector2.ZERO)})
 			log = wreck_log
 		"drain":
 			entry.merge({"id": int(e.get("owner", -1)), "amount": int(e.get("kind", 0))})
