@@ -8,6 +8,11 @@ static var _plate: StyleBoxTexture = null
 static var _steel: StyleBoxTexture = null
 static var _tape: StyleBoxTexture = null
 
+## Dark wash over the inside of rusty plates (readability).
+const PANEL_WASH := Color(0.075, 0.055, 0.05, 0.72)
+## Lighter wash over steel housings and buttons.
+const STEEL_WASH := Color(0.09, 0.08, 0.08, 0.45)
+
 ## Tape tint behind black-paint names.
 const PAINT_TAPE := Color("#d6cfbf")
 
@@ -27,6 +32,9 @@ static func plate(ci: CanvasItem, r: Rect2, modulate: Color = Color.WHITE) -> vo
 		_plate = _box(Gfx.TEX_UI_PLATE)
 	_plate.modulate_color = modulate
 	ci.draw_style_box(_plate, r)
+	# calm the rust inside the frame so text sits on an even dark field (the rim keeps the texture)
+	if r.size.x > 10.0 and r.size.y > 10.0:
+		ci.draw_rect(r.grow(-3.0), Color(PANEL_WASH, PANEL_WASH.a * modulate.a))
 
 
 ## Bare steel plate (CRT housing, buttons, tech nodes).
@@ -35,6 +43,8 @@ static func steel(ci: CanvasItem, r: Rect2, modulate: Color = Color.WHITE) -> vo
 		_steel = _box(Gfx.TEX_STEEL)
 	_steel.modulate_color = modulate
 	ci.draw_style_box(_steel, r)
+	if r.size.x > 10.0 and r.size.y > 10.0:
+		ci.draw_rect(r.grow(-2.0), Color(STEEL_WASH, STEEL_WASH.a * modulate.a))
 
 
 ## Masking tape strip tinted `tint` (9-slice, so the torn ends stay crisp at any size).
@@ -48,10 +58,10 @@ static func tape(ci: CanvasItem, r: Rect2, tint: Color = Color.WHITE) -> void:
 
 ## Tape label with small dark text, centred on `center_x` (returns the tape rect).
 static func tape_label(ci: CanvasItem, text: String, center_x: float, y: float, tint: Color = Color.WHITE) -> Rect2:
-	var w: float = PixelFont.width(text) + 10.0
-	var r := Rect2(floorf(center_x - w / 2.0), y, w, 9)
+	var w: float = UiFont.width(text) + 10.0
+	var r := Rect2(floorf(center_x - w / 2.0), y, w, 10)
 	tape(ci, r, tint)
-	PixelFont.draw(ci, text, Vector2(r.position.x + 5, y + 2), Gfx.INK)
+	UiFont.draw(ci, text, Vector2(r.position.x + 5, y + 2), Gfx.INK)
 	return r
 
 
@@ -95,12 +105,24 @@ static func bar(ci: CanvasItem, r: Rect2, frac: float, col: Color) -> void:
 		ci.draw_rect(Rect2(inner.position, Vector2(fill, 1)), col.lightened(0.25))
 
 
+## Key hints along the bottom edge, on a dark strip so they read over any ground.
+static func footer(ci: CanvasItem, text: String, vs: Vector2, centered: bool = true) -> void:
+	var w: float = UiFont.width(text) + 16.0
+	var r := Rect2(floorf(vs.x / 2.0 - w / 2.0) if centered else 6.0, vs.y - 13.0, w, 11)
+	ci.draw_rect(r, Color(0.07, 0.05, 0.05, 0.62))
+	UiFont.draw(ci, text, Vector2(r.position.x + 8, r.position.y + 3), Gfx.UI_DIM, Gfx.OUTLINE)
+
+
 static func center_text(ci: CanvasItem, text: String, cx: float, y: float, col: Color, shadow: Color = Color(0, 0, 0, 0)) -> void:
-	PixelFont.draw(ci, text, Vector2(floorf(cx - PixelFont.width(text) / 2.0), y), col, shadow)
+	UiFont.draw(ci, text, Vector2(floorf(cx - UiFont.width(text) / 2.0), y), col, shadow)
+
+
+static func center_small(ci: CanvasItem, text: String, cx: float, y: float, col: Color, shadow: Color = Color(0, 0, 0, 0)) -> void:
+	UiFont.draw_small(ci, text, Vector2(floorf(cx - UiFont.width_small(text) / 2.0), y), col, shadow)
 
 
 static func center_big(ci: CanvasItem, text: String, cx: float, y: float, col: Color, shadow: Color = Color(0, 0, 0, 0), scale: int = 1) -> void:
-	PixelFont.draw_big(ci, text, Vector2(floorf(cx - PixelFont.width_big(text, scale) / 2.0), y), col, shadow, scale)
+	UiFont.draw_big(ci, text, Vector2(floorf(cx - UiFont.width_big(text, scale) / 2.0), y), col, shadow, scale)
 
 
 ## "m:ss" for a tick count (rounded up, so 0:00 only when the timer has run out).
@@ -134,18 +156,18 @@ static func player_color(v: SimVehicle) -> Color:
 static func paint_text(ci: CanvasItem, text: String, pos: Vector2, color_index: int) -> float:
 	var slot: int = Gfx.color_slot(color_index)
 	if slot == Gfx.DARK_PAINT:
-		tape(ci, Rect2(pos.floor() - Vector2(3, 2), Vector2(PixelFont.width(text) + 6.0, 9)), PAINT_TAPE)
-		return PixelFont.draw(ci, text, pos, Gfx.PLAYER_COLORS[slot])
-	return PixelFont.draw(ci, text, pos, Gfx.PLAYER_COLORS[slot], Gfx.OUTLINE)
+		tape(ci, Rect2(pos.floor() - Vector2(3, 2), Vector2(UiFont.width(text) + 6.0, 9)), PAINT_TAPE)
+		return UiFont.draw(ci, text, pos, Gfx.PLAYER_COLORS[slot])
+	return UiFont.draw(ci, text, pos, Gfx.PLAYER_COLORS[slot], Gfx.OUTLINE)
 
 
 ## The same in the stencil font (lobby roster).
 static func paint_big(ci: CanvasItem, text: String, pos: Vector2, color_index: int) -> float:
 	var slot: int = Gfx.color_slot(color_index)
 	if slot == Gfx.DARK_PAINT:
-		tape(ci, Rect2(pos.floor() - Vector2(4, 2), Vector2(PixelFont.width_big(text) + 8.0, 11)), PAINT_TAPE)
-		return PixelFont.draw_big(ci, text, pos, Gfx.PLAYER_COLORS[slot])
-	return PixelFont.draw_big(ci, text, pos, Gfx.PLAYER_COLORS[slot], Gfx.OUTLINE)
+		tape(ci, Rect2(pos.floor() - Vector2(4, 2), Vector2(UiFont.width_big(text) + 8.0, 11)), PAINT_TAPE)
+		return UiFont.draw_big(ci, text, pos, Gfx.PLAYER_COLORS[slot])
+	return UiFont.draw_big(ci, text, pos, Gfx.PLAYER_COLORS[slot], Gfx.OUTLINE)
 
 
 ## A fill colour for bars and swatches on dark UI: the paint, or steel grey for black paint.

@@ -330,6 +330,7 @@ The aliens look like **plausible desert ecology**, not like classic sci-fi monst
 
 ### 11e. Environment and atmosphere
 - **Biomes** (section 7d), each with its own colour accent: Salt Flats (bright, almost white), Dune Sea (warm orange), Canyon (red-brown, strong shadows), Glass Crater (reflections, glittering), Wreck Field (rusty metal, scrap), Spore Basin (the only biome with alien-coloured vegetation).
+- **Arena size:** an arena is 4 x 4 screens (2560x1440 px at the 640x360 view), so convoys have room to manoeuvre and spread out (playtest round 3: 2 x 2 screens felt small and cramped). Aliens still come in from just off-screen around the rigs, so a bigger arena means more room, not emptier fights. Landmarks (colony ship debris, giant ribs, rock clusters, old tyre tracks) are scattered, never tiled, so every part of the arena reads differently.
 - **Persistent traces:** tyre tracks, wrecks, craters and goo stay on the map for the whole match. Late in the match, the map tells the story of the fights.
 - **Day/night cycle:** night rounds with dynamic headlights, muzzle flashes as light sources, and glowing aliens. These are the planned "screenshot moments".
 - **Weather:** heat shimmer, sandstorms (screen-filling dust particles), spore fog.
@@ -337,6 +338,7 @@ The aliens look like **plausible desert ecology**, not like classic sci-fi monst
 
 ### 11f. UI style
 - **Diegetic and improvised:** rusty metal sheets, stencil fonts, tape labels, hand-written markings.
+- **Readability first:** the world is pixel art, but all UI text is set in clean, condensed fonts drawn at full screen resolution (a stencil display face only for the logo and big titles). Panels are dark and calm inside a rusty frame so text never sits on noisy texture; every line of text has room to breathe (no stacked rows touching).
 - **Workshop:** a top-down view of the vehicle on a garage floor. Cards are like scrap tags or crumpled blueprints.
 - **Doctrine:** looks like an old onboard computer / CRT terminal salvaged from the colony ship (green or amber monochrome), a nice contrast to the warm desert.
 
