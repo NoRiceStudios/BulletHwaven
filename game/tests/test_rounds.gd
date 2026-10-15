@@ -496,7 +496,10 @@ func test_tech_weapon_specific_effects() -> void:
 	Cards.recompute(v)
 	assert_true(int(v.weapons[0]["cooldown_ticks"]) <= mg_cd, "belt feed: mg rate")
 	assert_eq(int(v.weapons[1]["pellets"]), sg_pel + 2, "buckshot: pellets")
-	assert_eq(int(v.weapons[0]["pierce"]), mg_pierce + 1, "tungsten cores: pierce")
+	assert_eq(int(v.weapons[0]["pierce"]), mg_pierce, "no pierce before depleted uranium")
+	v.tech.append_array(["ballistics_5", "ballistics_6"])
+	Cards.recompute(v)
+	assert_eq(int(v.weapons[0]["pierce"]), mg_pierce + 1, "depleted uranium: pierce")
 
 
 func test_tech_salvage_specials() -> void:

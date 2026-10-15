@@ -20,7 +20,7 @@ extends RefCounted
 ## kind), pellets_<weapon>, splash_<weapon> (flat). `fuel` is a one-off grant paid out by buy().
 
 const BRANCHES: PackedStringArray = ["ballistics", "engineering", "propulsion", "electronics", "salvage"]
-const TIER_COSTS: PackedInt32Array = [70, 160, 300, 420, 600, 850]
+const TIER_COSTS: PackedInt32Array = [70, 160, 300, 450, 700, 1000]
 const MAX_TIER := 6
 const SPEC_COSTS := {2: 130, 4: 380}  ## spec node cost by the core tier it hangs off
 const FUSION_COST := 480
@@ -45,9 +45,9 @@ const DEFS: Array = [
 	{"id": "salvage_3", "branch": "salvage", "tier": 3, "name": "Black Market", "fx": {"scrap": 0.15, "interest": 3}},
 
 	# ---- core tiers 4-6
-	{"id": "ballistics_4", "branch": "ballistics", "tier": 4, "name": "Tungsten Cores", "fx": {"dmg": 0.06, "pierce": 1}},
-	{"id": "ballistics_5", "branch": "ballistics", "tier": 5, "name": "Hot Barrels", "fx": {"dmg": 0.12, "rate": 0.08}},
-	{"id": "ballistics_6", "branch": "ballistics", "tier": 6, "name": "Depleted Uranium", "fx": {"dmg": 0.22, "pierce": 1}},
+	{"id": "ballistics_4", "branch": "ballistics", "tier": 4, "name": "Tungsten Cores", "fx": {"dmg": 0.08}},
+	{"id": "ballistics_5", "branch": "ballistics", "tier": 5, "name": "Hot Barrels", "fx": {"dmg": 0.08, "rate": 0.05}},
+	{"id": "ballistics_6", "branch": "ballistics", "tier": 6, "name": "Depleted Uranium", "fx": {"dmg": 0.12, "pierce": 1}},
 	{"id": "engineering_4", "branch": "engineering", "tier": 4, "name": "Roll Cage", "fx": {"hp": 80.0, "armor": 1.5}},
 	{"id": "engineering_5", "branch": "engineering", "tier": 5, "name": "Reinforced Chassis", "fx": {"hp": 120.0, "creduce": 0.10}},
 	{"id": "engineering_6", "branch": "engineering", "tier": 6, "name": "Fortress Hull", "fx": {"hp": 180.0, "armor": 2.0}},
@@ -55,8 +55,8 @@ const DEFS: Array = [
 	{"id": "propulsion_5", "branch": "propulsion", "tier": 5, "name": "Turbine Swap", "fx": {"speed": 0.08, "turn": 0.10, "hp": 50.0}},
 	{"id": "propulsion_6", "branch": "propulsion", "tier": 6, "name": "Afterburner Rig", "fx": {"speed": 0.12, "ram": 0.40, "turn": 0.10}},
 	{"id": "electronics_4", "branch": "electronics", "tier": 4, "name": "Gyro Stabilisers", "fx": {"range": 0.06, "rate": 0.10}},
-	{"id": "electronics_5", "branch": "electronics", "tier": 5, "name": "Ballistic Computer", "fx": {"rate": 0.12, "vulture": 0.10}},
-	{"id": "electronics_6", "branch": "electronics", "tier": 6, "name": "Neural Fire Control", "fx": {"rate": 0.15, "range": 0.10}},
+	{"id": "electronics_5", "branch": "electronics", "tier": 5, "name": "Ballistic Computer", "fx": {"rate": 0.08, "vulture": 0.10}},
+	{"id": "electronics_6", "branch": "electronics", "tier": 6, "name": "Neural Fire Control", "fx": {"rate": 0.10, "range": 0.06}},
 	{"id": "salvage_4", "branch": "salvage", "tier": 4, "name": "Wreck Strippers", "fx": {"scrap": 0.15}},
 	{"id": "salvage_5", "branch": "salvage", "tier": 5, "name": "Salvage Crane", "fx": {"scrap": 0.15, "interest": 3}},
 	{"id": "salvage_6", "branch": "salvage", "tier": 6, "name": "Scrap Baron", "fx": {"scrap": 0.25, "interest": 5}},
@@ -77,7 +77,7 @@ const DEFS: Array = [
 	{"id": "electronics_hunter", "branch": "electronics", "tier": 2, "kind": "spec", "group": "electronics_a",
 		"name": "Hunter-Killer Logic", "short": "HUNTER", "fx": {"vulture": 0.20}},
 	{"id": "electronics_relay", "branch": "electronics", "tier": 2, "kind": "spec", "group": "electronics_a",
-		"name": "Fire Control Relay", "short": "RELAY", "fx": {"rate": 0.10}},
+		"name": "Fire Control Relay", "short": "RELAY", "fx": {"rate": 0.08}},
 	{"id": "salvage_haggler", "branch": "salvage", "tier": 2, "kind": "spec", "group": "salvage_a",
 		"name": "Haggler", "short": "HAGGLER", "fx": {"reroll": 3}},
 	{"id": "salvage_lucky", "branch": "salvage", "tier": 2, "kind": "spec", "group": "salvage_a",
@@ -103,7 +103,7 @@ const DEFS: Array = [
 	{"id": "electronics_optics", "branch": "electronics", "tier": 4, "kind": "spec", "group": "electronics_b",
 		"name": "Long-Range Optics", "short": "OPTICS", "fx": {"range_cannon": 0.20, "range_mg": 0.15}},
 	{"id": "electronics_overclock", "branch": "electronics", "tier": 4, "kind": "spec", "group": "electronics_b",
-		"name": "Overclocked Servos", "short": "OVERCLOCK", "fx": {"rate": 0.18, "range": -0.05}},
+		"name": "Overclocked Servos", "short": "OVERCLOCK", "fx": {"rate": 0.12, "range": -0.05}},
 	{"id": "salvage_jerrycans", "branch": "salvage", "tier": 4, "kind": "spec", "group": "salvage_b",
 		"name": "Spare Jerrycans", "short": "JERRYCAN", "fx": {"fuel": 15}},
 	{"id": "salvage_loan_shark", "branch": "salvage", "tier": 4, "kind": "spec", "group": "salvage_b",
@@ -111,15 +111,15 @@ const DEFS: Array = [
 
 	# ---- fusions: core tier 3 in two branches
 	{"id": "fusion_smart_rounds", "branch": "fusion", "tier": 3, "kind": "fusion", "requires": ["ballistics_3", "electronics_3"],
-		"name": "Smart Rounds", "short": "SMART RND", "fx": {"dmg": 0.10, "range": 0.08, "vulture": 0.10}},
+		"name": "Smart Rounds", "short": "SMART RND", "fx": {"dmg": 0.06, "range": 0.06, "vulture": 0.10}},
 	{"id": "fusion_war_rig", "branch": "fusion", "tier": 3, "kind": "fusion", "requires": ["engineering_3", "propulsion_3"],
 		"name": "War Rig Armour", "short": "WAR RIG", "fx": {"hp": 100.0, "armor": 1.0, "ram": 0.30}},
 	{"id": "fusion_scrap_rounds", "branch": "fusion", "tier": 3, "kind": "fusion", "requires": ["ballistics_3", "salvage_3"],
-		"name": "Scrap Rounds", "short": "SCRAP RND", "fx": {"dmg": 0.08, "scrap": 0.10}},
+		"name": "Scrap Rounds", "short": "SCRAP RND", "fx": {"dmg": 0.05, "scrap": 0.10}},
 	{"id": "fusion_workshop", "branch": "fusion", "tier": 3, "kind": "fusion", "requires": ["engineering_3", "salvage_3"],
 		"name": "Mobile Workshop", "short": "WORKSHOP", "fx": {"regen": 3.0, "scrap": 0.05}},
 	{"id": "fusion_sensor_drive", "branch": "fusion", "tier": 3, "kind": "fusion", "requires": ["propulsion_3", "electronics_3"],
-		"name": "Sensor Drive", "short": "SENSOR", "fx": {"speed": 0.08, "rate": 0.08}},
+		"name": "Sensor Drive", "short": "SENSOR", "fx": {"speed": 0.08, "rate": 0.05}},
 ]
 
 static var _index: Dictionary = {}

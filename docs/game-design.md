@@ -111,7 +111,7 @@ Five branches, 57 nodes, far more than one match's scrap can buy (playtest feedb
 - **Salvage:** economy: more scrap, interest, cheaper rerolls, better card odds, spare fuel
 
 Structure:
-- **Core spine:** 6 tiers per branch, each needs the tier before (70 / 160 / 300 / 420 / 600 / 850 scrap).
+- **Core spine:** 6 tiers per branch, each needs the tier before (70 / 160 / 300 / 450 / 700 / 1000 scrap).
 - **Forks:** after core tier 2 and after core tier 4 each branch offers 2-3 **specialisations** (130 / 380 scrap). You pick **one**; the others lock for the rest of the match. Examples: Belt Feed (MG / flamer fire rate) vs Heavy Shells (cannon / shotgun damage); Buckshot Packing vs Napalm Mix vs HE Shells; Reactive Plates vs Repair Drone vs Dozer Blade; Haggler (rerolls 3 cheaper) vs Lucky Charm (rare parts more likely); Spare Jerrycans (+15 fuel once) vs Loan Shark (+6 interest cap).
 - **Fusions:** five nodes that need core tier 3 in two branches (480 scrap): Smart Rounds (Ballistics + Electronics), War Rig Armour (Engineering + Propulsion), Scrap Rounds (Ballistics + Salvage), Mobile Workshop (Engineering + Salvage), Sensor Drive (Propulsion + Electronics). They reward hybrid builds.
 - Per-weapon specialisations tie the tree to the draft (section 5a): a flamer build wants Belt Feed and Napalm, a cannon build Heavy Shells and HE Shells.

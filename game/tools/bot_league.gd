@@ -613,7 +613,7 @@ func _findings(solo_stat: Dictionary, ffa_stat: Dictionary, card_info: Dictionar
 		for ti in Tech.count():
 			tree_cost += Tech.cost(Tech.id_at(ti))
 		var left: float = _mean(unspent)
-		out.append("- **Economy:** a `balanced` rig ends with %s unspent scrap on average (all %d tech cost %d in total): %s" % [_f(left, 0), tree_cost,
+		out.append("- **Economy:** a `balanced` rig ends with %s unspent scrap on average (all %d tech cost %d in total): %s" % [_f(left, 0), Tech.count(), tree_cost,
 			"scrap is never a constraint, so tech prices, reroll costs and interest do not matter." if left > 3.0 * tree_cost else "scrap is a real (if mild) constraint."])
 	# ---- ffa
 	if not ffa_stat.is_empty():
