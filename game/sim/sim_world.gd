@@ -66,7 +66,7 @@ const SPAWN_RATE_START := 1.5  # enemies / s
 const SPAWN_RATE_RAMP := 0.5  # added every SPAWN_RAMP_INTERVAL seconds of the combat phase
 const SPAWN_RAMP_INTERVAL := 10.0
 const SPAWN_RAMP_END_BEFORE := 15.0  # the in-round ramp stops this many seconds before the round ends (flat finish)
-const BOULDER_CHANCE := 0.1
+const BOULDER_CHANCE := 0.04  # round 1; reaches the old 0.4 cap in the same round (13) as before
 const SPAWN_INSET := 8.0
 # Alive caps: a spawn that would exceed the cap becomes a mite, so the field never snowballs.
 const BOULDER_CAP_BASE := 8
@@ -114,9 +114,14 @@ const RETREAT_EVENT_CAP := 150  # at most this many "retreat" events per round e
 const HP_SCALE_PER_ROUND := 0.20
 const HP_SCALE_QUAD := 0.0125  # late-game term: the hive outgrows a linear power curve
 const SPAWN_SCALE_PER_ROUND := 0.15
-const BOULDER_CHANCE_PER_ROUND := 0.025
+const BOULDER_CHANCE_PER_ROUND := 0.03
 const BOULDER_CHANCE_MAX := 0.4
 const DAMAGE_SCALE_PER_ROUND := 0.03
+# Early-round easing (playtest: the first waves were too strong). Spawn rate and enemy damage start at this
+# share in round 1 and rise linearly to full strength in round EASE_END_ROUND; later rounds are unchanged.
+const EASE_END_ROUND := 7
+const SPAWN_EASE_START := 0.55
+const DAMAGE_EASE_START := 0.65
 
 # Armour: flat reduction per hit with a floor; per touching enemy per tick it counts for much less.
 const ARMOR_MIN_FRACTION := 0.25
@@ -401,7 +406,13 @@ static func enemy_hp_mult(r: int) -> float:
 
 
 static func spawn_rate_mult(r: int) -> float:
-	return 1.0 + SPAWN_SCALE_PER_ROUND * float(maxi(r - 1, 0))
+	return (1.0 + SPAWN_SCALE_PER_ROUND * float(maxi(r - 1, 0))) * early_ease(r, SPAWN_EASE_START)
+
+
+## `start` in round 1, rising linearly to 1.0 in round EASE_END_ROUND and after.
+static func early_ease(r: int, start: float) -> float:
+	var t: float = clampf(float(maxi(r, 1) - 1) / float(EASE_END_ROUND - 1), 0.0, 1.0)
+	return lerpf(start, 1.0, t)
 
 
 static func boulder_chance(r: int) -> float:
@@ -426,7 +437,7 @@ static func spitter_cap(r: int) -> int:
 
 
 static func enemy_damage_mult(r: int) -> float:
-	return 1.0 + DAMAGE_SCALE_PER_ROUND * float(maxi(r - 1, 0))
+	return (1.0 + DAMAGE_SCALE_PER_ROUND * float(maxi(r - 1, 0))) * early_ease(r, DAMAGE_EASE_START)
 
 
 ## Full hp of an enemy of `kind` spawned in round `r` (snapshots encode hp relative to this).
