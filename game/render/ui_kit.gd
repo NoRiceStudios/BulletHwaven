@@ -195,7 +195,20 @@ static func fx_lines(fx: Dictionary) -> PackedStringArray:
 			"interest": out.append("%s%s INTEREST CAP" % [sgn, num(m)])
 			"creduce": out.append("%s%s ALIEN CONTACT DMG" % ["-" if a >= 0.0 else "+", pct(m)])
 			"thorns": out.append("%s%s THORNS" % [sgn, pct(m)])
-			_: out.append("%s %s" % [k.to_upper(), num(a)])
+			"pierce": out.append("%s%s PIERCE ALL GUNS" % [sgn, num(m)])
+			"reroll": out.append("REROLLS %s%s CHEAPER" % ["" if a >= 0.0 else "-", num(m)])
+			"luck": out.append("%s%s RARE PART ODDS" % [sgn, pct(m)])
+			"fuel": out.append("%s%s FUEL NOW" % [sgn, num(m)])
+			_:
+				var base: String = k.get_slice("_", 0)
+				var gun: String = k.get_slice("_", 1).to_upper()
+				match base:
+					"dmg": out.append("%s%s %s DMG" % [sgn, pct(m), gun])
+					"rate": out.append("%s%s %s FIRE RATE" % [sgn, pct(m), gun])
+					"range": out.append("%s%s %s RANGE" % [sgn, pct(m), gun])
+					"pellets": out.append("%s%s %s PELLETS" % [sgn, num(m), gun])
+					"splash": out.append("%s%s %s SPLASH" % [sgn, num(m), gun])
+					_: out.append("%s %s" % [k.to_upper(), num(a)])
 	return out
 
 

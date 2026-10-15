@@ -715,7 +715,7 @@ func _begin_workshop() -> void:
 		v.protect_ticks = 0
 		v.invuln_ticks = 0
 		v.retaliate_ticks = 0
-		v.reroll_cost = REROLL_COST_START
+		v.reroll_cost = maxi(1, REROLL_COST_START - v.reroll_discount)
 		v.offers = []
 		if v.eliminated:
 			continue

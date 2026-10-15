@@ -103,12 +103,19 @@ Two systems with clearly separate jobs:
 - **Rarity:** common, rare, epic, legendary. Tech raises the chance.
 
 ### 5b. Tech tree (per match, resets every match)
-Five branches, each with about 4–6 tiers:
-- **Ballistics:** weapon damage per category, armour piercing, crit
-- **Engineering:** armour, repair rate, module HP, more grid cells
-- **Propulsion:** engine power (more weight capacity), speed, chassis upgrades / trailers
-- **Electronics:** **doctrine slots** (smarter AI), radar (see further ahead, scout opponents), active-ability cooldown
-- **Salvage:** economy: more scrap per kill, interest, cheaper rerolls, wreck looting
+Five branches, 57 nodes, far more than one match's scrap can buy (playtest feedback: the first 15-node tree was "too small"). Every match you commit to a few lines and leave the rest:
+- **Ballistics:** weapon damage, armour piercing, per-weapon specialisations
+- **Engineering:** armour, hp, repair, the third hardpoint (weapon slot)
+- **Propulsion:** speed, handling, ramming (later: chassis upgrades / trailers)
+- **Electronics:** fire rate, range, target analysis (later: **doctrine slots**, radar)
+- **Salvage:** economy: more scrap, interest, cheaper rerolls, better card odds, spare fuel
+
+Structure:
+- **Core spine:** 6 tiers per branch, each needs the tier before (70 / 160 / 300 / 420 / 600 / 850 scrap).
+- **Forks:** after core tier 2 and after core tier 4 each branch offers 2-3 **specialisations** (130 / 380 scrap). You pick **one**; the others lock for the rest of the match. Examples: Belt Feed (MG / flamer fire rate) vs Heavy Shells (cannon / shotgun damage); Buckshot Packing vs Napalm Mix vs HE Shells; Reactive Plates vs Repair Drone vs Dozer Blade; Haggler (rerolls 3 cheaper) vs Lucky Charm (rare parts more likely); Spare Jerrycans (+15 fuel once) vs Loan Shark (+6 interest cap).
+- **Fusions:** five nodes that need core tier 3 in two branches (480 scrap): Smart Rounds (Ballistics + Electronics), War Rig Armour (Engineering + Propulsion), Scrap Rounds (Ballistics + Salvage), Mobile Workshop (Engineering + Salvage), Sensor Drive (Propulsion + Electronics). They reward hybrid builds.
+- Per-weapon specialisations tie the tree to the draft (section 5a): a flamer build wants Belt Feed and Napalm, a cannon build Heavy Shells and HE Shells.
+- **UI:** the workshop's tech column shows each branch's tier, a FORK tag when a specialisation is waiting, and the next core tier as a buy button; T or the TECH TREE button opens the full tree over the workshop (all nodes, locked forks struck through, details of the hovered node).
 
 **Interest mechanic (TFT):** 10% of the scrap you hold at the end of each round (cap 5 + 2 per round, raised by Salvage tech). This creates a "save or spend" decision.
 
