@@ -666,7 +666,7 @@ func _new_world(is_authority: bool) -> void:
 static func spawn_position(slot: int) -> Vector2:
 	var a: float = float(slot % 8) * TAU / 8.0
 	var c: Vector2 = SimWorld.ARENA.get_center()
-	return c + Vector2(cos(a) * 480.0, sin(a) * 240.0)
+	return c + Vector2(cos(a) * SimWorld.SPAWN_ELLIPSE.x, sin(a) * SimWorld.SPAWN_ELLIPSE.y)
 
 
 func _spawn_vehicle_for(peer_id: int) -> SimVehicle:

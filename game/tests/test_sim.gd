@@ -42,6 +42,28 @@ func test_determinism() -> void:
 	assert_gt(a.next_enemy_id, 0, "enemies were spawned")
 
 
+func test_aliens_spawn_near_the_rigs_on_a_big_arena() -> void:
+	# The arena is much bigger than the screen: aliens come in from just off-screen around the
+	# rigs (their bounding box grown by SPAWN_REACH), not from the far arena edges.
+	var w := SimWorld.new(5)
+	var v := w.add_vehicle(1, Vector2(300, 250))
+	var area: Rect2 = w.spawn_area()
+	assert_eq(area, Rect2(Vector2.ZERO, Vector2(300, 250) + SimWorld.SPAWN_REACH), "box clipped to the arena")
+	for i in 300:
+		var before: int = w.enemy_count
+		var now: Rect2 = w.spawn_area().grow(12.0)  # the rig and fresh aliens move a little within the step
+		w.step()
+		for k in range(before, w.enemy_count):
+			assert_true(now.has_point(w.enemy_pos[k]), "spawned inside the spawn area")
+	assert_gt(w.enemy_count, 0)
+	v.alive = false
+	assert_eq(w.spawn_area(), SimWorld.ARENA, "no rig alive: the whole arena")
+	var snap := SimWorld.new(1)
+	snap.spawn_enemy(SimWorld.MITE, SimWorld.ARENA.end - Vector2(3, 3))
+	assert_true(Snapshot.apply(snap, Snapshot.encode(snap)), "far corner fits the snapshot range")
+	assert_lt((snap.enemy_pos[0] - (SimWorld.ARENA.end - Vector2(3, 3))).length(), Snapshot.POS_ERROR + 0.001)
+
+
 func test_enemies_spawn_and_die() -> void:
 	var w := SimWorld.new(7)
 	var v := w.add_vehicle(1, Vector2(640, 360))
@@ -86,28 +108,23 @@ func test_pvp_damage() -> void:
 	var w := SimWorld.new(99)
 	w.spawning_enabled = false
 	w.round = SimWorld.PVP_START_ROUND  # no PvP before this round (see test_pvp.gd)
-	var a := w.add_vehicle(1, Vector2(600, 360))
-	var b := w.add_vehicle(2, Vector2(690, 360))
+	var a := w.add_vehicle(1, SimWorld.ARENA.get_center() + Vector2(-40, 0))
+	var b := w.add_vehicle(2, SimWorld.ARENA.get_center() + Vector2(50, 0))
 	for p in [1, 2]:
 		w.apply_command(p, {"type": "set_target", "value": "players_first"})
+	# Fight until the first rig is destroyed: both took damage, the survivor gets the kill.
 	var destroyed := false
-	for i in 300:
+	for i in 1800:
 		w.step()
 		for e in w.events:
 			if e["type"] == "vehicle_destroyed":
 				destroyed = true
+		if destroyed:
+			break
+	assert_true(destroyed, "a vehicle was destroyed")
 	assert_lt(a.hp, a.max_hp, "A took damage")
 	assert_lt(b.hp, b.max_hp, "B took damage")
 	assert_true(a.hp >= 0.0 and b.hp >= 0.0)
-	# Keep going: someone eventually dies, the survivor gets the kill.
-	for i in 1500:
-		if destroyed:
-			break
-		w.step()
-		for e in w.events:
-			if e["type"] == "vehicle_destroyed":
-				destroyed = true
-	assert_true(destroyed, "a vehicle was destroyed")
 	assert_true(a.alive != b.alive, "exactly one survivor")
 	var winner: SimVehicle = a if a.alive else b
 	assert_eq(winner.kills, 1)

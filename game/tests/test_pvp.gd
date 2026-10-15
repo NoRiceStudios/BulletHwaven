@@ -8,7 +8,7 @@ func _duel(round_n: int, drive: String = "circle") -> SimWorld:
 	w.spawning_enabled = false
 	w.round = round_n
 	for i in 2:
-		var v := w.add_vehicle(i + 1, Vector2(600.0 + 80.0 * float(i), 360.0))
+		var v := w.add_vehicle(i + 1, SimWorld.ARENA.get_center() + Vector2(-40.0 + 80.0 * float(i), 0.0))
 		w.apply_command(i + 1, {"type": "set_target", "value": "players_first"})
 		w.apply_command(i + 1, {"type": "set_drive", "value": drive})
 	return w

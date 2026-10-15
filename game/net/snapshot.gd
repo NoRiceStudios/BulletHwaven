@@ -7,19 +7,19 @@ extends RefCounted
 ##                   phase, round, phase_ticks_left, winner_peer, leader_peer, pvp_grace_ticks, fuel_drain
 ##   vehicles variable (about 160 B each: doctrine strings, weapons, fuel / flags, offers, cards, tech,
 ##                   player name and colour index)
-##   events   7 B each  type, owner, kind, pos (u16 x2, 1/32 px, offset by POS_ORIGIN); the type byte's
+##   events   7 B each  type, owner, kind, pos (u16 x2, 1/16 px, offset by POS_ORIGIN); the type byte's
 ##                      top bit (EVENT_EXTRA_BIT) adds 2 signed bytes: kill = victim, weapon;
 ##                      vehicle_destroyed = cause (SimWorld.SRC_*), killer
-##   enemies  8 B each  id offset u16, x u16, y u16 (1/32 px), packed u16:
+##   enemies  8 B each  id offset u16, x u16, y u16 (1/16 px), packed u16:
 ##                      kind 2 bits | hp 4 bits (1..15 of max) | speed 3 bits (0..7 of kind speed) | heading 7 bits
-##   projs   13 B each  x u16, y u16 (1/32 px, offset), vx i16, vy i16 (px/s), owner i8, ttl u8 (1/100 s), damage u8 (1/4)
+##   projs   13 B each  x u16, y u16 (1/16 px, offset), vx i16, vy i16 (px/s), owner i8, ttl u8 (1/100 s), damage u8 (1/4)
 ##
-## Positions are quantized to 1/32 px (max error POS_ERROR). Enemy velocity is quantized to
+## Positions are quantized to 1/16 px (max error POS_ERROR). Enemy velocity is quantized to
 ## 1/7 of the kind's speed and 128 headings; enemy hp to 1/15 of the kind's max hp (for the
 ## current round, SimWorld.enemy_max_hp). Card and tech ids are table indices (Cards.DEFS / Tech.DEFS).
 ## Projectile pierce / splash are not sent: the client world is passive.
 
-const VERSION := 5  # 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
+const VERSION := 6  # 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
 const FLAG_WIDE_IDS := 1  ## enemy ids spread over more than 65535: ids are sent as u32 deltas from 0
 const FLAG_STATS := 2  ## vehicles carry round_stats and match_stats (sent outside combat only)
 const EVENT_EXTRA_BIT := 0x80
@@ -27,9 +27,9 @@ const EVENT_EXTRAS := {"kill": ["victim", "weapon"], "vehicle_destroyed": ["caus
 const MAX_DEATHS := 16
 const MAX_ROUND_PLAYERS := 16
 
-const POS_SCALE := 32.0
+const POS_SCALE := 16.0  ## u16 / 16 covers 4096 px: the arena plus POS_ORIGIN must stay below that
 const POS_ORIGIN := 64.0  ## added to projectile/event coordinates (they may leave the arena slightly)
-const POS_ERROR := 1.0 / 64.0
+const POS_ERROR := 1.0 / 32.0
 
 const HEADER_BYTES := 37
 const ENEMY_BYTES := 8
