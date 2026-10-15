@@ -33,7 +33,7 @@ VEHICLE_DIRS = 32
 ENEMY_DIRS = 16
 FX_DIRS = 16
 FONT_CHARS = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:.+-/()!',%><?*=#"  # append only
-ARENA_W, ARENA_H = 1280, 720
+ARENA_W, ARENA_H = 2560, 1440  # must match SimWorld.ARENA
 
 
 # ---------------------------------------------------------------- RotSprite
@@ -316,31 +316,56 @@ def _track(cv, pts, width, depth, seed):
     cv.rgb[rim] = np.minimum(cv.rgb[rim] * 1.06, 255)
 
 
+def _scatter_spots(rng, n, W, H, margin, min_d, taken):
+    """Up to n random points at least min_d from each other and from `taken` (which grows)."""
+    out = []
+    for _ in range(n * 40):
+        if len(out) == n:
+            break
+        x, y = rng.uniform(margin, W - margin), rng.uniform(margin, H - margin)
+        if all((x - tx) ** 2 + (y - ty) ** 2 >= (min_d + tr) ** 2 for tx, ty, tr in taken):
+            out.append((x, y))
+            taken.append((x, y, 0.0))
+    return out
+
+
 def ground(seed=4):
-    """Dune Sea arena (1280x720) with flat, decorative props (the sim has no obstacles)."""
+    """Dune Sea arena (ARENA_W x ARENA_H) with flat, decorative props (the sim has no obstacles).
+    Props are scattered (not tiled), so every part of the big arena looks different."""
     W, H = ARENA_W, ARENA_H
     cv = Canvas(W, H)
     cv.rgb[:] = dune_sea(W, H, seed)
     cv.a[:] = 1
-    # old, half blown-over tyre tracks
-    for off in (0, 8):
-        pts = [(x, 560 + off + 60 * math.sin(x / 210.0) + 25 * math.sin(x / 67.0)) for x in range(-10, W + 20, 8)]
-        _track(cv, pts, 3, 0.94, seed + off)
-    for off in (0, 7):
-        pts = [(890 + off + 40 * math.sin(y / 90.0), y) for y in range(-10, 330, 8)]
-        _track(cv, pts, 3, 0.95, seed + 20 + off)
+    rng = np.random.default_rng(seed)
+    # old, half blown-over tyre tracks: pairs of wheel ruts, some crossing the whole arena
+    for k in range(4):
+        y0, a1, a2 = rng.uniform(0.15, 0.85) * H, rng.uniform(40, 90), rng.uniform(15, 35)
+        f1, f2, ph = rng.uniform(180, 300), rng.uniform(55, 90), rng.uniform(0, 6.3)
+        x_lo = -10 if k < 2 else rng.uniform(0, W * 0.6)
+        x_hi = W + 20 if k < 2 else min(W + 20, x_lo + rng.uniform(500, 1100))
+        for off in (0, 8):
+            pts = [(x, y0 + off + a1 * math.sin(x / f1 + ph) + a2 * math.sin(x / f2)) for x in range(int(x_lo), int(x_hi), 8)]
+            _track(cv, pts, 3, 0.94 + 0.01 * (k % 2), seed + 10 * k + off)
+    for k in range(3):
+        x0, a1, f1 = rng.uniform(0.1, 0.9) * W, rng.uniform(25, 60), rng.uniform(70, 140)
+        y_lo = rng.uniform(-10, H * 0.5)
+        y_hi = min(H + 20, y_lo + rng.uniform(300, 900))
+        for off in (0, 7):
+            pts = [(x0 + off + a1 * math.sin(y / f1), y) for y in range(int(y_lo), int(y_hi), 8)]
+            _track(cv, pts, 3, 0.95, seed + 100 + 10 * k + off)
 
     def put(spr, x, y, sh=(3, 4), strength=0.4):
         cast_shadow(cv, spr, x, y, *sh, strength=strength)
         paste(cv, spr, x, y)
 
-    put(sprites.hull_plate(1), 40, 70)
-    put(sprites.ribcage(2), 980, 520, sh=(2, 3), strength=0.35)
-    for (x, y, s, sd) in [(560, 20, 1.0, 3), (1180, 60, 1.2, 8), (60, 610, 1.3, 11), (1200, 640, 0.9, 5),
-                          (420, 470, 0.8, 14), (760, 650, 0.9, 21)]:
-        put(sprites.rock_cluster(sd, s), x, y)
-    rng = np.random.default_rng(seed)
-    for i in range(18):  # sun-bleached scrap from older fights
+    taken = []
+    for i, (x, y) in enumerate(_scatter_spots(rng, 4, W, H, 80, 520, taken)):  # colony-ship debris
+        put(sprites.hull_plate(1 + i), x - 48, y - 32)
+    for i, (x, y) in enumerate(_scatter_spots(rng, 3, W, H, 80, 360, taken)):  # giant ribs
+        put(sprites.ribcage(2 + i), x - 55, y - 37, sh=(2, 3), strength=0.35)
+    for i, (x, y) in enumerate(_scatter_spots(rng, 26, W, H, 30, 150, taken)):
+        put(sprites.rock_cluster(3 + 7 * i, rng.uniform(0.75, 1.45)), x - 22, y - 17)
+    for i in range(72):  # sun-bleached scrap from older fights
         paste(cv, sprites.scrap_bit(i), rng.uniform(20, W - 20), rng.uniform(20, H - 20))
     return cv
 
