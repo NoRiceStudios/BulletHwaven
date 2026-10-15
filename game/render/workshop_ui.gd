@@ -7,7 +7,8 @@ extends Control
 ## Immediate-mode UI: _draw() lays everything out and records hit rects; clicks and keys go
 ## through activate(), which only ever sends commands through `send_command` (NetSession in play,
 ## the world directly in screenshot mode). All state comes from the local player's vehicle.
-## Keys: 1/2/3 pick, R reroll, Space ready, H apply the recap's doctrine hint.
+## Keys: 1/2/3 pick, R reroll, Space ready, H apply the recap's doctrine hint, T open / close the
+## full tech tree (render/tech_tree_view.gd; Esc closes it too).
 ##
 ## Information UI (playtest round 1 #2, #5, #10): a LAST ROUND recap strip under the header (what
 ## wrecked you, damage by source, earnings, fuel, a clickable doctrine hint), interest as
@@ -53,6 +54,7 @@ var _blink: float = 0.0
 var _scout_pin: int = -1  ## vehicle id whose dossier is pinned in the tech column (-1 = none)
 var _hint: Dictionary = {}  ## doctrine hint of the recap, computed once per round (before any click)
 var _hint_key: String = ""
+var _tree_open: bool = false  ## the full tech tree covers the workshop
 
 
 func _ready() -> void:
@@ -92,6 +94,28 @@ func _is_hover(action: String, arg: Variant = null) -> bool:
 	return not _hover.is_empty() and _hover[1] == action and (arg == null or _hover[2] == arg)
 
 
+# Helpers for TechTreeView, which draws into this canvas.
+func is_hover(action: String, arg: Variant = null) -> bool:
+	return _is_hover(action, arg)
+
+
+func add_hit(r: Rect2, action: String, arg: Variant) -> void:
+	_hits.append([r, action, arg])
+
+
+func blink() -> float:
+	return _blink
+
+
+func scrap_pip(p: Vector2) -> void:
+	_scrap_pip(p)
+
+
+## Whether the full tech tree is open.
+func tree_open() -> bool:
+	return _tree_open
+
+
 # ---------------------------------------------------------------- input
 
 func _gui_input(event: InputEvent) -> void:
@@ -116,6 +140,13 @@ func _unhandled_input(event: InputEvent) -> void:
 			activate("ready", null)
 		KEY_H:
 			activate("hint", 0)
+		KEY_T:
+			activate("tree", null)
+		KEY_ESCAPE:
+			if _tree_open:
+				activate("tree", false)
+			else:
+				handled = false
 		_:
 			handled = false
 	if handled:
@@ -139,6 +170,8 @@ func activate(action: String, arg: Variant) -> void:
 	if v.eliminated and action in ["pick", "reroll", "tech", "drive", "target", "ready", "hint"]:
 		return  # spectator: read-only
 	match action:
+		"tree":
+			_tree_open = (not _tree_open) if arg == null else bool(arg)
 		"hint":
 			var opts: Array = _hint.get("options", [])
 			var i: int = int(arg)
@@ -177,8 +210,10 @@ func activate(action: String, arg: Variant) -> void:
 			var id: String = str(arg)
 			if v.tech.has(id):
 				_say("ALREADY BUILT")
-			elif Tech.prerequisite(id) != "" and not v.tech.has(Tech.prerequisite(id)):
-				_say("BUILD %s FIRST" % UiKit.tech_name(Tech.prerequisite(id)))
+			elif Tech.blocked_by(v, id) != "":
+				_say("LOCKED - YOU TOOK %s" % UiKit.tech_name(Tech.blocked_by(v, id)))
+			elif Tech.missing(v, id) != "":
+				_say("BUILD %s FIRST" % UiKit.tech_name(Tech.next_step(v, id)))
 			elif v.scrap < Tech.cost(id):
 				_say("NEED %d SCRAP" % Tech.cost(id))
 			else:
@@ -222,7 +257,15 @@ func _draw() -> void:
 	draw_texture(Gfx.TEX_VIGNETTE, (c - vig / 2.0).floor())
 
 	if v.eliminated:
+		_tree_open = false
 		_draw_spectator(v, vs)
+		return
+	if _tree_open:
+		_draw_header(vs)
+		_draw_status(v)
+		TechTreeView.draw(self, v, Rect2(LEFT_X, 44, vs.x - 2.0 * LEFT_X, vs.y - 58))
+		_draw_toast(vs)
+		UiKit.footer(self, "CLICK  BUILD NODE      T  CLOSE      SPACE  READY", vs)
 		return
 	_draw_header(vs)
 	_draw_recap(v)
@@ -237,10 +280,14 @@ func _draw() -> void:
 	else:
 		_draw_tech(v)
 	_draw_ready(v, vs)
+	_draw_toast(vs)
+	UiKit.footer(self, "1 2 3  PICK      R  REROLL      SPACE  READY      T  TECH TREE", vs)
+
+
+func _draw_toast(vs: Vector2) -> void:
 	if _toast_left > 0.0:
 		var tr: Rect2 = UiKit.tape_label(self, _toast, floorf(vs.x / 2.0), 300, Color("#f0b090"))
 		_hits.append([tr, "none", null])
-	UiKit.footer(self, "1 2 3  PICK      R  REROLL      SPACE  READY      CLICK TECH TO BUILD", vs)
 
 
 func _draw_header(vs: Vector2) -> void:
@@ -500,69 +547,66 @@ func _draw_card(id: String, index: int, pos: Vector2, level: int, hov: bool, sta
 
 # ---------------------------------------------------------------- tech tree
 
+## Compact tech column: per branch the core tier, a FORK tag when a specialisation is waiting and
+## a button for the next core tier; the TECH TREE button opens the full tree (TechTreeView).
 func _draw_tech(v: SimVehicle) -> void:
 	var r := Rect2(RIGHT_X, 4, COL_W, 196)
 	UiKit.plate(self, r)
 	UiFont.draw_big(self, "TECH", r.position + Vector2(6, 5), Gfx.UI_TEXT, Gfx.OUTLINE)
-	UiFont.draw(self, "BUILT FOR SCRAP", r.position + Vector2(36, 6), Gfx.UI_DIM, Gfx.UI_SHADOW)
+	var built := "%d/%d BUILT" % [v.tech.size(), Tech.count()]
+	UiFont.draw(self, built, Vector2(r.end.x - 6 - UiFont.width(built), r.position.y + 6), Gfx.UI_DIM, Gfx.UI_SHADOW)
 	var hover_id: String = ""
-	var y: float = r.position.y + 17.0
+	var y: float = r.position.y + 18.0
 	for b in Tech.BRANCHES:
-		UiKit.icon(self, b, Vector2(r.position.x + 4, y + 4))
-		UiFont.draw(self, b.to_upper(), Vector2(r.position.x + 22, y), Gfx.UI_TEXT, Gfx.UI_SHADOW)
-		for t in Tech.MAX_TIER:
-			var id: String = "%s_%d" % [b, t + 1]
-			var nr := Rect2(r.position.x + 22 + t * 41, y + 8, 37, 13)
-			if t > 0:
-				draw_rect(Rect2(nr.position.x - 4, nr.position.y + 6, 4, 1), Gfx.OUTLINE)
+		var tier: int = Tech.branch_tier(v, b)
+		UiKit.icon(self, b, Vector2(r.position.x + 4, y + 1))
+		UiFont.draw(self, b.to_upper(), Vector2(r.position.x + 22, y + 1), Gfx.UI_TEXT, Gfx.UI_SHADOW)
+		var px: float = UiKit.pips(self, Vector2(r.position.x + 21, y + 9), tier, Tech.MAX_TIER, Gfx.BRASS[3])
+		for st in [2, 4]:
+			var sp: Array[String] = Tech.specs(b, st)
+			if tier >= st and not sp.is_empty() and Tech.blocked_by(v, sp[0]) == "" and not v.tech.has(sp[0]):
+				UiFont.draw(self, "FORK", Vector2(px + 2, y + 9), Gfx.HAZARD if fmod(_blink, 1.2) < 0.9 else Gfx.UI_DIM, Gfx.UI_SHADOW)
+				break
+		var nr := Rect2(r.end.x - 44, y + 2, 40, 15)
+		if tier >= Tech.MAX_TIER:
+			draw_rect(nr, Gfx.OUTLINE)
+			draw_rect(nr.grow(-1.0), Gfx.BRASS[2])
+			UiKit.center_text(self, "MAX", nr.get_center().x, nr.position.y + 5, Gfx.INK)
+		else:
+			var id: String = "%s_%d" % [b, tier + 1]
 			_draw_tech_node(v, id, nr)
 			_hits.append([nr, "tech", id])
 			if _is_hover("tech", id):
 				hover_id = id
-		y += 27.0
-	# info box: hovered node, else the cheapest thing you can build next
-	var info := Rect2(r.position.x + 4, y + 1, r.size.x - 8, r.end.y - y - 5)
+		y += 23.0
+	var tb := Rect2(r.position.x + 4, y + 1, r.size.x - 8, 17)
+	var thov: bool = _is_hover("tree", true)
+	UiKit.steel(self, tb)
+	UiKit.hazard_frame(self, tb, 2.0, Color.WHITE if thov else Color(0.7, 0.7, 0.7))
+	UiKit.center_big(self, "TECH TREE  T", tb.get_center().x, tb.position.y + 5, Gfx.FIRE[5] if thov else Gfx.UI_TEXT, Gfx.OUTLINE)
+	_hits.append([tb, "tree", true])
+	y += 21.0
+	# info box: hovered node, else the next thing worth doing
+	var info := Rect2(r.position.x + 4, y, r.size.x - 8, r.end.y - y - 4)
 	draw_rect(info, Color(0.08, 0.05, 0.06, 0.55))
-	var show_id: String = hover_id
-	if show_id == "":
-		for b in Tech.BRANCHES:
-			var nid: String = "%s_%d" % [b, Tech.branch_tier(v, b) + 1]
-			if Tech.has(nid) and Tech.can_buy(v, nid) and (show_id == "" or Tech.cost(nid) < Tech.cost(show_id)):
-				show_id = nid
-	if show_id == "":
-		UiFont.draw(self, "SAVE SCRAP FOR TECH", info.position + Vector2(4, 4), Gfx.UI_DIM)
-		UiFont.draw_small(self, "+1 INTEREST PER 10 HELD", info.position + Vector2(4, 13), Gfx.UI_DIM)
+	if hover_id == "":
+		UiFont.draw(self, "%d NODES: FORKS, FUSIONS" % Tech.count(), info.position + Vector2(3, 3), Gfx.UI_DIM)
+		UiFont.draw(self, "OPEN THE TREE TO PLAN", info.position + Vector2(3, 11), Gfx.UI_DIM)
+		UiFont.draw(self, "+1 INTEREST PER 10 HELD", info.position + Vector2(3, 19), Gfx.UI_DIM)
 		return
-	var td: Dictionary = Tech.def(show_id)
-	UiFont.draw_small(self, "%s %s" % [str(td["branch"]).to_upper(), "I".repeat(int(td["tier"]))], info.position + Vector2(4, 3), Gfx.UI_DIM)
-	UiFont.draw(self, UiKit.tech_name(show_id), info.position + Vector2(4, 10), Gfx.UI_TEXT)
-	var ly: float = info.position.y + 18.0
-	for ln in UiKit.tech_lines(show_id):
-		UiFont.draw_small(self, ln, Vector2(info.position.x + 4, ly), Gfx.FIRE[4])
+	UiFont.draw(self, UiKit.tech_name(hover_id), info.position + Vector2(3, 3), Gfx.UI_TEXT)
+	var ly: float = info.position.y + 11.0
+	var lines: PackedStringArray = UiKit.tech_lines(hover_id)
+	for i in mini(lines.size(), 2):
+		UiFont.draw(self, lines[i], Vector2(info.position.x + 3, ly), Gfx.FIRE[4])
 		ly += 7.0
-	var pre: String = Tech.prerequisite(show_id)
-	var status: String
-	var scol: Color = Gfx.UI_DIM
-	if v.tech.has(show_id):
-		status = "BUILT"
-	elif pre != "" and not v.tech.has(pre):
-		status = "NEEDS %s FIRST" % UiKit.tech_name(pre)
-		scol = Gfx.UI_BAD
-	elif v.scrap < Tech.cost(show_id):
-		status = "%d MORE SCRAP" % (Tech.cost(show_id) - v.scrap)
-		scol = Gfx.UI_BAD
-	else:
-		status = "CLICK TO BUILD - %d SCRAP" % Tech.cost(show_id)
-		scol = Gfx.HAZARD
-	for ln in UiFont.wrap_small(status, int(info.size.x) - 8):
-		UiFont.draw_small(self, ln, Vector2(info.position.x + 4, ly + 1), scol)
-		ly += 7.0
+	var status: String = "CLICK TO BUILD" if Tech.can_buy(v, hover_id) else "%d MORE SCRAP" % (Tech.cost(hover_id) - v.scrap)
+	UiFont.draw(self, status, Vector2(info.position.x + 3, ly + 1), Gfx.HAZARD if Tech.can_buy(v, hover_id) else Gfx.UI_BAD)
 
 
 func _draw_tech_node(v: SimVehicle, id: String, nr: Rect2) -> void:
 	var owned: bool = v.tech.has(id)
-	var pre: String = Tech.prerequisite(id)
-	var unlocked: bool = pre == "" or v.tech.has(pre)
+	var unlocked: bool = Tech.missing(v, id) == ""
 	var cost: int = Tech.cost(id)
 	var afford: bool = v.scrap >= cost
 	var hov: bool = _is_hover("tech", id)
@@ -570,12 +614,12 @@ func _draw_tech_node(v: SimVehicle, id: String, nr: Rect2) -> void:
 		draw_rect(nr, Gfx.OUTLINE)
 		draw_rect(nr.grow(-1.0), Gfx.BRASS[2])
 		draw_rect(Rect2(nr.position + Vector2.ONE, Vector2(nr.size.x - 2, 1)), Gfx.BRASS[3])
-		UiKit.center_text(self, "BUILT", nr.get_center().x, nr.position.y + 4, Gfx.INK)
+		UiKit.center_text(self, "BUILT", nr.get_center().x, nr.position.y + 5, Gfx.INK)
 		return
 	if not unlocked:
 		draw_rect(nr, Gfx.UI_DIM if hov else Gfx.OUTLINE)
 		draw_rect(nr.grow(-1.0), Gfx.STEEL[1])
-		UiKit.center_text(self, str(cost), nr.get_center().x, nr.position.y + 4, Gfx.STEEL[3])
+		UiKit.center_text(self, str(cost), nr.get_center().x, nr.position.y + 5, Gfx.STEEL[3])
 		return
 	UiKit.steel(self, nr, Color.WHITE if afford else Color(0.75, 0.7, 0.7))
 	if afford:
@@ -585,8 +629,8 @@ func _draw_tech_node(v: SimVehicle, id: String, nr: Rect2) -> void:
 	var txt := str(cost)
 	var tw: float = UiFont.width(txt) + 2.0 + 7.0
 	var tx: float = floorf(nr.get_center().x - tw / 2.0)
-	_scrap_pip(Vector2(tx, nr.position.y + 4))
-	UiFont.draw(self, txt, Vector2(tx + 9, nr.position.y + 4), Gfx.UI_TEXT if afford else Gfx.UI_BAD, Gfx.OUTLINE)
+	_scrap_pip(Vector2(tx, nr.position.y + 5))
+	UiFont.draw(self, txt, Vector2(tx + 9, nr.position.y + 5), Gfx.UI_TEXT if afford else Gfx.UI_BAD, Gfx.OUTLINE)
 
 
 ## Tiny 5x5 scrap marker (a nut) for prices.
@@ -897,8 +941,8 @@ func _draw_dossier(o: SimVehicle, r: Rect2, closable: bool) -> void:
 		var bx0: float = x0 + bi * tw
 		var tier: int = Tech.branch_tier(o, b)
 		UiFont.draw(self, b.left(3).to_upper(), Vector2(bx0, y), Gfx.UI_TEXT if tier > 0 else Gfx.STEEL[3], Gfx.UI_SHADOW)
-		UiKit.pips(self, Vector2(bx0 - 1, y + 8), tier, Tech.MAX_TIER, Gfx.BRASS[3])
-	y += 15.0
+		UiFont.draw(self, "%d/%d" % [tier, Tech.MAX_TIER], Vector2(bx0, y + 7), Gfx.BRASS[3] if tier > 0 else Gfx.STEEL[3], Gfx.UI_SHADOW)
+	y += 14.0
 	# doctrine on a sliver of CRT
 	var dr := Rect2(x0 - 1, y, xr - x0 + 2, 11)
 	draw_rect(dr, Gfx.STEEL[1])

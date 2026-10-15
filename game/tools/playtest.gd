@@ -15,12 +15,13 @@ extends SceneTree
 ## the screenshots to take; the shell script renders them with main.gd (--scenario=replay).
 
 const KIND_NAMES: PackedStringArray = ["mite", "boulder", "spitter"]
-const FX_PCT: PackedStringArray = ["speed", "turn", "scrap", "ram", "vulture", "dmg", "range", "rate"]
+const FX_PCT: PackedStringArray = ["speed", "turn", "scrap", "ram", "vulture", "dmg", "range", "rate", "creduce", "thorns", "luck"]
 const FX_LABELS := {
 	"hp": "max hp", "armor": "armor", "speed": "speed", "turn": "turn rate", "scrap": "scrap income",
 	"regen": "hp/s regen", "contact": "contact dmg/tick", "ram": "ram dmg", "vulture": "dmg vs weak targets",
 	"dmg": "weapon dmg", "range": "weapon range", "rate": "fire rate", "slots": "weapon slot",
-	"interest": "interest cap",
+	"interest": "interest cap", "creduce": "alien contact dmg ignored", "thorns": "thorns", "pierce": "pierce (all weapons)",
+	"reroll": "scrap off each reroll", "luck": "rare+ card offer weight", "fuel": "fuel (once)",
 }
 const SAMPLE_TICKS := 300  ## hp / enemy timeline resolution (10 s)
 const FRAME_FRACTIONS: Array = [0.2, 0.5, 0.85]
@@ -611,8 +612,12 @@ static func _fx_text(fx: Dictionary, per_level: bool) -> String:
 	var parts: PackedStringArray = []
 	for k: String in fx:
 		var amt: float = float(fx[k])
-		var shown: String = ("%+d%%" % roundi(amt * 100.0)) if k in FX_PCT else ("+" if amt >= 0.0 else "") + _num(amt)
-		parts.append("%s %s" % [shown, FX_LABELS.get(k, k)])
+		var base: String = k.get_slice("_", 0)
+		var kind: String = k.get_slice("_", 1)  # per-weapon keys: dmg_mg, pellets_shotgun, ...
+		var pct: bool = k in FX_PCT or (kind != "" and base in ["dmg", "rate", "range"])
+		var shown: String = ("%+d%%" % roundi(amt * 100.0)) if pct else ("+" if amt >= 0.0 else "") + _num(amt)
+		var label: String = FX_LABELS.get(k, "%s %s" % [kind, base] if kind != "" else k)
+		parts.append("%s %s" % [shown, label])
 	return ", ".join(parts) + (" per level" if per_level else "")
 
 
@@ -624,20 +629,20 @@ static func _num(x: float) -> String:
 
 func _tech_list(me: SimVehicle) -> Array:
 	var out: Array = []
-	for branch in Tech.BRANCHES:
-		var tier: int = Tech.branch_tier(me, branch)
-		for t in range(1, Tech.MAX_TIER + 1):
-			var id: String = "%s_%d" % [branch, t]
-			var d: Dictionary = Tech.def(id)
-			var status: String
-			if me.tech.has(id):
-				status = "owned"
-			elif t == tier + 1:
-				status = "affordable" if me.scrap >= Tech.cost(id) else "need %d more scrap" % (Tech.cost(id) - me.scrap)
-			else:
-				status = "locked (needs %s)" % Tech.prerequisite(id)
-			out.append({"id": id, "name": d["name"], "branch": branch, "tier": t, "cost": Tech.cost(id), "status": status,
-				"effect": _fx_text(d["fx"], false)})
+	for i in Tech.count():
+		var id: String = Tech.id_at(i)
+		var d: Dictionary = Tech.def(id)
+		var status: String
+		if me.tech.has(id):
+			status = "owned"
+		elif Tech.blocked_by(me, id) != "":
+			status = "excluded (took %s)" % Tech.blocked_by(me, id)
+		elif Tech.missing(me, id) != "":
+			status = "locked (needs %s)" % Tech.missing(me, id)
+		else:
+			status = "affordable" if me.scrap >= Tech.cost(id) else "need %d more scrap" % (Tech.cost(id) - me.scrap)
+		out.append({"id": id, "name": d["name"], "branch": d["branch"], "tier": d["tier"], "kind": d["kind"],
+			"cost": Tech.cost(id), "status": status, "effect": _fx_text(d["fx"], false)})
 	return out
 
 
@@ -812,9 +817,9 @@ func _summary(session: Dictionary, res: Dictionary, state: Dictionary, step: int
 				for o: Dictionary in state["offers"]:
 					var tag: String = "NEW" if int(o["owned_level"]) == 0 else "L%d->L%d" % [o["owned_level"], o["becomes_level"]]
 					L.append("  [%d] %s (%s, %s) %s: %s" % [o["index"], o["name"], o["category"], o["rarity"], tag, o["effect"]])
-			L.append("TECH (command {\"type\":\"buy_tech\",\"value\":id}); next tier per branch, later tiers locked:")
+			L.append("TECH (command {\"type\":\"buy_tech\",\"value\":id}); buyable now (spec nodes of one fork exclude each other; locked and excluded nodes hidden):")
 			for t: Dictionary in state["tech"]:
-				if t["status"] == "owned" or str(t["status"]).begins_with("locked"):
+				if t["status"] == "owned" or str(t["status"]).begins_with("locked") or str(t["status"]).begins_with("excluded"):
 					continue
 				L.append("  %s \"%s\" cost %d: %s  [%s]" % [t["id"], t["name"], t["cost"], t["effect"], t["status"]])
 			L.append("(ready is optional: the next round starts when the timer ends anyway. Doctrine: set_drive circle|kite|charge, set_target nearest|strongest|players_first.)")

@@ -56,31 +56,41 @@ const TECH_BALANCED: Array = [
 	"ballistics_1", "engineering_1", "electronics_1", "ballistics_2", "engineering_2", "salvage_1",
 	"electronics_2", "propulsion_1", "ballistics_3", "engineering_3", "electronics_3", "salvage_2",
 	"propulsion_2", "salvage_3", "propulsion_3",
+	"ballistics_heavy_shells", "electronics_relay", "fusion_smart_rounds", "ballistics_4", "engineering_4",
+	"engineering_drone", "electronics_4", "ballistics_5", "engineering_5", "electronics_5", "ballistics_6",
 ]
 const TECH_DAMAGE: Array = [
 	"ballistics_1", "electronics_1", "ballistics_2", "electronics_2", "ballistics_3", "electronics_3",
 	"engineering_1", "engineering_2", "engineering_3",
+	"electronics_relay", "fusion_smart_rounds", "ballistics_4", "ballistics_he_shells", "electronics_4",
+	"electronics_overclock", "ballistics_5", "electronics_5", "ballistics_6", "electronics_6",
 ]
 const TECH_TANK: Array = [
 	"engineering_1", "engineering_2", "engineering_3", "ballistics_1", "propulsion_1", "ballistics_2",
 	"salvage_1", "electronics_1",
+	"engineering_welder", "engineering_4", "engineering_reactive", "engineering_5", "engineering_6",
 ]
 const TECH_SPEED: Array = [
 	"propulsion_1", "propulsion_2", "propulsion_3", "engineering_1", "ballistics_1", "electronics_1",
 	"engineering_2",
+	"propulsion_drift", "propulsion_4", "propulsion_ghost", "fusion_war_rig", "propulsion_5", "propulsion_6",
 ]
 const TECH_RUSH: Array = [
 	"ballistics_1", "engineering_1", "propulsion_1", "electronics_1", "salvage_1",
 	"ballistics_2", "engineering_2", "propulsion_2", "electronics_2", "salvage_2",
 	"ballistics_3", "engineering_3", "propulsion_3", "electronics_3", "salvage_3",
+	"fusion_smart_rounds", "fusion_war_rig", "fusion_scrap_rounds", "fusion_workshop", "fusion_sensor_drive",
+	"ballistics_4", "engineering_4", "propulsion_4", "electronics_4", "salvage_4",
 ]
 const TECH_SAVER: Array = [
 	"salvage_1", "salvage_2", "salvage_3", "ballistics_1", "engineering_1", "ballistics_2",
 	"engineering_2", "electronics_1",
+	"salvage_loan_shark", "salvage_4", "salvage_5", "salvage_6",
 ]
 const TECH_HUNTER: Array = [
 	"ballistics_1", "electronics_1", "engineering_1", "ballistics_2", "propulsion_1", "engineering_2",
 	"electronics_2", "ballistics_3",
+	"electronics_hunter", "electronics_3", "fusion_smart_rounds", "ballistics_4", "electronics_4",
 ]
 
 var policy_name: String = ""
@@ -347,11 +357,9 @@ func _next_tech(world: SimWorld, v: SimVehicle) -> String:
 		if v.tech.has(id2):
 			continue
 		# strict order: the first unowned entry is the goal; save for it.
-		var goal: String = id2
-		var pre: String = Tech.prerequisite(goal)
-		while pre != "" and not v.tech.has(pre):
-			goal = pre
-			pre = Tech.prerequisite(goal)
+		if Tech.blocked_by(v, id2) != "":
+			continue  # an exclusive sibling was bought first: skip this entry
+		var goal: String = Tech.next_step(v, id2)
 		if Tech.can_buy(v, goal) and v.scrap - Tech.cost(goal) >= reserve:
 			return goal
 		return ""
