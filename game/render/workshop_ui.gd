@@ -7,7 +7,8 @@ extends Control
 ## Immediate-mode UI: _draw() lays everything out and records hit rects; clicks and keys go
 ## through activate(), which only ever sends commands through `send_command` (NetSession in play,
 ## the world directly in screenshot mode). All state comes from the local player's vehicle.
-## Keys: 1/2/3 pick, R reroll, Space ready, H apply the recap's doctrine hint.
+## Keys: 1/2/3 pick, R reroll, Space ready, H apply the recap's doctrine hint, P the rule editor
+## (DoctrineEditor, opened through `open_rules`).
 ##
 ## Information UI (playtest round 1 #2, #5, #10): a LAST ROUND recap strip under the header (what
 ## wrecked you, damage by source, earnings, fuel, a clickable doctrine hint), interest as
@@ -23,9 +24,11 @@ const COL_W := 146.0
 const RIGHT_X := 488.0
 const DRIVES: PackedStringArray = ["circle", "kite", "charge"]
 const TARGETS: PackedStringArray = ["nearest", "strongest", "players_first"]
-const TARGET_LABELS := {"nearest": "NEAREST", "strongest": "STRONGEST", "players_first": "PLAYERS 1ST"}
+const TARGET_LABELS := {"nearest": "NEAREST", "strongest": "STRONGEST", "players_first": "PLAYERS 1ST", "weakest": "WEAKEST",
+	"boulders": "BOULDERS", "spitters": "SPITTERS"}
 const DRIVE_HELP := {"circle": "ORBITS THE SWARM, GUNS OUT", "kite": "KEEPS ITS DISTANCE", "charge": "RAMS STRAIGHT IN"}
-const TARGET_HELP := {"nearest": "SHOOTS WHAT IS CLOSEST", "strongest": "FOCUSES THE BIG ONES", "players_first": "RIVAL RIGS BEFORE ALIENS"}
+const TARGET_HELP := {"nearest": "SHOOTS WHAT IS CLOSEST", "strongest": "FOCUSES THE BIG ONES", "players_first": "RIVAL RIGS BEFORE ALIENS",
+	"weakest": "FINISHES OFF THE WOUNDED", "boulders": "CRACKS BOULDERS FIRST", "spitters": "HUNTS SPITTERS FIRST"}
 const TOAST_SECS := 1.6
 const RECAP_X := 160.0
 const RECAP_Y := 40.0
@@ -38,6 +41,8 @@ var local_peer: int = 1
 var view: WorldView = null
 ## Callable(cmd: Dictionary): where commands go (NetSession.send_command or the world directly).
 var send_command: Callable = Callable()
+## Callable(scope: String): opens the rule editor (DoctrineEditor.open), set by WorldView.
+var open_rules: Callable = Callable()
 ## Screenshot mode: fixed pointer position instead of the real mouse (x < 0 = no pointer).
 var pointer_override: Vector2 = Vector2(-1, -1)
 var use_real_pointer: bool = true
@@ -136,7 +141,7 @@ func activate(action: String, arg: Variant) -> void:
 	var v: SimVehicle = _local()
 	if v == null or world.phase != SimWorld.PHASE_WORKSHOP:
 		return
-	if v.eliminated and action in ["pick", "reroll", "tech", "drive", "target", "ready", "hint"]:
+	if v.eliminated and action in ["pick", "reroll", "tech", "drive", "target", "ready", "hint", "rules"]:
 		return  # spectator: read-only
 	match action:
 		"hint":
@@ -187,6 +192,9 @@ func activate(action: String, arg: Variant) -> void:
 			_send({"type": "set_drive", "value": str(arg)})
 		"target":
 			_send({"type": "set_target", "value": str(arg)})
+		"rules":
+			if open_rules.is_valid():
+				open_rules.call(Doctrine.SCOPE_RIG)
 		"ready":
 			if not v.ready:
 				_send({"type": "ready"})
@@ -324,12 +332,16 @@ func _draw_terminal(v: SimVehicle) -> void:
 		x = _crt_chip(TARGET_LABELS[t], Vector2(x, y), v.doctrine["target"] == t, "target", t) + 3.0
 	y += 11.0
 	var help: String = DRIVE_HELP.get(str(v.doctrine["drive"]), "")
-	var help2: String = TARGET_HELP.get(str(v.doctrine["target"]), "")
 	if not _hover.is_empty() and (_hover[1] == "drive" or _hover[1] == "target"):
 		help = (DRIVE_HELP if _hover[1] == "drive" else TARGET_HELP).get(str(_hover[2]), "")
-		help2 = ""
-	PixelFont.draw(self, help, Vector2(x0, y), Gfx.CRT_TEXT)
-	PixelFont.draw(self, help2, Vector2(x0, y + 7), Gfx.CRT_TEXT)
+	elif _is_hover("rules"):
+		help = "IF-THEN RULES FOR THE RIG AND EACH GUN"
+	PixelFont.draw(self, PixelFont.wrap(help, int(scr.size.x) - 8)[0] if help != "" else "", Vector2(x0, y), Gfx.CRT_TEXT)
+	var n_rules: int = v.rules.size()
+	for k: String in v.weapon_doctrine:
+		n_rules += (v.weapon_doctrine[k]["rules"] as Array).size()
+	x = _crt_chip("PROGRAM RULES (P)", Vector2(x0, y + 8), not _is_hover("rules"), "rules", "rig") + 4.0
+	PixelFont.draw(self, "%d SET" % n_rules, Vector2(x, y + 8), Gfx.CRT_DIM)
 	# scanlines and a faint top glare
 	for sy in range(int(scr.position.y) + 1, int(scr.end.y), 2):
 		draw_rect(Rect2(scr.position.x, sy, scr.size.x, 1), Color(0, 0, 0, 0.22))

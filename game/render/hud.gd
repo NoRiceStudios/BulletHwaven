@@ -166,6 +166,12 @@ func _draw_doctrine(v: SimVehicle, vs: Vector2) -> void:
 	if v == null:
 		return
 	var doc := "DOCTRINE: %s  /  TARGET: %s" % [str(v.doctrine["drive"]), str(v.doctrine["target"]).replace("_", " ")]
+	var live := PackedStringArray()
+	for i in Doctrine.MAX_SLOTS:
+		if (v.rule_live >> i) & 1 == 1:
+			live.append(str(i + 1))
+	doc += "  /  RULE %s" % " ".join(live) if not live.is_empty() else ""
+	doc += "  /  P: PROGRAM"
 	var dw: float = PixelFont.width(doc) + 14.0
 	UiKit.plate(self, Rect2(6, vs.y - 22, dw, 16))
 	_panels.append(Rect2(6, vs.y - 22, dw, 16))

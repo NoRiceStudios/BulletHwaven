@@ -184,3 +184,42 @@ func test_rules_are_deterministic() -> void:
 			w.step()
 		sums.append(w.checksum())
 	assert_eq(sums[0], sums[1], "same seed, same rules, same world")
+
+
+func test_editor_edits_through_commands() -> void:
+	var w := _world()
+	var v: SimVehicle = w.vehicles[0]
+	Cards.grant(v, "cannon")
+	var ed := DoctrineEditor.new()
+	ed.world = w
+	ed.local_peer = 1
+	ed.send_command = func(cmd: Dictionary) -> void: w.apply_command(1, NetSession.validate_command(cmd))
+	ed.open("rig")
+	ed.activate("template", "swarm>20|drive:kite")
+	ed.activate("add_rule", null)
+	assert_eq(Doctrine.encode(v.rules), "swarm>20|drive:kite;hp<30|drive:flee")
+	ed.activate("up", 1)
+	ed.activate("inc", [0, 0])
+	ed.activate("op", [0, 0])
+	assert_eq(Doctrine.encode(v.rules), "hp>40|drive:flee;swarm>20|drive:kite", "reorder, step, flip")
+	ed.activate("add_rule", null)
+	assert_eq(v.rules.size(), 2, "slots full: nothing added")
+	ed.activate("action", 1)
+	ed.activate("menu_pick", "target:weakest")
+	ed.activate("add_cond", 1)
+	ed.activate("menu_pick", "t_player")
+	assert_eq(Doctrine.encode(v.rules), "hp>40|drive:flee;swarm>20&t_player=1|target:weakest")
+	ed.activate("cond", [1, 0])
+	ed.activate("menu_pick", "")
+	ed.activate("delete", 0)
+	assert_eq(Doctrine.encode(v.rules), "t_player=1|target:weakest", "remove condition, delete rule")
+	ed.activate("tab", "cannon")
+	assert_eq(ed.scope, "cannon")
+	ed.activate("weapon_target", "boulders")
+	ed.activate("template", "t_boulder=1|fire:hold")
+	assert_eq(Doctrine.fingerprint(v), "t_player=1|target:weakest#cannon:boulders:t_boulder=1|fire:hold")
+	ed.activate("tab", "flamer")
+	assert_eq(ed.scope, "rig", "a gun the rig does not own falls back to the rig tab")
+	assert_eq(DoctrineEditor.sentence(Doctrine.parse("hp<30&t_player=0|drive:flee", "rig")[0], "rig"),
+		"IF OWN HP IS BELOW 30% AND THE TARGET IS NOT A RIVAL: THE RIG FLEES.")
+	ed.free()

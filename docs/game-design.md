@@ -133,6 +133,13 @@ This answers R2 (agency). Inspired by the **Gambit system from Final Fantasy XII
   - `IF boss active → Kite at max range`
 - Doctrine can also be changed **during** the convoy phase. Attentive players gain an edge without it being required (idle-friendly).
 
+**As built (rule editor, after playtest feedback "behaviour must be programmable and set per weapon"):**
+- Rules exist for the **rig** (driving style and target) and for **every gun on its own**. Each gun has a base target (*follow the rig*, nearest, strongest, weakest, rivals first, boulders, spitters) and its own rule list, so a cannon can hunt the toughest alien while the MG clears mites around the rig.
+- A rule is `IF condition [AND condition [AND condition]] THEN action`. Conditions: own HP %, aliens near, rivals near, target distance, target HP %, target is a rival / boulder / spitter, PvP on, has a target. Rig actions: circle, kite, charge, **flee**, **hold position**, or a target mode. Gun actions: a target mode, or **hold fire** / fire at will (for example "hold fire on boulders" to save the cannon for big aliens).
+- Rules run top to bottom; the first matching rule of each kind wins (driving and target are separate kinds), otherwise the base setting applies. This keeps lists short and readable like FF XII Gambits.
+- Slots: 2 per list to start, +1 per Electronics tier (so 5 with the full branch); rules beyond the slots stay saved but locked.
+- The editor (key **P**, or PROGRAM RULES on the workshop's nav-comp) works in the workshop and during combat. Each rule is also shown as a plain sentence, a lamp lights while a rule matches, and quick-add templates cover the common cases (retreat below 30% HP, kite when swarmed, save ammo on boulders, ...). The HUD shows which rig rules are firing.
+
 **Layer 3: active abilities (1–2 slots, optional)**
 - Nitro, EMP, smoke, oil slick, overcharge. They have cooldowns and can be set to **auto-cast** (idle players) or triggered by hand (active players get a slight advantage through timing).
 
