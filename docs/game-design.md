@@ -337,6 +337,7 @@ The aliens look like **plausible desert ecology**, not like classic sci-fi monst
 
 ### 11e. Environment and atmosphere
 - **Biomes** (section 7d), each with its own colour accent: Salt Flats (bright, almost white), Dune Sea (warm orange), Canyon (red-brown, strong shadows), Glass Crater (reflections, glittering), Wreck Field (rusty metal, scrap), Spore Basin (the only biome with alien-coloured vegetation).
+- **Arena size:** an arena is 4 x 4 screens (2560x1440 px at the 640x360 view), so convoys have room to manoeuvre and spread out (playtest round 3: 2 x 2 screens felt small and cramped). Aliens still come in from just off-screen around the rigs, so a bigger arena means more room, not emptier fights. Landmarks (colony ship debris, giant ribs, rock clusters, old tyre tracks) are scattered, never tiled, so every part of the arena reads differently.
 - **Persistent traces:** tyre tracks, wrecks, craters and goo stay on the map for the whole match. Late in the match, the map tells the story of the fights.
 - **Day/night cycle:** night rounds with dynamic headlights, muzzle flashes as light sources, and glowing aliens. These are the planned "screenshot moments".
 - **Weather:** heat shimmer, sandstorms (screen-filling dust particles), spore fog.

@@ -16,7 +16,7 @@ extends SceneTree
 ## survivorship bias of comparing final builds).
 
 const LANDMARK := 5
-const FFA_POS: Array = [Vector2(400, 260), Vector2(880, 260), Vector2(880, 460), Vector2(400, 460)]
+const FFA_POS: Array = [Vector2(-240, -100), Vector2(240, -100), Vector2(240, 100), Vector2(-240, 100)]  ## offsets from the arena centre
 const KIND_NAMES: PackedStringArray = ["mite", "boulder", "spitter"]
 const FUEL_COLS: Array = [2, 4, 6, 8, 10, 12, 15, 20]
 
@@ -106,7 +106,7 @@ func _play(kind: String, p_seed: int, pols: Array) -> Dictionary:
 	var last_scrap: Array[int] = []
 	var last_fuel: Array[int] = []
 	for i in n:
-		var pos: Vector2 = SimWorld.ARENA.get_center() if n == 1 else (FFA_POS[i] as Vector2)
+		var pos: Vector2 = SimWorld.ARENA.get_center() + (Vector2.ZERO if n == 1 else (FFA_POS[i] as Vector2))
 		var v: SimVehicle = w.add_vehicle(i + 1, pos)
 		var bot: BotPolicy = BotPolicy.create(str(pols[i]), p_seed * 31 + i)
 		bots.append(bot)

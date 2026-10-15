@@ -5,7 +5,12 @@ extends RefCounted
 
 const TICK_RATE := 30
 const DT := 1.0 / 30.0
-const ARENA := Rect2(0, 0, 1280, 720)
+const ARENA := Rect2(0, 0, 2560, 1440)
+## Start / respawn slots: 8 points on this ellipse around the arena centre (NetSession uses it too).
+const SPAWN_ELLIPSE := Vector2(720.0, 400.0)
+## Aliens spawn on the edge of the vehicles' bounding box grown by this much (clipped to the arena),
+## so they always arrive from off-screen at the same distance, however big the arena is.
+const SPAWN_REACH := Vector2(640.0, 360.0)
 
 const MITE := 0
 const BOULDER := 1
@@ -61,7 +66,7 @@ const SPAWN_RATE_START := 1.5  # enemies / s
 const SPAWN_RATE_RAMP := 0.5  # added every SPAWN_RAMP_INTERVAL seconds of the combat phase
 const SPAWN_RAMP_INTERVAL := 10.0
 const SPAWN_RAMP_END_BEFORE := 15.0  # the in-round ramp stops this many seconds before the round ends (flat finish)
-const BOULDER_CHANCE := 0.1
+const BOULDER_CHANCE := 0.04  # round 1; reaches the old 0.4 cap in the same round (13) as before
 const SPAWN_INSET := 8.0
 # Alive caps: a spawn that would exceed the cap becomes a mite, so the field never snowballs.
 const BOULDER_CAP_BASE := 8
@@ -109,9 +114,14 @@ const RETREAT_EVENT_CAP := 150  # at most this many "retreat" events per round e
 const HP_SCALE_PER_ROUND := 0.20
 const HP_SCALE_QUAD := 0.0125  # late-game term: the hive outgrows a linear power curve
 const SPAWN_SCALE_PER_ROUND := 0.15
-const BOULDER_CHANCE_PER_ROUND := 0.025
+const BOULDER_CHANCE_PER_ROUND := 0.03
 const BOULDER_CHANCE_MAX := 0.4
 const DAMAGE_SCALE_PER_ROUND := 0.03
+# Early-round easing (playtest: the first waves were too strong). Spawn rate and enemy damage start at this
+# share in round 1 and rise linearly to full strength in round EASE_END_ROUND; later rounds are unchanged.
+const EASE_END_ROUND := 7
+const SPAWN_EASE_START := 0.55
+const DAMAGE_EASE_START := 0.65
 
 # Armour: flat reduction per hit with a floor; per touching enemy per tick it counts for much less.
 const ARMOR_MIN_FRACTION := 0.25
@@ -388,7 +398,13 @@ static func enemy_hp_mult(r: int) -> float:
 
 
 static func spawn_rate_mult(r: int) -> float:
-	return 1.0 + SPAWN_SCALE_PER_ROUND * float(maxi(r - 1, 0))
+	return (1.0 + SPAWN_SCALE_PER_ROUND * float(maxi(r - 1, 0))) * early_ease(r, SPAWN_EASE_START)
+
+
+## `start` in round 1, rising linearly to 1.0 in round EASE_END_ROUND and after.
+static func early_ease(r: int, start: float) -> float:
+	var t: float = clampf(float(maxi(r, 1) - 1) / float(EASE_END_ROUND - 1), 0.0, 1.0)
+	return lerpf(start, 1.0, t)
 
 
 static func boulder_chance(r: int) -> float:
@@ -413,7 +429,7 @@ static func spitter_cap(r: int) -> int:
 
 
 static func enemy_damage_mult(r: int) -> float:
-	return 1.0 + DAMAGE_SCALE_PER_ROUND * float(maxi(r - 1, 0))
+	return (1.0 + DAMAGE_SCALE_PER_ROUND * float(maxi(r - 1, 0))) * early_ease(r, DAMAGE_EASE_START)
 
 
 ## Full hp of an enemy of `kind` spawned in round `r` (snapshots encode hp relative to this).
@@ -675,7 +691,7 @@ func _find_spawn_spot(v: SimVehicle) -> Vector2:
 	var best_d: float = -1.0
 	for k in 8:
 		var a: float = float((v.id + k) % 8) * TAU / 8.0
-		var p: Vector2 = c + Vector2(cos(a) * 480.0, sin(a) * 240.0)
+		var p: Vector2 = c + Vector2(cos(a) * SPAWN_ELLIPSE.x, sin(a) * SPAWN_ELLIPSE.y)
 		var nearest: float = INF
 		for o in vehicles:
 			if o != v and o.alive:
@@ -1036,6 +1052,7 @@ func _spawn_tick() -> void:
 		_spitter_gap -= 1
 	if _spawn_accum < 1.0:
 		return
+	var area: Rect2 = spawn_area()
 	var n_boulder: int = 0
 	var n_spitter: int = 0
 	for i in enemy_count:
@@ -1067,19 +1084,37 @@ func _spawn_tick() -> void:
 				if side == _last_spitter_side:  # spread: never two spitters in a row from the same edge
 					side = (side + 1 + rng.randi() % 3) % 4
 				_last_spitter_side = side
-		spawn_enemy(kind, _edge_pos(side, t))
+		spawn_enemy(kind, _edge_pos(area, side, t))
 
 
-## Point on arena edge `side` (0 top, 1 bottom, 2 left, 3 right) at fraction `t` along it.
-static func _edge_pos(side: int, t: float) -> Vector2:
+## Where aliens spawn: the bounding box of the alive vehicles grown by SPAWN_REACH, clipped to the
+## arena (the whole arena when no vehicle is alive).
+func spawn_area() -> Rect2:
+	var box := Rect2()
+	var any: bool = false
+	for v in vehicles:
+		if not v.alive:
+			continue
+		if any:
+			box = box.expand(v.pos)
+		else:
+			box = Rect2(v.pos, Vector2.ZERO)
+			any = true
+	if not any:
+		return ARENA
+	return box.grow_individual(SPAWN_REACH.x, SPAWN_REACH.y, SPAWN_REACH.x, SPAWN_REACH.y).intersection(ARENA)
+
+
+## Point on edge `side` (0 top, 1 bottom, 2 left, 3 right) of `area` at fraction `t` along it.
+static func _edge_pos(area: Rect2, side: int, t: float) -> Vector2:
 	match side:
 		0:
-			return Vector2(ARENA.position.x + t * ARENA.size.x, ARENA.position.y + SPAWN_INSET)
+			return Vector2(area.position.x + t * area.size.x, area.position.y + SPAWN_INSET)
 		1:
-			return Vector2(ARENA.position.x + t * ARENA.size.x, ARENA.end.y - SPAWN_INSET)
+			return Vector2(area.position.x + t * area.size.x, area.end.y - SPAWN_INSET)
 		2:
-			return Vector2(ARENA.position.x + SPAWN_INSET, ARENA.position.y + t * ARENA.size.y)
-	return Vector2(ARENA.end.x - SPAWN_INSET, ARENA.position.y + t * ARENA.size.y)
+			return Vector2(area.position.x + SPAWN_INSET, area.position.y + t * area.size.y)
+	return Vector2(area.end.x - SPAWN_INSET, area.position.y + t * area.size.y)
 
 
 # ---------------------------------------------------------------- vehicles

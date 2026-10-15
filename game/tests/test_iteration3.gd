@@ -61,7 +61,7 @@ func test_boulder_and_spitter_alive_caps() -> void:
 			if w.enemy_kind[k] == SimWorld.SPITTER:
 				spit_ticks.append(w.tick)
 				var p: Vector2 = w.enemy_pos[k]
-				spit_sides.append(0 if p.y < 20.0 else (1 if p.y > 700.0 else (2 if p.x < 20.0 else 3)))
+				spit_sides.append(0 if p.y < 20.0 else (1 if p.y > SimWorld.ARENA.end.y - 20.0 else (2 if p.x < 20.0 else 3)))
 	var nb: int = 0
 	var ns: int = 0
 	for k in w.enemy_count:
