@@ -46,6 +46,7 @@ var minimap: Minimap
 var _hud_layer: CanvasLayer
 var workshop: WorkshopUi
 var game_over: GameOverUi
+var rules: DoctrineEditor  ## the rule editor (P), on top of the workshop
 var _cam_lift: float = 0.0
 var _shake: float = 0.0  ## 0..1, screen shake from rigs blowing up (decays; never in screenshot mode)
 var _shake_t: float = 0.0
@@ -165,6 +166,12 @@ func _ready() -> void:
 	game_over = GameOverUi.new()
 	game_over.view = self
 	hud_layer.add_child(game_over)
+	rules = DoctrineEditor.new()
+	rules.send_command = func(cmd: Dictionary) -> void:
+		if workshop.send_command.is_valid():
+			workshop.send_command.call(cmd)
+	hud_layer.add_child(rules)
+	workshop.open_rules = rules.open
 
 
 ## Shows `w` from the point of view of `peer` (camera, HUD). Clears all marks of a previous world.
@@ -197,6 +204,9 @@ func set_world(w: SimWorld, peer: int) -> void:
 	workshop.local_peer = peer
 	game_over.world = w
 	game_over.local_peer = peer
+	rules.world = w
+	rules.local_peer = peer
+	rules.close()
 
 
 ## Snapshot of one tick for prime(): events plus vehicle poses (for tyre tracks).

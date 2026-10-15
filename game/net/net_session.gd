@@ -35,7 +35,7 @@ const MAX_RAW_NAME := 64  ## longer raw names are junk and rejected; shorter one
 ## Allow-list of client commands with a fixed set of string values: type -> permitted values.
 const COMMANDS := {
 	"set_drive": ["circle", "kite", "charge"],
-	"set_target": ["nearest", "strongest", "players_first"],
+	"set_target": Doctrine.RIG_TARGETS,
 }
 ## Commands without a value (any "value" key is dropped).
 const VALUELESS_COMMANDS: PackedStringArray = ["reroll", "ready"]
@@ -274,7 +274,8 @@ func send_command(cmd: Dictionary) -> void:
 
 ## Returns a sanitised copy ({"type"} or {"type", "value"}) if `cmd` is an allowed command, else {}.
 ## pick_card takes an integral number 0..2 (an int or a whole float, since JSON / RPC may deliver
-## either; returned as int); buy_tech takes a known tech id; reroll and ready take no value.
+## either; returned as int); buy_tech takes a known tech id; reroll and ready take no value;
+## set_rules / set_weapon_target take a "scope" and are re-encoded in canonical form (Doctrine).
 static func validate_command(cmd: Variant) -> Dictionary:
 	if typeof(cmd) != TYPE_DICTIONARY:
 		return {}
@@ -300,6 +301,22 @@ static func validate_command(cmd: Variant) -> Dictionary:
 		if typeof(v) != TYPE_BOOL:
 			return {}
 		return {"type": type_s, "value": v}
+	if type_s == "set_rules" or type_s == "set_weapon_target":
+		# {"scope": "rig" | weapon kind, "value": Doctrine text form | weapon target mode}
+		var scope: Variant = d.get("scope")
+		if typeof(scope) != TYPE_STRING or typeof(v) != TYPE_STRING:
+			return {}
+		var scope_s: String = scope
+		if type_s == "set_weapon_target":
+			if not Doctrine.is_weapon_scope(scope_s) or not Doctrine.WEAPON_TARGETS.has(String(v)):
+				return {}
+			return {"type": type_s, "scope": scope_s, "value": String(v)}
+		if scope_s != Doctrine.SCOPE_RIG and not Doctrine.is_weapon_scope(scope_s):
+			return {}
+		var parsed: Variant = Doctrine.parse(String(v), scope_s)
+		if parsed == null:
+			return {}
+		return {"type": type_s, "scope": scope_s, "value": Doctrine.encode(parsed)}
 	if type_s == "pick_card":
 		var idx: int = -1
 		if typeof(v) == TYPE_INT:
@@ -322,7 +339,7 @@ static func validate_command(cmd: Variant) -> Dictionary:
 		return {"type": type_s, "value": value_s}
 	if not COMMANDS.has(type_s):
 		return {}
-	var allowed: Array = COMMANDS[type_s]
+	var allowed: Variant = COMMANDS[type_s]
 	if not allowed.has(value_s):
 		return {}
 	return {"type": type_s, "value": value_s}

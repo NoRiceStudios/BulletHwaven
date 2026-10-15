@@ -23,8 +23,15 @@ var alive: bool = true
 var scrap: int = 0
 var kills: int = 0
 var doctrine: Dictionary = {"drive": "circle", "target": "nearest"}
+## Programmable behaviour (Doctrine, design doc section 6 layer 2): the rig's IF-THEN rules and, per
+## weapon kind, {"target": base target mode ("follow" = the rig's target), "rules": Array}. Kept
+## across card changes; rules beyond Doctrine.slots() are stored but not run.
+var rules: Array = []
+var weapon_doctrine: Dictionary = {}
 ## Each: {"kind", "damage", "range", "cooldown_ticks", "cooldown", "aim", "pellets", "spread",
-## "pierce", "splash", "speed"} (see Cards.WEAPONS). Rebuilt from the weapon cards by Cards.recompute().
+## "pierce", "splash", "speed"} (see Cards.WEAPONS), plus host-side scratch from the weapon's own
+## doctrine (VehicleAI.update_weapon_target: "tk", "ti", "tid", "tp", "tv", "tmode") and "live", the
+## mask of its matching rules (synced). Rebuilt from the weapon cards by Cards.recompute().
 var weapons: Array[Dictionary] = []
 
 # Round loop state (docs/architecture.md, "Round loop contract").
@@ -70,6 +77,10 @@ var target_id: int = -1  ## stable enemy id (kind 1) or vehicle id (kind 2)
 var target_pos: Vector2 = Vector2.ZERO
 var target_vel: Vector2 = Vector2.ZERO  ## px/s
 var orbit_dir: float = 1.0
+var eff_drive: String = "circle"  ## doctrine after the rules ran this tick (Doctrine.apply_rig)
+var eff_target: String = "nearest"
+var acquired_mode: String = ""  ## eff_target the current target was picked with (a rule switch retargets at once)
+var rule_live: int = 0  ## bit i: rig rule i matched this tick (synced, for the rule editor)
 var retaliate_id: int = -1  ## vehicle id of the last player that hurt this one (return fire), -1 = none
 var retaliate_ticks: int = 0  ## ticks left for the return-fire memory
 var ram_damage: float = 0.0  ## per-tick damage dealt to touching enemies/vehicles ("charge")

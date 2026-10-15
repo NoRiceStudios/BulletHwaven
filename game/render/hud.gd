@@ -191,14 +191,23 @@ func _draw_doctrine(v: SimVehicle, vs: Vector2) -> void:
 		return
 	var drive: String = str(v.doctrine["drive"]).to_upper()
 	var target: String = str(v.doctrine["target"]).replace("_", " ").to_upper()
-	var dw: float = UiFont.width_small("DRIVE ") + UiFont.width(drive) + UiFont.width_small("    TARGET ") + UiFont.width(target) + 16.0
+	var live := PackedStringArray()
+	for i in Doctrine.MAX_SLOTS:
+		if (v.rule_live >> i) & 1 == 1:
+			live.append(str(i + 1))
+	var rules: String = " ".join(live) if not live.is_empty() else "-"
+	var dw: float = UiFont.width_small("DRIVE ") + UiFont.width(drive) + UiFont.width_small("    TARGET ") + UiFont.width(target) \
+		+ UiFont.width_small("    RULE ") + UiFont.width(rules) + UiFont.width_small("    P: PROGRAM") + 16.0
 	var r := Rect2(6, vs.y - 23, dw, 17)
 	UiKit.plate(self, r)
 	_panels.append(r)
 	var x: float = UiFont.draw_small(self, "DRIVE ", Vector2(14, vs.y - 17), Gfx.UI_DIM, Gfx.UI_SHADOW)
 	x = UiFont.draw(self, drive, Vector2(x, vs.y - 17), Gfx.CRT_TEXT, Gfx.UI_SHADOW)
 	x = UiFont.draw_small(self, "    TARGET ", Vector2(x, vs.y - 17), Gfx.UI_DIM, Gfx.UI_SHADOW)
-	UiFont.draw(self, target, Vector2(x, vs.y - 17), Gfx.CRT_TEXT, Gfx.UI_SHADOW)
+	x = UiFont.draw(self, target, Vector2(x, vs.y - 17), Gfx.CRT_TEXT, Gfx.UI_SHADOW)
+	x = UiFont.draw_small(self, "    RULE ", Vector2(x, vs.y - 17), Gfx.UI_DIM, Gfx.UI_SHADOW)
+	x = UiFont.draw(self, rules, Vector2(x, vs.y - 17), Gfx.CRT_HI if not live.is_empty() else Gfx.UI_DIM, Gfx.UI_SHADOW)
+	UiFont.draw_small(self, "    P: PROGRAM", Vector2(x, vs.y - 17), Gfx.UI_DIM, Gfx.UI_SHADOW)
 
 
 # ---------------------------------------------------------------- overlays

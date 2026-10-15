@@ -209,8 +209,10 @@ static func _check_command(c: Variant) -> String:
 		return "buy_tech needs a known tech id, got '%s'" % str(d.get("value", ""))
 	if t == "set_drive" and not str(d.get("value", "")) in ["circle", "kite", "charge"]:
 		return "set_drive value must be circle|kite|charge"
-	if t == "set_target" and not str(d.get("value", "")) in ["nearest", "strongest", "players_first"]:
-		return "set_target value must be nearest|strongest|players_first"
+	if t == "set_target" and not str(d.get("value", "")) in Doctrine.RIG_TARGETS:
+		return "set_target value must be %s" % "|".join(Doctrine.RIG_TARGETS)
+	if (t == "set_rules" or t == "set_weapon_target") and NetSession.validate_command(d).is_empty():
+		return "%s needs a scope (rig or a weapon kind) and a valid value (rules like \"hp<30|drive:flee\", see sim/doctrine.gd)" % t
 	return ""
 
 
@@ -553,7 +555,7 @@ func _vehicle_dict(w: SimWorld, v: SimVehicle, full: bool) -> Dictionary:
 	var d: Dictionary = {
 		"name": v.player_name, "color_index": v.color_index, "hp": roundi(v.hp), "max_hp": roundi(v.max_hp),
 		"fuel": v.fuel, "kills": v.kills, "alive": v.alive, "eliminated": v.eliminated,
-		"weapons": _weapon_list(v), "doctrine": v.doctrine.duplicate(),
+		"weapons": _weapon_list(v), "doctrine": v.doctrine.duplicate(), "rules": Doctrine.fingerprint(v),
 	}
 	if "leader_peer" in w:
 		d["is_leader"] = int(w.get("leader_peer")) == v.peer_id
@@ -779,6 +781,8 @@ func _summary(session: Dictionary, res: Dictionary, state: Dictionary, step: int
 		flags += "  [LEADER: bounty on you]"
 	L.append("YOU %s (colour %d): hp %d/%d  fuel %d  scrap %d  kills %d%s" % [me.player_name, me.color_index, you["hp"], you["max_hp"], me.fuel, me.scrap, me.kills, flags])
 	L.append("DOCTRINE: drive=%s target=%s" % [me.doctrine["drive"], me.doctrine["target"]])
+	if Doctrine.fingerprint(me) != "":
+		L.append("RULES (%d slots per list): %s" % [Doctrine.slots(me), Doctrine.fingerprint(me)])
 	var cards: PackedStringArray = []
 	for id: String in me.cards:
 		cards.append("%s L%d [%s]" % [Cards.def(id).get("name", id), int(me.cards[id]), Cards.def(id).get("category", "?")])
@@ -822,7 +826,7 @@ func _summary(session: Dictionary, res: Dictionary, state: Dictionary, step: int
 				if t["status"] == "owned" or str(t["status"]).begins_with("locked") or str(t["status"]).begins_with("excluded"):
 					continue
 				L.append("  %s \"%s\" cost %d: %s  [%s]" % [t["id"], t["name"], t["cost"], t["effect"], t["status"]])
-			L.append("(ready is optional: the next round starts when the timer ends anyway. Doctrine: set_drive circle|kite|charge, set_target nearest|strongest|players_first.)")
+			L.append("(ready is optional: the next round starts when the timer ends anyway. Doctrine: set_drive circle|kite|charge, set_target nearest|strongest|weakest|players_first|boulders|spitters, set_rules {scope: rig|<gun>, value: \"hp<30|drive:flee;...\"}, set_weapon_target {scope: <gun>, value: follow|nearest|...}.)")
 
 	var orders: Dictionary = state["orders_applied"]
 	if not orders.is_empty():

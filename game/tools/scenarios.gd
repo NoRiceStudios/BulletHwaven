@@ -104,6 +104,8 @@ static func build(name: String, p_seed: int) -> SimWorld:
 			return _skirmish(p_seed)
 		"rematch", "waiting":
 			return build("gameover_mp", p_seed)
+		"rules", "rules_weapon":
+			return _programmed(p_seed)
 		"rig_growth":
 			return _rig_growth(p_seed)
 		"late_round":
@@ -174,6 +176,10 @@ static func ui_state(name: String) -> Dictionary:
 				"info": "HOSTING ON PORT 24680 - FRIENDS FIND YOU UNDER JOIN LAN GAME"}
 		"pause":
 			return {"screen": "pause", "solo": false}
+		"rules":
+			return {"rules": "rig"}
+		"rules_weapon":
+			return {"rules": "cannon"}
 		"rematch", "awards":
 			return {"game_over": "host"}
 		"waiting":
@@ -407,7 +413,7 @@ static func _scatter(w: SimWorld, n: int, boulder_p: float, spitter_p: float, mi
 ## Same ring positions as NetSession.spawn_position() (duplicated so tools never depend on net/).
 
 const REPLAY_DEFAULT_OPPONENTS: PackedStringArray = ["balanced", "pvp_hunter", "random"]
-const REPLAY_COMMANDS: PackedStringArray = ["pick_card", "reroll", "buy_tech", "ready", "set_drive", "set_target"]
+const REPLAY_COMMANDS: PackedStringArray = ["pick_card", "reroll", "buy_tech", "ready", "set_drive", "set_target", "set_rules", "set_weapon_target"]
 
 
 static func replay_spawn_position(slot: int) -> Vector2:
@@ -505,6 +511,7 @@ static func replay_apply(w: SimWorld, v: SimVehicle, cmd: Dictionary) -> String:
 		return "%s -> IGNORED (you are eliminated)" % label
 	var old_offers: Array[String] = v.offers.duplicate()
 	var old_doc: Dictionary = v.doctrine.duplicate()
+	var old_prog: String = Doctrine.fingerprint(v)
 	w.apply_command(v.peer_id, cmd)
 	match type:
 		"pick_card":
@@ -544,6 +551,12 @@ static func replay_apply(w: SimWorld, v: SimVehicle, cmd: Dictionary) -> String:
 			if str(v.doctrine[key]) == str(val):
 				return "%s -> ok (unchanged)" % label
 			return "%s -> IGNORED (invalid value)" % label
+		"set_rules", "set_weapon_target":
+			if Doctrine.fingerprint(v) != old_prog:
+				return "%s -> ok" % label
+			if NetSession.validate_command(cmd).is_empty():
+				return "%s -> IGNORED (invalid scope or rule text)" % label
+			return "%s -> ok (unchanged)" % label
 	return "%s -> IGNORED (unknown command)" % label
 
 
@@ -675,3 +688,21 @@ static func _stage_awards(w: SimWorld) -> void:
 			_knock_out(v)
 	w.phase = SimWorld.PHASE_GAME_OVER
 	w.winner_peer = w.vehicles[1].peer_id
+
+
+## The rule editor (render/doctrine_editor.gd) over a skirmish: a rig with three guns and rules in
+## several lists, some of them matching (lit lamps).
+static func _programmed(p_seed: int) -> SimWorld:
+	var w: SimWorld = _skirmish(p_seed)
+	var me: SimVehicle = w.vehicles[0]
+	Cards.grant(me, "cannon")
+	me.tech.append("electronics_1")
+	Cards.recompute(me)
+	for cmd: Dictionary in [
+		{"type": "set_rules", "scope": "rig", "value": "hp<30|drive:flee;swarm>10&t_dist<150|drive:kite;pvp=1&rivals>0|target:players_first"},
+		{"type": "set_weapon_target", "scope": "cannon", "value": "strongest"},
+		{"type": "set_rules", "scope": "cannon", "value": "t_boulder=1&t_hp<20|fire:hold;has_target=1|target:spitters"},
+		{"type": "set_rules", "scope": "mg", "value": "t_dist>200|fire:hold"},
+	]:
+		w.apply_command(me.peer_id, cmd)
+	return w

@@ -13,6 +13,7 @@ extends Node
 ##                         through the visible UI's own click path (menu or workshop).
 ##   --scenario=replay --session=<dir> --frames=<frames.json>   (playtest harness, scripts/playtest.sh)
 ## Keys (combat): 1/2/3 drive circle/kite/charge, Q/W/E target nearest/strongest/players_first,
+## P the rule editor (render/doctrine_editor.gd, any phase),
 ## Esc the pause / menu overlay (solo pauses the sim). Workshop and game over keys are handled by
 ## render/workshop_ui.gd and render/game_over_ui.gd, menu keys by render/menu_ui.gd.
 ##
@@ -493,7 +494,11 @@ func _run_shot(args: Dictionary) -> void:
 	_menu.use_real_pointer = false
 	var hover: Vector2 = _parse_point(args.get("hover", ""), Vector2(-1, -1))
 	_view.workshop.pointer_override = hover
+	_view.rules.use_real_pointer = false
+	_view.rules.pointer_override = hover
 	_menu.pointer_override = hover
+	if ui.has("rules"):
+		_view.rules.open(str(ui["rules"]))
 	for i in 4:
 		await get_tree().process_frame
 	if args.has("click"):
@@ -502,6 +507,8 @@ func _run_shot(args: Dictionary) -> void:
 			var ok: bool = false
 			if _menu.visible:
 				ok = _menu.click_at(p)
+			elif _view.rules.is_open:
+				ok = _view.rules.click_at(p)
 			elif _view.workshop.visible:
 				ok = _view.workshop.click_at(p)
 			print("SHOT_CLICK %s -> %s" % [spec, "hit" if ok else "miss"])

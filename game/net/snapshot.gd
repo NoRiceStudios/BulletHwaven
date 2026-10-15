@@ -5,8 +5,10 @@ extends RefCounted
 ## Layout (little endian):
 ##   header   37 B  version, flags, tick, next_enemy_id, counts, enemy id base,
 ##                   phase, round, phase_ticks_left, winner_peer, leader_peer, pvp_grace_ticks, fuel_drain
-##   vehicles variable (about 160 B each: doctrine strings, weapons, fuel / flags, offers, cards, tech,
-##                   player name and colour index)
+##   vehicles variable (about 160 B each: doctrine strings, weapons, doctrine rules, fuel / flags,
+##                   offers, cards, tech, player name and colour index). Rules are binary: u8 count,
+##                   per rule u8 action (Doctrine.ACTIONS index), u8 conditions, per condition
+##                   u8 id (Doctrine.COND_IDS), u8 op (Doctrine.OPS), u16 value
 ##   events   7 B each  type, owner, kind, pos (u16 x2, 1/16 px, offset by POS_ORIGIN); the type byte's
 ##                      top bit (EVENT_EXTRA_BIT) adds 2 signed bytes: kill = victim, weapon;
 ##                      vehicle_destroyed = cause (SimWorld.SRC_*), killer
@@ -19,7 +21,7 @@ extends RefCounted
 ## current round, SimWorld.enemy_max_hp). Card and tech ids are table indices (Cards.DEFS / Tech.DEFS).
 ## Projectile pierce / splash are not sent: the client world is passive.
 
-const VERSION := 6  # 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
+const VERSION := 7  # 7: doctrine rules (rig + per weapon); 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
 const FLAG_WIDE_IDS := 1  ## enemy ids spread over more than 65535: ids are sent as u32 deltas from 0
 const FLAG_STATS := 2  ## vehicles carry round_stats and match_stats (sent outside combat only)
 const EVENT_EXTRA_BIT := 0x80
@@ -367,7 +369,20 @@ static func _put_vehicle(sp: StreamPeerBuffer, v: SimVehicle, with_stats: bool =
 		sp.put_u8(clampi(int(w.get("pierce", 0)), 0, 255))
 		sp.put_float(float(w.get("splash", 0.0)))
 		sp.put_float(float(w.get("speed", 0.0)))
+		sp.put_u8(clampi(int(w.get("live", 0)), 0, 255))
 		wn += 1
+	sp.put_u8(clampi(v.rule_live, 0, 255))
+	_put_rules(sp, v.rules)
+	var kinds: Array = []
+	for k: String in v.weapon_doctrine:
+		if Doctrine.is_weapon_scope(k) and kinds.size() < 255:
+			kinds.append(k)
+	sp.put_u8(kinds.size())
+	for k: String in kinds:
+		var wd: Dictionary = v.weapon_doctrine[k]
+		_put_str(sp, k)
+		sp.put_u8(maxi(Doctrine.WEAPON_TARGETS.find(str(wd["target"])), 0))
+		_put_rules(sp, wd["rules"])
 	sp.put_u16(clampi(v.fuel, 0, 65535))
 	sp.put_u16(clampi(v.respawn_ticks, 0, 65535))
 	sp.put_u8((1 if v.eliminated else 0) | (2 if v.ready else 0) | (4 if v.picked else 0))
@@ -547,12 +562,26 @@ static func _get_vehicle(r: _Reader, with_stats: bool = false) -> SimVehicle:
 		var pierce: int = r.u8()
 		var splash: float = r.f32()
 		var wspeed: float = r.f32()
+		var wlive: int = r.u8()
 		if not r.ok:
 			return v
 		v.weapons.append({
 			"kind": kind, "damage": dmg, "range": rng, "cooldown_ticks": cdt, "cooldown": cd, "aim": aim,
 			"pellets": pellets, "spread": spread, "pierce": pierce, "splash": splash, "speed": wspeed,
+			"live": wlive,
 		})
+	v.rule_live = r.u8()
+	v.rules = _get_rules(r, Doctrine.SCOPE_RIG)
+	v.weapon_doctrine = {}
+	var nwd: int = r.u8()
+	for i in nwd:
+		var wk: String = r.string()
+		var ti: int = r.u8()
+		var wrules: Array = _get_rules(r, wk)
+		if not r.ok:
+			return v
+		if Doctrine.is_weapon_scope(wk) and ti < Doctrine.WEAPON_TARGETS.size():
+			v.weapon_doctrine[wk] = {"target": Doctrine.WEAPON_TARGETS[ti], "rules": wrules}
 	v.fuel = r.u16()
 	v.respawn_ticks = r.u16()
 	var bits: int = r.u8()
@@ -618,6 +647,9 @@ static func _commit_vehicles(world: SimWorld, fresh: Array[SimVehicle]) -> void:
 			dst.scrap = src.scrap
 			dst.kills = src.kills
 			dst.doctrine = src.doctrine
+			dst.rules = src.rules
+			dst.weapon_doctrine = src.weapon_doctrine
+			dst.rule_live = src.rule_live
 			dst.weapons = src.weapons
 			dst.target_kind = src.target_kind
 			dst.target_id = src.target_id
@@ -726,3 +758,54 @@ class _Reader:
 			return ""
 		pos += n
 		return bytes.slice(pos - n, pos).get_string_from_utf8()
+
+
+## Doctrine rules in the binary form (see the layout above). Unknown entries are skipped on read.
+static func _put_rules(sp: StreamPeerBuffer, rules: Array) -> void:
+	var n: int = mini(rules.size(), Doctrine.MAX_SLOTS)
+	sp.put_u8(n)
+	for i in n:
+		var rule: Dictionary = rules[i]
+		var conds: Array = rule["if"]
+		var nc: int = mini(conds.size(), Doctrine.MAX_CONDS)
+		sp.put_u8(maxi(Doctrine.ACTIONS.find(str(rule["do"])), 0))
+		sp.put_u8(nc)
+		for j in nc:
+			var c: Array = conds[j]
+			sp.put_u8(maxi(Doctrine.COND_IDS.find(str(c[0])), 0))
+			sp.put_u8(maxi(Doctrine.OPS.find(str(c[1])), 0))
+			sp.put_u16(clampi(int(c[2]), 0, 65535))
+
+
+static func _get_rules(r: _Reader, scope: String) -> Array:
+	var out: Array = []
+	var allowed: PackedStringArray = Doctrine.actions_for(scope)
+	var n: int = r.u8()
+	if n > Doctrine.MAX_SLOTS:
+		r.ok = false
+		return out
+	for i in n:
+		var ai: int = r.u8()
+		var nc: int = r.u8()
+		if nc > Doctrine.MAX_CONDS:
+			r.ok = false
+			return out
+		var conds: Array = []
+		var good: bool = ai < Doctrine.ACTIONS.size() and allowed.has(Doctrine.ACTIONS[ai])
+		for j in nc:
+			var ci: int = r.u8()
+			var oi: int = r.u8()
+			var val: int = r.u16()
+			if ci >= Doctrine.COND_IDS.size() or oi >= Doctrine.OPS.size():
+				good = false
+				continue
+			var c: Variant = Doctrine.make_cond(Doctrine.COND_IDS[ci], Doctrine.OPS[oi], val)
+			if c == null:
+				good = false
+			else:
+				conds.append(c)
+		if not r.ok:
+			return out
+		if good:
+			out.append({"if": conds, "do": Doctrine.ACTIONS[ai]})
+	return out
