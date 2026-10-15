@@ -673,11 +673,15 @@ func test_projectile_arrays_stay_in_sync() -> void:
 
 func test_enemy_scaling_per_round() -> void:
 	assert_eq(SimWorld.enemy_hp_mult(1), 1.0)
-	assert_eq(SimWorld.spawn_rate_mult(1), 1.0)
+	assert_eq(SimWorld.spawn_rate_mult(1), SimWorld.SPAWN_EASE_START)
+	assert_eq(SimWorld.enemy_damage_mult(1), SimWorld.DAMAGE_EASE_START)
+	assert_eq(SimWorld.early_ease(SimWorld.EASE_END_ROUND, 0.5), 1.0)
+	assert_eq(SimWorld.early_ease(SimWorld.EASE_END_ROUND + 7, 0.5), 1.0)
 	assert_eq(SimWorld.boulder_chance(1), SimWorld.BOULDER_CHANCE)
 	for r in range(2, 15):
 		assert_gt(SimWorld.enemy_hp_mult(r), SimWorld.enemy_hp_mult(r - 1))
 		assert_gt(SimWorld.spawn_rate_mult(r), SimWorld.spawn_rate_mult(r - 1))
+		assert_gt(SimWorld.enemy_damage_mult(r), SimWorld.enemy_damage_mult(r - 1))
 		assert_true(SimWorld.boulder_chance(r) >= SimWorld.boulder_chance(r - 1))
 	assert_true(SimWorld.boulder_chance(500) <= SimWorld.BOULDER_CHANCE_MAX)
 	var w := SimWorld.new(1)
