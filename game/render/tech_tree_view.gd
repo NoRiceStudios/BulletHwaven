@@ -32,9 +32,9 @@ static func draw(ui: WorkshopUi, v: SimVehicle, r: Rect2) -> String:
 	UiKit.plate(ui, r)
 	var x0: float = r.position.x + 4.0
 	var y: float = r.position.y + 4.0
-	PixelFont.draw_big(ui, "TECH TREE", Vector2(x0 + 2, y + 1), Gfx.UI_TEXT, Gfx.OUTLINE)
+	UiFont.draw_big(ui, "TECH TREE", Vector2(x0 + 2, y + 1), Gfx.UI_TEXT, Gfx.OUTLINE)
 	var sub := "%d / %d BUILT   FORKS: PICK ONE, THE OTHERS LOCK" % [v.tech.size(), Tech.count()]
-	PixelFont.draw(ui, sub, Vector2(x0 + 66, y + 2), Gfx.UI_DIM, Gfx.UI_SHADOW)
+	UiFont.draw(ui, sub, Vector2(x0 + 66, y + 2), Gfx.UI_DIM, Gfx.UI_SHADOW)
 	var close := Rect2(r.end.x - 70, y - 1, 66, 12)
 	UiKit.steel(ui, close)
 	if ui.is_hover("tree", false):
@@ -51,7 +51,7 @@ static func draw(ui: WorkshopUi, v: SimVehicle, r: Rect2) -> String:
 		var cx: float = x0 + bi * col_w + 3.0
 		# branch header
 		UiKit.icon(ui, b, Vector2(cx, y - 3))
-		PixelFont.draw(ui, b.to_upper(), Vector2(cx + 18, y + 1), Gfx.UI_TEXT, Gfx.UI_SHADOW)
+		UiFont.draw(ui, b.to_upper(), Vector2(cx + 18, y + 1), Gfx.UI_TEXT, Gfx.UI_SHADOW)
 		UiKit.pips(ui, Vector2(cx + node_w - 31, y + 1), Tech.branch_tier(v, b), Tech.MAX_TIER, Gfx.BRASS[3])
 		var ry: float = y + HEAD_H
 		# spine rail behind the nodes
@@ -82,7 +82,7 @@ static func draw(ui: WorkshopUi, v: SimVehicle, r: Rect2) -> String:
 	y += HEAD_H + ROW_H * ROWS.size()
 
 	# fusions
-	PixelFont.draw(ui, "FUSIONS - NEED TIER %d IN BOTH BRANCHES" % Tech.FUSION_TIER, Vector2(x0 + 3, y), Gfx.UI_DIM, Gfx.UI_SHADOW)
+	UiFont.draw(ui, "FUSIONS - NEED TIER %d IN BOTH BRANCHES" % Tech.FUSION_TIER, Vector2(x0 + 3, y), Gfx.UI_DIM, Gfx.UI_SHADOW)
 	y += 8.0
 	var fus: Array[String] = Tech.ids("", "fusion")
 	for k in fus.size():
@@ -107,21 +107,21 @@ static func _node(ui: WorkshopUi, v: SimVehicle, id: String, nr: Rect2, label: S
 	var cost: int = Tech.cost(id)
 	var lx: float = nr.position.x + 3.0
 	var fit: String = label
-	while PixelFont.width(fit) > nr.size.x - 5.0 and fit.length() > 1:
+	while UiFont.width(fit) > nr.size.x - 5.0 and fit.length() > 1:
 		fit = fit.left(fit.length() - 1)
 	match st:
 		State.OWNED:
 			ui.draw_rect(nr, Gfx.OUTLINE)
 			ui.draw_rect(nr.grow(-1.0), Gfx.BRASS[2])
 			ui.draw_rect(Rect2(nr.position + Vector2.ONE, Vector2(nr.size.x - 2, 1)), Gfx.BRASS[3])
-			PixelFont.draw(ui, fit, Vector2(lx, nr.position.y + 3), Gfx.INK)
+			UiFont.draw(ui, fit, Vector2(lx, nr.position.y + 3), Gfx.INK)
 			_lower(ui, nr, tag, "BUILT", Gfx.BRASS[0], Gfx.BRASS[0])
 			if hov:
 				UiKit.outline_rect(ui, nr, Gfx.UI_TEXT)
 		State.LOCKED, State.EXCLUDED:
 			ui.draw_rect(nr, Gfx.UI_DIM if hov else Gfx.OUTLINE)
 			ui.draw_rect(nr.grow(-1.0), Gfx.STEEL[1])
-			PixelFont.draw(ui, fit, Vector2(lx, nr.position.y + 3), Gfx.STEEL[3])
+			UiFont.draw(ui, fit, Vector2(lx, nr.position.y + 3), Gfx.STEEL[3])
 			if st == State.EXCLUDED:
 				# struck through: the other fork was taken
 				ui.draw_rect(Rect2(nr.position.x + 2, nr.position.y + 5, nr.size.x - 4, 1), Gfx.INK_RED)
@@ -135,20 +135,20 @@ static func _node(ui: WorkshopUi, v: SimVehicle, id: String, nr: Rect2, label: S
 				UiKit.outline_rect(ui, nr, Gfx.HAZARD if (hov or fmod(ui.blink(), 1.2) < 0.9) else Gfx.OUTLINE)
 			elif hov:
 				UiKit.outline_rect(ui, nr, Gfx.UI_BAD)
-			PixelFont.draw(ui, fit, Vector2(lx, nr.position.y + 3), Gfx.UI_TEXT, Gfx.OUTLINE)
+			UiFont.draw(ui, fit, Vector2(lx, nr.position.y + 3), Gfx.UI_TEXT, Gfx.OUTLINE)
 			var txt := str(cost)
-			var px: float = nr.end.x - 4.0 - PixelFont.width(txt) - 9.0
+			var px: float = nr.end.x - 4.0 - UiFont.width(txt) - 9.0
 			if tag != "" and nr.size.x > 60.0:
-				PixelFont.draw(ui, tag, Vector2(lx, nr.position.y + 10), Gfx.STEEL[4] if afford else Gfx.STEEL[3])
+				UiFont.draw(ui, tag, Vector2(lx, nr.position.y + 10), Gfx.STEEL[4] if afford else Gfx.STEEL[3])
 			ui.scrap_pip(Vector2(px, nr.position.y + 10))
-			PixelFont.draw(ui, txt, Vector2(px + 9, nr.position.y + 10), Gfx.UI_TEXT if afford else Gfx.UI_BAD, Gfx.OUTLINE)
+			UiFont.draw(ui, txt, Vector2(px + 9, nr.position.y + 10), Gfx.UI_TEXT if afford else Gfx.UI_BAD, Gfx.OUTLINE)
 
 
 ## Lower line of a node: `tag` on the left (wide nodes only), `right` on the right.
 static func _lower(ui: WorkshopUi, nr: Rect2, tag: String, right: String, tag_col: Color, col: Color) -> void:
 	if tag != "" and nr.size.x > 60.0:
-		PixelFont.draw(ui, tag, Vector2(nr.position.x + 3, nr.position.y + 10), tag_col)
-	PixelFont.draw(ui, right, Vector2(nr.end.x - 4.0 - PixelFont.width(right), nr.position.y + 10), col)
+		UiFont.draw(ui, tag, Vector2(nr.position.x + 3, nr.position.y + 10), tag_col)
+	UiFont.draw(ui, right, Vector2(nr.end.x - 4.0 - UiFont.width(right), nr.position.y + 10), col)
 
 
 ## Info strip: the hovered node, else a hint.
@@ -157,10 +157,10 @@ static func _info(ui: WorkshopUi, v: SimVehicle, id: String, r: Rect2) -> void:
 	UiKit.outline_rect(ui, r, Gfx.OUTLINE)
 	var p: Vector2 = r.position + Vector2(5, 4)
 	if id == "":
-		PixelFont.draw(ui, "HOVER A NODE FOR DETAILS, CLICK TO BUILD", p, Gfx.UI_DIM)
-		PixelFont.draw(ui, "CORE TIERS BUILD ON EACH OTHER. AFTER TIER 2 AND TIER 4 EVERY BRANCH FORKS:", p + Vector2(0, 10), Gfx.UI_DIM)
-		PixelFont.draw(ui, "PICK ONE SPECIALISATION, THE OTHERS LOCK FOR THE MATCH. FUSIONS JOIN TWO BRANCHES.", p + Vector2(0, 18), Gfx.UI_DIM)
-		PixelFont.draw(ui, "SCRAP YOU HOLD EARNS INTEREST, SO SAVING FOR A BIG NODE IS A PLAN TOO.", p + Vector2(0, 28), Gfx.UI_DIM)
+		UiFont.draw(ui, "HOVER A NODE FOR DETAILS, CLICK TO BUILD", p, Gfx.UI_DIM)
+		UiFont.draw(ui, "CORE TIERS BUILD ON EACH OTHER. AFTER TIER 2 AND TIER 4 EVERY BRANCH FORKS:", p + Vector2(0, 10), Gfx.UI_DIM)
+		UiFont.draw(ui, "PICK ONE SPECIALISATION, THE OTHERS LOCK FOR THE MATCH. FUSIONS JOIN TWO BRANCHES.", p + Vector2(0, 18), Gfx.UI_DIM)
+		UiFont.draw(ui, "SCRAP YOU HOLD EARNS INTEREST, SO SAVING FOR A BIG NODE IS A PLAN TOO.", p + Vector2(0, 28), Gfx.UI_DIM)
 		return
 	var d: Dictionary = Tech.def(id)
 	var kind: String = str(d["kind"])
@@ -169,28 +169,28 @@ static func _info(ui: WorkshopUi, v: SimVehicle, id: String, r: Rect2) -> void:
 		"spec": where = "%s - FORK AFTER TIER %d" % [str(d["branch"]).to_upper(), int(d["tier"])]
 		"fusion": where = "FUSION"
 		_: where = "%s - TIER %d" % [str(d["branch"]).to_upper(), int(d["tier"])]
-	PixelFont.draw(ui, where, p, Gfx.UI_DIM)
-	PixelFont.draw_big(ui, UiKit.tech_name(id), p + Vector2(0, 8), Gfx.UI_TEXT, Gfx.OUTLINE)
+	UiFont.draw(ui, where, p, Gfx.UI_DIM)
+	UiFont.draw_big(ui, UiKit.tech_name(id), p + Vector2(0, 8), Gfx.UI_TEXT, Gfx.OUTLINE)
 	# effects in the middle
 	var ex: float = r.position.x + 200.0
 	var ly: float = r.position.y + 4.0
-	PixelFont.draw(ui, "EFFECT", Vector2(ex, ly), Gfx.UI_DIM)
+	UiFont.draw(ui, "EFFECT", Vector2(ex, ly), Gfx.UI_DIM)
 	ly += 8.0
 	for ln in UiKit.tech_lines(id):
-		PixelFont.draw(ui, ln, Vector2(ex, ly), Gfx.FIRE[4])
+		UiFont.draw(ui, ln, Vector2(ex, ly), Gfx.FIRE[4])
 		ly += 7.0
 	# requirements and status on the right
 	var sx: float = r.position.x + 370.0
 	var sy: float = r.position.y + 4.0
-	PixelFont.draw(ui, "NEEDS", Vector2(sx, sy), Gfx.UI_DIM)
+	UiFont.draw(ui, "NEEDS", Vector2(sx, sy), Gfx.UI_DIM)
 	sy += 8.0
 	var req: Array = Tech.requirements(id)
 	if req.is_empty():
-		PixelFont.draw(ui, "NOTHING", Vector2(sx, sy), Gfx.UI_DIM)
+		UiFont.draw(ui, "NOTHING", Vector2(sx, sy), Gfx.UI_DIM)
 		sy += 7.0
 	for rq in req:
 		var have: bool = v.tech.has(str(rq))
-		PixelFont.draw(ui, ("+ " if have else "- ") + UiKit.tech_name(str(rq)), Vector2(sx, sy), Gfx.UI_TEXT if have else Gfx.UI_BAD)
+		UiFont.draw(ui, ("+ " if have else "- ") + UiKit.tech_name(str(rq)), Vector2(sx, sy), Gfx.UI_TEXT if have else Gfx.UI_BAD)
 		sy += 7.0
 	var status: String
 	var scol: Color = Gfx.UI_DIM
@@ -210,8 +210,8 @@ static func _info(ui: WorkshopUi, v: SimVehicle, id: String, r: Rect2) -> void:
 			status = "CLICK TO BUILD - %d SCRAP" % Tech.cost(id)
 			scol = Gfx.HAZARD
 	if Tech.blocked_by(v, id) == "" and str(d["group"]) != "" and not v.tech.has(id):
-		PixelFont.draw(ui, "LOCKS THE OTHER FORK NODES", Vector2(sx, sy + 2), Gfx.STEEL[4])
+		UiFont.draw(ui, "LOCKS THE OTHER FORK NODES", Vector2(sx, sy + 2), Gfx.STEEL[4])
 		sy += 7.0
-	for ln in PixelFont.wrap(status, int(r.end.x - sx - 4.0)):
-		PixelFont.draw(ui, ln, Vector2(sx, sy + 3), scol)
+	for ln in UiFont.wrap(status, int(r.end.x - sx - 4.0)):
+		UiFont.draw(ui, ln, Vector2(sx, sy + 3), scol)
 		sy += 7.0

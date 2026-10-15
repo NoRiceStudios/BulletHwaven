@@ -100,7 +100,7 @@ func _draw() -> void:
 		title = "NO SURVIVORS"
 		sub = "THE HIVE TAKES IT ALL - ROUND %d" % world.round
 		col = Gfx.UI_BAD
-	var scale: int = 2 if PixelFont.width_big(title, 2) <= r.size.x - 16 else 1
+	var scale: int = 2 if UiFont.width_big(title, 2) <= r.size.x - 16 else 1
 	UiKit.center_big(self, title, cx, r.position.y + 18, col, Gfx.OUTLINE, scale)
 	UiKit.center_text(self, sub, cx, r.position.y + 40, Gfx.UI_TEXT, Gfx.UI_SHADOW)
 
@@ -108,7 +108,7 @@ func _draw() -> void:
 	var y: float = r.position.y + 54.0
 	var cols: Array[float] = [r.position.x + 14, r.position.x + 120, r.position.x + 160, r.position.x + 200]
 	for i in 4:
-		PixelFont.draw(self, ["RIG", "FUEL", "KILLS", "TECH"][i], Vector2(cols[i], y), Gfx.UI_DIM, Gfx.UI_SHADOW)
+		UiFont.draw(self, ["RIG", "FUEL", "KILLS", "TECH"][i], Vector2(cols[i], y), Gfx.UI_DIM, Gfx.UI_SHADOW)
 	y += 9.0
 	draw_rect(Rect2(r.position.x + 12, y - 3, r.size.x - 24, 1), Gfx.OUTLINE)
 	for v in world.vehicles:
@@ -116,10 +116,10 @@ func _draw() -> void:
 		var nx: float = UiKit.paint_text(self, UiKit.player_name(v), Vector2(cols[0] + 9, y), v.color_index)
 		var tag: String = "WINNER" if v.peer_id == world.winner_peer else ("(YOU)" if v.peer_id == local_peer else "")
 		if tag != "":
-			PixelFont.draw(self, tag, Vector2(nx + 3, y), Gfx.FIRE[4] if v.peer_id == world.winner_peer else Gfx.UI_TEXT, Gfx.UI_SHADOW)
-		PixelFont.draw(self, "OUT" if v.eliminated else str(v.fuel), Vector2(cols[1], y), Gfx.UI_DIM if v.eliminated else Gfx.FIRE[3], Gfx.UI_SHADOW)
-		PixelFont.draw(self, str(v.kills), Vector2(cols[2], y), Gfx.UI_TEXT, Gfx.UI_SHADOW)
-		PixelFont.draw(self, "%d/%d" % [v.tech.size(), Tech.count()], Vector2(cols[3], y), Gfx.UI_TEXT, Gfx.UI_SHADOW)
+			UiFont.draw(self, tag, Vector2(nx + 3, y), Gfx.FIRE[4] if v.peer_id == world.winner_peer else Gfx.UI_TEXT, Gfx.UI_SHADOW)
+		UiFont.draw(self, "OUT" if v.eliminated else str(v.fuel), Vector2(cols[1], y), Gfx.UI_DIM if v.eliminated else Gfx.FIRE[3], Gfx.UI_SHADOW)
+		UiFont.draw(self, str(v.kills), Vector2(cols[2], y), Gfx.UI_TEXT, Gfx.UI_SHADOW)
+		UiFont.draw(self, "%d/%d" % [v.tech.size(), Tech.count()], Vector2(cols[3], y), Gfx.UI_TEXT, Gfx.UI_SHADOW)
 		y += 9.0
 	if me != null:
 		var best: String = ""
@@ -152,10 +152,10 @@ func _draw() -> void:
 	if not has_restart and waiting_text != "":
 		var dots: String = ".".repeat(int(Time.get_ticks_msec() / 400) % 4)
 		var t: String = waiting_text + dots
-		var tw: float = PixelFont.width(waiting_text + "...") + 12.0
+		var tw: float = UiFont.width(waiting_text + "...") + 12.0
 		var tr := Rect2(floorf(cx - tw / 2.0), r.end.y + 4, tw, 9)
 		UiKit.tape(self, tr, Color("#e8dcc4"))
-		PixelFont.draw(self, t, Vector2(tr.position.x + 6, tr.position.y + 2), Gfx.INK)
+		UiFont.draw(self, t, Vector2(tr.position.x + 6, tr.position.y + 2), Gfx.INK)
 
 
 # ---------------------------------------------------------------- awards (#11)
@@ -221,13 +221,13 @@ func _award_card(a: Dictionary, r: Rect2, tint: Color, tilt: int) -> void:
 	var nm: String = UiKit.player_name(v)
 	if a.has("victim"):  # NEMESIS: killer > victim xN
 		var vv: SimVehicle = UiKit.vehicle_by_id(world, int(a["victim"]))
-		PixelFont.draw_big(self, nm, Vector2(x0, r.position.y + 10), Gfx.INK)
-		var x: float = PixelFont.draw(self, "HAUNTED", Vector2(x0, r.position.y + 22), Gfx.INK_RED)
+		UiFont.draw_big(self, nm, Vector2(x0, r.position.y + 10), Gfx.INK)
+		var x: float = UiFont.draw(self, "HAUNTED", Vector2(x0, r.position.y + 22), Gfx.INK_RED)
 		x = UiKit.arrow_glyph(self, Vector2(x + 3, r.position.y + 22), Gfx.INK) + 3.0
-		x = PixelFont.draw(self, UiKit.player_name(vv) if vv else "?", Vector2(x, r.position.y + 22), Gfx.INK)
-		PixelFont.draw(self, " " + str(a["small"]), Vector2(x, r.position.y + 22), Gfx.INK_RED)
+		x = UiFont.draw(self, UiKit.player_name(vv) if vv else "?", Vector2(x, r.position.y + 22), Gfx.INK)
+		UiFont.draw(self, " " + str(a["small"]), Vector2(x, r.position.y + 22), Gfx.INK_RED)
 	else:
-		PixelFont.draw_big(self, nm, Vector2(x0, r.position.y + 10), Gfx.INK)
-		PixelFont.draw(self, str(a["small"]), Vector2(x0, r.position.y + 22), Gfx.INK_RED)
+		UiFont.draw_big(self, nm, Vector2(x0, r.position.y + 10), Gfx.INK)
+		UiFont.draw(self, str(a["small"]), Vector2(x0, r.position.y + 22), Gfx.INK_RED)
 	if v.peer_id == local_peer:
-		PixelFont.draw(self, "YOU", Vector2(r.end.x - 4 - PixelFont.width("YOU"), r.position.y + 11), Gfx.INK_RED)
+		UiFont.draw(self, "YOU", Vector2(r.end.x - 4 - UiFont.width("YOU"), r.position.y + 11), Gfx.INK_RED)

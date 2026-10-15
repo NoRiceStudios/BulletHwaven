@@ -2,7 +2,7 @@
 # Renders a scenario under Xvfb and saves a screenshot.
 #   scripts/shot.sh <scenario> <seed> <ticks> <out.png> [--hover=x,y] [--click="x,y;x,y"]
 # --hover places the UI pointer, --click clicks through the workshop UI (viewport px, 640x360).
-# Writes <out.png> (native 640x360) and <out>_1080p.png (3x nearest). Exits non-zero on failure.
+# Writes <out>_1080p.png (full resolution: world 3x nearest, UI crisp) and <out.png> (640x360 preview). Exits non-zero on failure.
 set -uo pipefail
 if [ $# -lt 4 ]; then
   echo "usage: $0 <scenario> <seed> <ticks> <out.png> [--hover=x,y] [--click=x,y;...]" >&2

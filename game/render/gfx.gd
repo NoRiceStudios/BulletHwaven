@@ -50,7 +50,7 @@ const TEX_TAPE := preload("res://assets/ui_tape.png")
 const TEX_HAZARD := preload("res://assets/ui_hazard.png")
 const TEX_STEEL := preload("res://assets/ui_steel.png")
 const TEX_VIGNETTE := preload("res://assets/ui_vignette.png")
-const TEX_LOGO := preload("res://assets/ui_logo.png")
+const TEX_LOGO := preload("res://assets/ui_logo_plate.png")  ## title plate; the words are set by MenuUi
 const TEX_SPLAT := preload("res://assets/ui_splat.png")
 ## Cells of ui_icons.png (16x16 each), as in tools/artgen/ui.py ICON_NAMES.
 const ICON_NAMES: PackedStringArray = ["mg", "shotgun", "cannon", "flamer", "armor", "mobility", "behavior",
