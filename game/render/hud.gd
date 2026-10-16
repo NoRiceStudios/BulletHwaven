@@ -9,7 +9,8 @@ extends Control
 ## state and the WorldView logs only, so it works the same for host, client and solo. Workshop and
 ## game over have their own overlays. Combat juice (WorldView.juice): the watched rig's kill combo next
 ## to it with milestone words, the scrap counter ticking up with a pulse, and the SWARM INCOMING banner
-## with a cyan edge pulse while a hive surge is announced.
+## with a cyan edge pulse while a hive surge is announced. When the watched rig's weapon evolves (a
+## workshop pick; WorldView detects it), the brass EVOLVED: <NAME> banner slams in (WorkshopUi shows it too).
 
 const BANNER_TICKS := 75  ## how long a phase-start banner stays up (sim ticks)
 const PVP_BANNER_TICKS := 105  ## the full-width PVP ON banner (#11)
@@ -159,6 +160,8 @@ func _draw() -> void:
 	var pv: int = world.tick - view.pvp_on_tick if view != null and view.pvp_on_tick >= 0 else -1
 	if world.phase == SimWorld.PHASE_COMBAT and pv >= 0 and pv < PVP_BANNER_TICKS:
 		_pvp_banner(vs, pv)
+	if view != null and world.phase == SimWorld.PHASE_COMBAT and view.juice.evo_age(world.tick) >= 0:
+		_draw_evolved(vs)
 	var el: int = phase_elapsed(world)
 	if el >= 0 and el < BANNER_TICKS:
 		if world.phase == SimWorld.PHASE_COMBAT:
@@ -785,3 +788,62 @@ func _surge_edge(vs: Vector2) -> void:
 		draw_rect(Rect2(o, vs.y - o - w, vs.x - 2.0 * o, w), Color(col, a))
 		draw_rect(Rect2(o, o + w, w, vs.y - 2.0 * o - 2.0 * w), Color(col, a))
 		draw_rect(Rect2(vs.x - o - w, o + w, w, vs.y - 2.0 * o - 2.0 * w), Color(col, a))
+
+
+## The watched rig's weapon just evolved (combat: under the top plate; the workshop draws its own, over
+## its panels).
+func _draw_evolved(vs: Vector2) -> void:
+	var y: float = 40.0 + (29.0 if view.spectating() else 0.0) + (31.0 if world.pvp_grace_ticks > 0 else 0.0)
+	var r: Rect2 = draw_evolved_banner(self, view.juice, world.tick, floorf(vs.x / 2.0), y, false)
+	if r.size.x > 0.0:
+		_panels.append(r)
+
+
+## The EVOLVED banner: a brass-framed gunmetal plate slams in with "EVOLVED: GATLING HELL" in the stencil
+## face, white-hot first, then gold; the recipe under it, a glint sweeping across and (unless `compact`, for
+## the workshop's narrow middle) the new gun on both flanks. Returns the plate (empty when hidden).
+static func draw_evolved_banner(ci: CanvasItem, j: JuiceState, tick: int, cx: float, y: float, compact: bool) -> Rect2:
+	var el: int = j.evo_age(tick)
+	if el < 0 or (el > JuiceState.EVO_BANNER_TICKS - 12 and (el / 2) % 2 == 0):
+		return Rect2()
+	var title: String = "EVOLVED: " + j.evo_word
+	var slam: float = clampf(1.0 - float(el) / 5.0, 0.0, 1.0)
+	var base: int = 13 if compact else 17
+	var size: int = base + int(round(slam * float(base) * 0.5))
+	var tw: float = float(UiFont.width_big_px(title, size, true))
+	var w: float = float(UiFont.width_big_px(title, base, true)) + (30.0 if compact else 64.0)
+	var h: float = 30.0 if compact else 34.0
+	var r := Rect2(cx - floorf(w / 2.0), y, w, h)
+	# plate: dark gunmetal, a two-tone brass frame, rivets
+	ci.draw_rect(r.grow(1.0), Gfx.OUTLINE)
+	ci.draw_rect(r, Gfx.BRASS[2])
+	ci.draw_rect(Rect2(r.position, Vector2(r.size.x, 1)), Gfx.BRASS[3])
+	ci.draw_rect(Rect2(r.position, Vector2(1, r.size.y)), Gfx.BRASS[3])
+	ci.draw_rect(Rect2(r.position.x, r.end.y - 1, r.size.x, 1), Gfx.BRASS[0])
+	ci.draw_rect(Rect2(r.end.x - 1, r.position.y, 1, r.size.y), Gfx.BRASS[0])
+	var inner: Rect2 = r.grow(-3.0)
+	ci.draw_rect(inner.grow(1.0), Gfx.BRASS[0])
+	ci.draw_rect(inner, Color("#221c1d"))
+	ci.draw_rect(Rect2(inner.position, Vector2(inner.size.x, 1)), Color("#352c2b"))
+	for p: Vector2 in [r.position + Vector2(1, 1), Vector2(r.end.x - 2, r.position.y + 1), Vector2(r.position.x + 1, r.end.y - 2), r.end - Vector2(2, 2)]:
+		ci.draw_rect(Rect2(p, Vector2.ONE), Gfx.STEEL[5])
+	if el < 12:  # a glint sweeping across the plate
+		var gx: float = floorf(inner.position.x + (inner.size.x + 20.0) * float(el) / 11.0 - 10.0)
+		for row in int(inner.size.y):
+			var x: float = gx - float(row) * 0.5
+			if x > inner.position.x and x + 3.0 < inner.end.x:
+				ci.draw_rect(Rect2(x, inner.position.y + float(row), 3, 1), Color(Gfx.FIRE[6], 0.22))
+	if not compact:  # the new gun on both flanks
+		var ki: int = Cards.weapon_kind_index(j.evo_kind)
+		var fs: float = float(RigArt.GUN_EVO_FRAME)
+		for side in 2:
+			var frame: int = 6 if side == 0 else 26
+			var src := Rect2(float(frame) * fs, float(ki * 2 + (tick / 3) % 2) * fs, fs, fs)
+			var gx: float = r.position.x - 30.0 if side == 0 else r.end.x - 26.0
+			ci.draw_texture_rect_region(RigArt.GUN_EVO_TEX, Rect2(Vector2(floorf(gx), floorf(r.get_center().y - fs / 2.0)), Vector2(fs, fs)), src)
+	# the words
+	var col: Color = Gfx.FIRE[6] if el < 3 else (Gfx.FIRE[5] if (el / 5) % 2 == 0 or el > 30 else Gfx.FIRE[4])
+	var ty: float = r.position.y + (5.0 if compact else 6.0) - roundf(slam * 3.0)
+	UiFont.draw_big_rim(ci, title, Vector2(floorf(cx - tw / 2.0), ty), col, Gfx.OUTLINE, size, true)
+	UiKit.center_small(ci, j.evo_sub, cx, r.end.y - 10.0, Gfx.BRASS[3], Gfx.OUTLINE)
+	return r

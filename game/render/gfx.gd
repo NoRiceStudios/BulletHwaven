@@ -51,6 +51,13 @@ const TRACER_AP := 3
 const TRACER_SHARD := 4
 const TRACER_SAW := 5
 const TRACER_ROWS := 6
+## Shots of evolved weapons (Ammo.EVO_BIT; tools/artgen/fx.py tracer_evo): 16 directions x rows, 24x24 cells.
+const TEX_TRACER_EVO := preload("res://assets/tracer_evo.png")
+const TEX_TRACER_EVO_GLOW := preload("res://assets/tracer_evo_glow.png")
+const EVO_GATLING := 0
+const EVO_GRINDER := 1
+const EVO_SHELL := 2
+const EVO_TRACER_ROWS := 3
 const TEX_HALO_CYAN := preload("res://assets/halo_cyan.png")
 const TEX_HALO_WARM := preload("res://assets/halo_warm.png")
 const TEX_HALO_WARM_BIG := preload("res://assets/halo_warm_big.png")
@@ -63,6 +70,7 @@ const TEX_UI_PLATE := preload("res://assets/ui_plate.png")
 const TEX_STENCIL := preload("res://assets/font_stencil.png")
 const TEX_ICONS := preload("res://assets/ui_icons.png")
 const TEX_CARD := preload("res://assets/ui_card.png")
+const TEX_CARD_EVO := preload("res://assets/ui_card_evo.png")  ## evolution (legendary) card: gunmetal in a brass frame
 const TEX_TAPE := preload("res://assets/ui_tape.png")
 const TEX_HAZARD := preload("res://assets/ui_hazard.png")
 const TEX_STEEL := preload("res://assets/ui_steel.png")
@@ -122,7 +130,7 @@ const CRT_HI := Color("#ffe48a")
 ## Card category tape colours (warm / neutral; GLOW stays reserved for aliens).
 const CATEGORY_COLORS := {
 	"weapon": Color("#d8673e"), "armor": Color("#a3a8b0"), "mobility": Color("#d6ad30"), "behavior": Color("#a9a66a"),
-	"evolution": Color("#e8c24a"),  # placeholder gold, the visual pass restyles evolution cards
+	"evolution": Color("#d2ad5c"),  # BRASS[3]: legendary evolution cards (their own brass-framed card, ui_card_evo.png)
 }
 ## Player paint (PLAYERS ramp, step 3), indexed by SimVehicle.color_index (0..7). Eight distinct
 ## paints: never cyan/teal (alien GLOW) and never yellow/orange (FIRE tracers); design doc 11c.

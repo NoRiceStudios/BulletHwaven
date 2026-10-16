@@ -1,7 +1,8 @@
 class_name JuiceState
 extends RefCounted
 ## Render-only bookkeeping for the combat "juice" (docs/architecture.md "Combat visuals"): the kill
-## combo of the watched rig and the hive surge warning. Fed from sim events once per sim tick by
+## combo of the watched rig, the hive surge warning and the watched rig's weapon evolving (the
+## EVOLVED banner; WorldView detects the flip of a weapon's "evo" flag). Fed from sim events once per sim tick by
 ## WorldView (and by prime() in screenshot mode); everything is keyed on sim ticks, so host, clients
 ## and screenshots agree. Never touches the sim.
 
@@ -23,6 +24,12 @@ var milestone_word: String = ""
 var milestone_tick: int = -100000
 var surge_tick: int = -100000  ## tick the "surge" warning arrived
 var surge_in: int = 0  ## ticks from the warning to the surge
+## The watched rig's latest weapon evolution: when, the evolved weapon's name and the recipe line.
+const EVO_BANNER_TICKS := 105  ## 3.5 s
+var evo_tick: int = -100000
+var evo_word: String = ""
+var evo_sub: String = ""
+var evo_kind: String = ""
 
 
 func reset() -> void:
@@ -34,6 +41,8 @@ func reset() -> void:
 	milestone_tick = -100000
 	surge_tick = -100000
 	surge_in = 0
+	evo_tick = -100000
+	evo_word = ""
 
 
 ## The watched rig; switching rigs (spectator) drops the running chain.
@@ -45,6 +54,8 @@ func set_focus(id: int) -> void:
 	combo_last = -100000
 	milestone_word = ""
 	milestone_tick = -100000
+	evo_tick = -100000
+	evo_word = ""
 
 
 ## An alien kill credited to vehicle `owner` at sim tick `tick`. Returns true when it hit a milestone.
@@ -68,6 +79,22 @@ func on_kill(owner: int, tick: int) -> bool:
 func on_surge(tick: int, in_ticks: int) -> void:
 	surge_tick = tick
 	surge_in = in_ticks if in_ticks > 0 else SURGE_DEFAULT_TICKS
+
+
+## Weapon `kind` of the watched rig just evolved into `word` ("GATLING HELL"); `sub` names the recipe.
+func on_evolve(owner: int, tick: int, kind: String, word: String, sub: String) -> void:
+	if owner < 0 or owner != focus_id:
+		return
+	evo_tick = tick
+	evo_kind = kind
+	evo_word = word
+	evo_sub = sub
+
+
+## Ticks since the watched rig's latest evolution while its banner shows (-1 = none showing).
+func evo_age(tick: int) -> int:
+	var a: int = tick - evo_tick
+	return a if evo_word != "" and a >= 0 and a < EVO_BANNER_TICKS else -1
 
 
 ## The chained count to show at `tick` (0 = hide the counter).

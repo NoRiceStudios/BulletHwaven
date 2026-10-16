@@ -54,6 +54,10 @@ const GUN_TEX := {
 	"mg": preload("res://assets/gun_mg.png"), "shotgun": preload("res://assets/gun_shotgun.png"),
 	"cannon": preload("res://assets/gun_cannon.png"), "flamer": preload("res://assets/gun_flamer.png"),
 }
+## Evolved guns (rig.gun_evo, design doc 5a): rows kind (Cards.WEAPON_KINDS order) x phase 0/1, 56x56 frames.
+const GUN_EVO_TEX := preload("res://assets/gun_evo.png")
+const GUN_EVO_FRAME := 56
+const BARREL_EVO := {"mg": 21, "shotgun": 15, "cannon": 29, "flamer": 18}  ## as rig.BARREL_EVO
 ## Barrel length per gun kind and level (muzzle flash position), as rig.BARREL.
 const BARREL := {"mg": [14, 15, 15], "shotgun": [10, 11, 11], "cannon": [16, 18, 20], "flamer": [10, 10, 11]}
 
@@ -183,15 +187,39 @@ static func shadow_row(v: SimVehicle) -> int:
 	return footprint(v) * 3 + gear_index(v)
 
 
-## Guns in weapon order: [[kind, level], ...].
+## Guns in weapon order: [[kind, level, evolved], ...].
 static func guns(v: SimVehicle) -> Array:
 	var out: Array = []
 	for w in v.weapons:
 		var kind: String = str(w.get("kind", "mg"))
 		if not GUN_TEX.has(kind):
 			kind = "mg"
-		out.append([kind, clampi(int(v.cards.get(kind, 1)), 1, 3)])
+		out.append([kind, clampi(int(v.cards.get(kind, 1)), 1, 3), bool(w.get("evo", false))])
 	return out
+
+
+## Bit per evolved weapon kind (1 << Cards.weapon_kind_index), from the weapons' "evo" flags.
+static func evo_mask(v: SimVehicle) -> int:
+	var m: int = 0
+	for w in v.weapons:
+		if bool(w.get("evo", false)):
+			m |= 1 << Cards.weapon_kind_index(str(w.get("kind", "")))
+	return m
+
+
+## The evolution card that evolves weapon `kind` ("" if none).
+static func evolution_card(kind: String) -> String:
+	for d: Dictionary in Cards.DEFS:
+		if str(d["category"]) == "evolution" and str(d.get("weapon", "")) == kind:
+			return str(d["id"])
+	return ""
+
+
+## Barrel length of a gun entry ([kind, level, evolved]).
+static func barrel_length(g: Array) -> float:
+	if g.size() > 2 and bool(g[2]):
+		return float(BARREL_EVO.get(str(g[0]), 20))
+	return float((BARREL[str(g[0])] as Array)[int(g[1]) - 1])
 
 
 ## One material per rig: resolves paint keys with the owner's paint job.

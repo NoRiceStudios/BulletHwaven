@@ -447,6 +447,8 @@ def export_rig(save, v_ang):
     save(sheet([strip(rig.paint_key(rig.trailer), rig.TRAILER_FRAME)]), "rig_trailer.png")
     for kind in rig.GUN_KINDS:  # rows: level 1..3, frames = aim
         save(sheet([[rig.gun(kind, l, a) for a in v_ang] for l in lv]), f"gun_{kind}.png")
+    # evolved guns (design doc 5a): rows kind (rig.GUN_KINDS) x phase 0/1, 56x56 frames
+    save(sheet(rig.gun_evo_rows(v_ang)), "gun_evo.png")
     flames = [[rig.nitro_flame(a, l, ph) for a in v_ang] for l in lv for ph in (0, 1)]
     save(sheet(flames), "nitro_flame.png")  # rows: L1 a/b, L2 a/b, L3 a/b
     save(glow_sheet(flames, radius=2, gain=2.5, strength=0.5), "nitro_flame_glow.png")
@@ -508,7 +510,9 @@ def export(out=OUT):
     # tracer rows: plain, fire, shrapnel, AP, shard, saw (fx.TRACER_KINDS + saw); muzzle rows: fx.MUZZLE_KINDS
     for name, rows, kw in (("tracer", fx.tracer_rows(fx_ang), {"radius": 1, "gain": 2.0, "strength": 0.3}),
                            ("acid", [[acid(a) for a in fx_ang]], {"radius": 2, "gain": 2.5, "strength": 0.45}),
-                           ("muzzle", fx.muzzle_rows(fx_ang), {"radius": 2, "gain": 2.5, "strength": 0.5})):
+                           ("muzzle", fx.muzzle_rows(fx_ang), {"radius": 2, "gain": 2.5, "strength": 0.5}),
+                           # evolved weapons (rows fx.EVO_TRACER_KINDS: gatling, grinder, shell), 24x24 cells
+                           ("tracer_evo", fx.tracer_evo_rows(fx_ang), {"radius": 2, "gain": 2.2, "strength": 0.45})):
         save(sheet(rows), f"{name}.png")
         save(glow_sheet(rows, **kw), f"{name}_glow.png")
     export_fx(save, fx_ang)
@@ -537,6 +541,7 @@ def export(out=OUT):
     save(ui.stencil_font(), "font_stencil.png")
     save(ui.icons(), "ui_icons.png")
     save(ui.card_tag(), "ui_card.png")
+    save(ui.card_legendary(), "ui_card_evo.png")
     save(ui.tape(), "ui_tape.png")
     save(ui.hazard(), "ui_hazard.png")
     save(ui.steel_plate(), "ui_steel.png")

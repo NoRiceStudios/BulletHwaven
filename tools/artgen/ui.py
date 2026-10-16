@@ -3,6 +3,7 @@
 - stencil_font(): 5x7 stencil font for headings (spray-painted look, bars broken by bridges).
 - icons():        16x16 icons: weapon kinds, card categories and tech branches.
 - card_tag():     a draft card as a manila shipping tag (crumpled, stained, punched hole + string).
+- card_legendary(): an evolution card: the tag cut from gunmetal in a riveted brass frame.
 - tape():         masking-tape label, 3-slice (caps + tiling middle), near-white so it can be tinted.
 - hazard():       8x8 hazard-stripe tile (READY button).
 - steel_plate():  riveted steel plate 9-patch (CRT housing, buttons).
@@ -297,6 +298,50 @@ def card_tag(seed=3):
     cx, cy = W // 2, 7
     cv.put(circle(W, H, cx - 0.5, cy - 0.5, 4.2) & body, BRASS[2])
     cv.put(circle(W, H, cx - 0.5, cy - 0.5, 4.2) & ~circle(W, H, cx - 0.5, cy - 1.5, 3.6) & body, BRASS[1])
+    hole = circle(W, H, cx - 0.5, cy - 0.5, 2.2)
+    cv.a[hole] = 0
+    outline(cv, OUTLINE)
+    cv.a[hole] = 0
+    wire = line(W, H, [(cx - 1, cy - 1), (cx - 4, 0)]) | line(W, H, [(cx, cy - 1), (cx + 3, 0)])
+    cv.put(wire, STEEL[4])
+    return cv
+
+
+def card_legendary(seed=11):
+    """An evolution card (legendary): the tag's shape cut from dark gunmetal, a riveted brass frame with
+    corner brackets, a brass-ringed punch hole on a short chain. Text on it is drawn light (bone / brass)."""
+    W, H = CARD_W, CARD_H
+    cv = Canvas(W, H)
+    rng = np.random.default_rng(seed)
+    pts = [(14, 1), (W - 15, 1), (W - 2, 12), (W - 2, H - 2), (1, H - 2), (1, 12)]
+    body = poly(W, H, pts)
+    ys, xs = np.mgrid[0:H, 0:W]
+    n = 0.6 * value_noise(H, W, 9, seed) + 0.4 * value_noise(H, W, 3, seed + 1)
+    metal = np.array([rgb("#1f1a1c"), rgb("#2a2324"), rgb("#352c2b")])
+    lvl = np.clip(np.floor(n * 2.6 + bayer(H, W) * 0.8), 0, 2).astype(int)
+    cv.put(body, metal[lvl])
+    # brushed streaks and a few scratches
+    for _ in range(14):
+        y = rng.integers(14, H - 6)
+        x0 = rng.integers(4, W - 30)
+        cv.put(line(W, H, [(x0, y), (x0 + rng.integers(6, 26), y + rng.integers(-1, 2))]) & body, "#3d3332", alpha=0.6)
+    # the brass frame: 3 px band inside the edge, lit from the top-left
+    inner = poly(W, H, [(15, 4), (W - 16, 4), (W - 5, 13), (W - 5, H - 5), (4, H - 5), (4, 13)])
+    band = body & ~inner
+    paint(cv, band, BRASS, base=2, noise=0.2, seed=seed + 2)
+    edge_in = inner & ~poly(W, H, [(16, 5), (W - 17, 5), (W - 6, 14), (W - 6, H - 6), (5, H - 6), (5, 14)])
+    cv.put(edge_in, BRASS[0])
+    cv.put(body & ~shift(body, 0, -1) | body & ~shift(body, -1, 0), BRASS[3])
+    cv.put(body & (~shift(body, 0, 1) | ~shift(body, 1, 0)), BRASS[0])
+    # corner brackets and rivets
+    for (x, y, dx, dy) in ((7, H - 8, 1, -1), (W - 8, H - 8, -1, -1), (7, 16, 1, 1), (W - 8, 16, -1, 1)):
+        cv.put(line(W, H, [(x, y), (x + dx * 7, y)]) | line(W, H, [(x, y), (x, y + dy * 7)]), BRASS[3])
+        cv.put(pixels(W, H, [(x + dx, y + dy)]), BRASS[1])
+    rivets(cv, [(3, 20), (W - 4, 20), (3, H - 12), (W - 4, H - 12), (W // 2 - 20, H - 4), (W // 2 + 19, H - 4)])
+    # punch hole in a heavy brass ring, a short chain up
+    cx, cy = W // 2, 7
+    cv.put(circle(W, H, cx - 0.5, cy - 0.5, 4.6) & body, BRASS[3])
+    cv.put(circle(W, H, cx - 0.5, cy - 0.5, 4.6) & ~circle(W, H, cx - 0.5, cy - 1.5, 3.8) & body, BRASS[1])
     hole = circle(W, H, cx - 0.5, cy - 0.5, 2.2)
     cv.a[hole] = 0
     outline(cv, OUTLINE)

@@ -408,6 +408,9 @@ func _draw() -> void:
 			UiKit.footer(self, "1 2 3  PICK      R  REROLL      T  TECH      P  RULES      SPACE  READY", vs)
 	_draw_bar(v, vs)
 	_draw_toast(vs)
+	if view != null and _tab == "parts":  # a weapon just evolved: the banner over the panels, between the columns
+		var gap_cx: float = floorf((LEFT_X + COL_W + RIGHT_X - 108.0) / 2.0)  # between the rig and tech panels
+		Hud.draw_evolved_banner(self, view.juice, world.tick, gap_cx, BAR.end.y + 22.0, true)
 	TechTreeView.draw_gloss(self)
 
 
@@ -621,6 +624,13 @@ func _ammo_row(v: SimVehicle, kind: String, x0: float, xr: float, y: float) -> v
 
 
 func _part_row(id: String, lvl: int, x0: float, xr: float, y: float, scrappable: bool = false) -> void:
+	if Cards.is_evolution(id):  # an evolution: gold, no levels, never scrapped
+		draw_rect(Rect2(x0, y - 1, 7, 7), Gfx.OUTLINE)
+		draw_rect(Rect2(x0 + 1, y, 5, 5), Gfx.BRASS[3])
+		draw_rect(Rect2(x0 + 2, y + 1, 1, 1), Gfx.FIRE[6])
+		UiFont.draw(self, UiKit.card_name(id), Vector2(x0 + 10, y), Gfx.FIRE[5], Gfx.UI_SHADOW)
+		UiFont.draw_small(self, "EVOLVED", Vector2(xr - UiFont.width_small("EVOLVED"), y), Gfx.BRASS[3], Gfx.UI_SHADOW)
+		return
 	draw_rect(Rect2(x0, y - 1, 7, 7), Gfx.OUTLINE)
 	draw_rect(Rect2(x0 + 1, y, 5, 5), UiKit.card_color(id))
 	UiFont.draw(self, UiKit.card_name(id), Vector2(x0 + 10, y), Gfx.UI_TEXT, Gfx.UI_SHADOW)
@@ -778,12 +788,19 @@ func _draw_cards(v: SimVehicle, vs: Vector2) -> void:
 	if v.picked:
 		picked_view = true
 		showing = _offers_cache if _offers_round == world.round else ([] as Array[String])
+	var fitted_at: int = _picked_index
+	if picked_view and showing.is_empty() and view != null and view.juice.evo_age(world.tick) >= 0:
+		# picked without this UI seeing the offers (a replay, a screenshot): the evolution alone, fitted
+		showing = [RigArt.evolution_card(view.juice.evo_kind)] as Array[String]
+		fitted_at = 0
 	# three cards side by side; a lucky strike's fourth one makes them overlap
 	var step: float = CARD_SIZE.x + CARD_GAP
 	if showing.size() > 3:
 		step = floorf((324.0 - CARD_SIZE.x) / float(showing.size() - 1))
 	var total: float = step * float(maxi(showing.size(), 3) - 1) + CARD_SIZE.x
 	var x0: float = cx - floorf(total / 2.0)
+	if showing.size() == 1:
+		x0 = cx - floorf(CARD_SIZE.x / 2.0)
 	var can_reserve: bool = float(v.tech_fx.get("reserve_card", 0.0)) > 0.0
 	var title: String = "PICK ONE PART - FREE" if not v.picked else "PART FITTED"
 	UiKit.tape_label(self, title, cx, CARD_Y - 15.0, Color("#e8dcc4"))
@@ -796,7 +813,7 @@ func _draw_cards(v: SimVehicle, vs: Vector2) -> void:
 		var hov: bool = not picked_view and _is_hover("pick", i)
 		var state: int = 0  # 0 offer, 1 fitted, 2 scrapped
 		if picked_view:
-			state = 1 if i == _picked_index else 2
+			state = 1 if i == fitted_at else 2
 		_draw_card(id, i, pos + (Vector2(0, -3) if hov else Vector2.ZERO), int(v.cards.get(id, 0)) - (1 if state == 1 else 0), hov, state)
 		if not picked_view:
 			_hits.append([Rect2(pos, CARD_SIZE), "pick", i])
@@ -854,6 +871,9 @@ func _draw_contracts(v: SimVehicle, vs: Vector2) -> void:
 
 ## One draft card. `level` = owned level before the pick (0 = new).
 func _draw_card(id: String, index: int, pos: Vector2, level: int, hov: bool, state: int) -> void:
+	if Cards.is_evolution(id):
+		_draw_evo_card(id, index, pos, hov, state)
+		return
 	var mod: Color = Color.WHITE if state != 2 else Color(0.5, 0.45, 0.45)
 	# drop shadow, then the tag
 	var sh := Rect2(pos + Vector2(3, 6 if hov else 3), CARD_SIZE - Vector2(4, 4))
@@ -919,6 +939,82 @@ func _draw_card(id: String, index: int, pos: Vector2, level: int, hov: bool, sta
 		UiKit.outline_rect(self, st, Gfx.INK_RED)
 		UiKit.outline_rect(self, st.grow(-2.0), Gfx.INK_RED)
 		UiKit.center_big(self, "FITTED", st.get_center().x, st.position.y + 6, Gfx.INK_RED, Color(0, 0, 0, 0), 2)
+
+
+## Short labels of the evolution partners under their icon on the card.
+const EVO_PARTNER_SHORT := {"v8_engine": "V8", "spiked_plating": "SPIKES", "caterpillar_tracks": "TRACKS", "nitro": "NITRO"}
+
+
+## An evolution offer (legendary): gunmetal in a riveted brass frame, the recipe as icons (the maxed weapon +
+## the partner part = the evolved gun itself) and what it does. Fitted, it is stamped EVOLVED.
+func _draw_evo_card(id: String, index: int, pos: Vector2, hov: bool, state: int) -> void:
+	var mod: Color = Color.WHITE if state != 2 else Color(0.5, 0.45, 0.45)
+	var d: Dictionary = Cards.def(id)
+	var kind: String = str(d.get("weapon", "mg"))
+	var partner: String = str(d.get("partner", ""))
+	var sh := Rect2(pos + Vector2(3, 6 if hov else 3), CARD_SIZE - Vector2(4, 4))
+	draw_rect(sh, Color(0.08, 0.05, 0.06, 0.45))
+	if state == 0:  # a warm glow round the legendary tag, breathing
+		var pulse: float = 0.5 + 0.5 * sin(_blink * 4.0)
+		var body := Rect2(pos + Vector2(1, 12), CARD_SIZE - Vector2(2, 14))
+		for g in 3:
+			draw_rect(body.grow(float(3 - g) * 2.0), Color(Gfx.FIRE[4], (0.06 + 0.06 * pulse) * float(g + 1) / 3.0))
+	if hov:
+		draw_rect(Rect2(pos.x + 8, pos.y + CARD_SIZE.y + 4, CARD_SIZE.x - 16, 2), Gfx.BRASS[3])
+		draw_rect(Rect2(pos.x + 8, pos.y + CARD_SIZE.y + 6, CARD_SIZE.x - 16, 1), Gfx.OUTLINE)
+	draw_texture(Gfx.TEX_CARD_EVO, pos, mod)
+	var ink: Color = Gfx.INK * mod
+	var light: Color = Gfx.BONE_LIGHT * mod
+	var gold: Color = Gfx.FIRE[5] * mod
+	# brass tape: EVOLUTION ... LEGENDARY
+	var tr := Rect2(pos + Vector2(8, 14), Vector2(CARD_SIZE.x - 16, 9))
+	UiKit.tape(self, tr, Gfx.BRASS[3] * mod)
+	UiFont.draw_small(self, "EVOLUTION", tr.position + Vector2(4, 2), ink)
+	var rar: String = str(d.get("rarity", "legendary")).to_upper()
+	UiFont.draw_small(self, rar, Vector2(tr.end.x - 4 - UiFont.width_small(rar), tr.position.y + 2), ink)
+	UiKit.center_big(self, UiKit.card_name(id), pos.x + CARD_SIZE.x / 2.0, pos.y + 27.0, gold, Gfx.OUTLINE)
+	# the recipe: [weapon] + [partner] > the evolved gun
+	var iy: float = pos.y + 43.0
+	var boxes: Array = [[kind, Vector2(pos.x + 8, iy)], [UiKit.card_icon(partner), Vector2(pos.x + 32, iy)]]
+	for b: Array in boxes:
+		var br := Rect2(b[1], Vector2(18, 18))
+		draw_rect(br, Color(0.08, 0.06, 0.06) * mod)
+		UiKit.outline_rect(self, br, Gfx.BRASS[2] * mod)
+		UiKit.icon(self, str(b[0]), br.position + Vector2(1, 1), mod)
+	UiFont.draw_big(self, "+", Vector2(pos.x + 27, iy + 5), gold)
+	UiKit.arrow_glyph(self, Vector2(pos.x + 52, iy + 6), gold)
+	var res := Rect2(pos.x + 59, pos.y + 36, 34, 34)
+	draw_rect(res, Color(0.05, 0.04, 0.04) * mod)
+	UiKit.outline_rect(self, res, Gfx.BRASS[3] * mod)
+	UiKit.outline_rect(self, res.grow(-1.0), Gfx.BRASS[0] * mod)
+	var fs: float = float(RigArt.GUN_EVO_FRAME)
+	var ki: int = Cards.weapon_kind_index(kind)
+	var src := Rect2(4.0 * fs + 11.0, float(ki * 2) * fs + 11.0, 34.0, 34.0)  # aimed up-right, cropped to the box
+	draw_texture_rect_region(RigArt.GUN_EVO_TEX, Rect2(res.position, res.size), src, mod)
+	UiKit.center_small(self, UiKit.weapon_short(ki) + " L3", pos.x + 17, iy + 21, light)
+	UiKit.center_small(self, str(EVO_PARTNER_SHORT.get(partner, "PART")), pos.x + 41, iy + 21, light)
+	# what it does (the text after the recipe)
+	var text: String = str(d.get("text", ""))
+	var at: int = text.find(": ")
+	var y: float = pos.y + 76.0
+	for sub in UiFont.wrap_small(text.substr(at + 2) if at >= 0 else text, int(CARD_SIZE.x) - 18):
+		if y > pos.y + 101.0:
+			break
+		UiFont.draw_small(self, sub, Vector2(pos.x + 9, y), light)
+		y += 7.0
+	if state == 0:
+		var kr := Rect2(pos.x + 8, pos.y + CARD_SIZE.y - 15, 9, 9)
+		draw_rect(kr, Gfx.BRASS[3])
+		UiFont.draw(self, "%d" % (index + 1), kr.position + Vector2(3, 2), Gfx.INK)
+		UiFont.draw(self, "PICK" if not hov else "EVOLVE IT", Vector2(kr.end.x + 3, kr.position.y + 2), light)
+		var ev := "NO SLOT"
+		UiFont.draw_small(self, ev, Vector2(pos.x + CARD_SIZE.x - 16 - UiFont.width_small(ev), kr.position.y + 2), Gfx.BRASS[3])
+	elif state == 1:
+		var st := Rect2(pos.x + 7, pos.y + 45, CARD_SIZE.x - 14, 26)
+		draw_rect(st, Color(0.13, 0.1, 0.09, 0.94))
+		UiKit.outline_rect(self, st, Gfx.BRASS[3])
+		UiKit.outline_rect(self, st.grow(-2.0), Gfx.FIRE[4])
+		UiKit.center_big(self, "EVOLVED", st.get_center().x, st.position.y + 6, Gfx.FIRE[5], Gfx.OUTLINE, 2)
 
 
 ## Tiny 5x5 scrap marker (a nut) for prices.

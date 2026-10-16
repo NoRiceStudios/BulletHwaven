@@ -62,3 +62,18 @@ func test_surge_banner_is_dormant_until_announced() -> void:
 	assert_eq(j.surge_in, JuiceState.SURGE_DEFAULT_TICKS, "missing in_ticks falls back to 2 s")
 	j.reset()
 	assert_true(not j.surge_active(500))
+
+
+func test_evolve_banner_only_for_the_watched_rig() -> void:
+	var j := JuiceState.new()
+	j.set_focus(3)
+	j.on_evolve(1, 40, "mg", "GATLING HELL", "MACHINE GUN + V8 ENGINE")
+	assert_eq(j.evo_age(40), -1, "another rig's evolution shows no banner")
+	j.on_evolve(3, 40, "mg", "GATLING HELL", "MACHINE GUN + V8 ENGINE")
+	assert_eq(j.evo_age(39), -1)
+	assert_eq(j.evo_age(50), 10)
+	assert_eq(j.evo_word, "GATLING HELL")
+	assert_eq(j.evo_age(40 + JuiceState.EVO_BANNER_TICKS), -1, "the banner times out")
+	j.on_evolve(3, 60, "cannon", "EARTHSHAKER", "")
+	j.set_focus(4)
+	assert_eq(j.evo_age(61), -1, "switching the watched rig drops it")
