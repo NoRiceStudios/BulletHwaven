@@ -115,12 +115,12 @@ def biome_sheet():
 def rig_sheet():
     """The layered rig (rig.py): eight builds, one per paint, facing north and turned."""
     import rig
-    tile = 104
+    tile = 128
     W, H = tile * 8, tile * 2 + 24
     cv = Canvas(W, H)
     cv.rgb[:] = dune_sea(W, H, seed=11) * 0.55 + rgb(SAND[2]) * 0.45
     cv.a[:] = 1
-    text(cv, "THE RIG GROWS: HULL + BOLT-ON LAYERS PER CARD AND ENGINEERING TIER", 6, 4, UI_TEXT, OUTLINE)
+    text(cv, "THE RIG GROWS: BUGGY, PICKUP, TRUCK, WAR RIG + BOLT-ON LAYERS PER CARD AND TECH", 6, 4, UI_TEXT, OUTLINE)
     for i, (name, b) in enumerate(rig.SAMPLE_BUILDS):
         for j, ang in enumerate((0.0, 2.4)):
             r = rig.compose(b, ang, aim=ang + 0.6, size=tile)

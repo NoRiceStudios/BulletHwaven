@@ -24,7 +24,7 @@ from pixel import Canvas, blob, circle, ellipse, line, paint, pixels, polar, pol
 from sprites import (ammo_belt, barbed, chain, chip, hazard_stripes, headlight, px, rivets, sandbag, shade,
                      tarp, weather, weld, wheel)
 
-RIG_W, RIG_H = 56, 80
+RIG_W, RIG_H = 72, 80  # wide enough for the sidecar and the dozer blade (the frame stays 80x80)
 RIG_FRAME = 80
 TRAILER_W, TRAILER_H = 40, 48
 TRAILER_FRAME = 64
@@ -37,12 +37,14 @@ PAINT_STEPS = 5
 
 
 class Foot:
-    def __init__(self, name, oy, length, wheels, flank, plate_slots, deck=None):
-        self.name, self.ox, self.oy, self.L = name, 10, oy, length
+    def __init__(self, name, oy, length, wheels, flank, plate_slots, deck=None, engine_y=None, bed=None):
+        self.name, self.ox, self.oy, self.L = name, (RIG_W - 36) // 2, oy, length
         self.wheels = wheels  # (x, y, w, h, side) in footprint coordinates
         self.flank = flank  # y range of the free flank between the first two axles
         self.plate_slots = plate_slots  # flank plate y ranges per steel-plates level
         self.deck = deck  # B: flatbed y range
+        self.engine_y = length - 15 if engine_y is None else engine_y  # top of the engine block (P: under the hood)
+        self.bed = bed  # P: open load bed y range
 
 
 FOOT_A = Foot("A", 14, 52, [(3, 8, 7, 11, "L"), (26, 8, 7, 11, "R"), (2, 33, 8, 13, "L"), (26, 33, 8, 13, "R")],
@@ -50,7 +52,10 @@ FOOT_A = Foot("A", 14, 52, [(3, 8, 7, 11, "L"), (26, 8, 7, 11, "R"), (2, 33, 8, 
 FOOT_B = Foot("B", 8, 64, [(3, 8, 7, 11, "L"), (26, 8, 7, 11, "R"), (2, 33, 8, 12, "L"), (26, 33, 8, 12, "R"),
                            (2, 48, 8, 13, "L"), (26, 48, 8, 13, "R")],
               (20, 31), [[(19, 31)], [(33, 45), (47, 60)], [(6, 18)]], deck=(37, 48))
-FEET = [FOOT_A, FOOT_B]
+# Pickup (chassis 2): front engine under a long hood, closed cab, open load bed, four big wheels.
+FOOT_P = Foot("P", 11, 58, [(3, 6, 7, 11, "L"), (26, 6, 7, 11, "R"), (2, 40, 8, 13, "L"), (26, 40, 8, 13, "R")],
+              (19, 37), [[(19, 37)], [(39, 54)], [(4, 16)]], engine_y=5, bed=(31, 54))
+FEET = [FOOT_A, FOOT_B, FOOT_P]  # row groups of every hull strip (render: RigArt footprint index)
 
 
 def _rel(foot, x, y):
@@ -58,18 +63,34 @@ def _rel(foot, x, y):
     return (x + foot.ox - RIG_W / 2, y + foot.oy - RIG_H / 2)
 
 
+SIDECAR_X = (39, 50)  # sidecar tub, footprint x range (right of the hull)
+
+
+def _sidecar_y(foot):
+    return (foot.flank[0] - 3, foot.flank[1] + 5)
+
+
 # Anchors relative to the rig centre, facing north (px). Mirrored in game/render/rig_art.gd.
+# mounts: hull gun rings in fill order (cab / cockpit, deck or bed, then the extras).
 RIG_ANCHORS = {
-    "A": {"mounts": [_rel(FOOT_A, 17.5, 22), _rel(FOOT_A, 17.5, 11)],
+    "A": {"mounts": [_rel(FOOT_A, 17.5, 22), _rel(FOOT_A, 17.5, 11), _rel(FOOT_A, 17.5, 42), _rel(FOOT_A, 17.5, 31)],
           "exhausts": [_rel(FOOT_A, 9, 51), _rel(FOOT_A, 26, 51)],
           "rear_wheels": [_rel(FOOT_A, 5.5, 40), _rel(FOOT_A, 29.5, 40)],
           "hitch": _rel(FOOT_A, 17.5, 52)},
-    "B": {"mounts": [_rel(FOOT_B, 17.5, 22), _rel(FOOT_B, 17.5, 42.5)],
+    "B": {"mounts": [_rel(FOOT_B, 17.5, 22), _rel(FOOT_B, 17.5, 42.5), _rel(FOOT_B, 17.5, 10), _rel(FOOT_B, 17.5, 55)],
           "exhausts": [_rel(FOOT_B, 9, 63), _rel(FOOT_B, 26, 63)],
           "rear_wheels": [_rel(FOOT_B, 5.5, 55), _rel(FOOT_B, 29.5, 55)],
           "hitch": _rel(FOOT_B, 17.5, 64)},
+    "P": {"mounts": [_rel(FOOT_P, 17.5, 23), _rel(FOOT_P, 17.5, 40), _rel(FOOT_P, 17.5, 50), _rel(FOOT_P, 17.5, 9)],
+          "exhausts": [_rel(FOOT_P, 9, 57), _rel(FOOT_P, 26, 57)],
+          "rear_wheels": [_rel(FOOT_P, 5.5, 47), _rel(FOOT_P, 29.5, 47)],
+          "hitch": _rel(FOOT_P, 17.5, 58)},
 }
-TRAILER_MOUNT = (0.0, 0.0)  # gun on the trailer, relative to the trailer centre
+for _f in FEET:
+    _y0, _y1 = _sidecar_y(_f)
+    RIG_ANCHORS[_f.name]["sidecar"] = _rel(_f, (SIDECAR_X[0] + SIDECAR_X[1]) / 2, (_y0 + _y1) / 2)
+TRAILER_MOUNTS = [(0.0, 0.0), (0.0, 13.0)]  # guns on the trailer, relative to the trailer centre
+TRAILER_MOUNT = TRAILER_MOUNTS[0]
 TRAILER_TONGUE = 26.0  # hitch -> trailer centre (px)
 GUN_KINDS = ["mg", "shotgun", "cannon", "flamer"]
 BARREL = {"mg": [14, 15, 15], "shotgun": [10, 11, 11], "cannon": [16, 18, 20], "flamer": [10, 10, 11]}
@@ -197,19 +218,38 @@ def gear(foot, kind, seed=1):
 
 # ---------------------------------------------------------------- hull body
 
-def body(pc, foot, tier, seed=1):
-    """Welded scrap hull. Big paint: the whole hood and a rim along the tub flanks."""
+BODY_STYLES = ["buggy", "buggy_frame", "truck", "pickup", "warrig"]  # rows of rig_body.png
+STYLE_FOOT = {"buggy": FOOT_A, "buggy_frame": FOOT_A, "truck": FOOT_B, "pickup": FOOT_P, "warrig": FOOT_B}
+
+
+def body(pc, style, seed=1):
+    """Welded scrap hull per chassis (design doc 11b): open buggy (bare, then with the welded frame:
+    canopy, cage, rear rack), pickup (front engine, closed cab, open bed), six-wheel truck (closed cab,
+    flatbed) and the war rig tractor (armoured cab, exhaust stacks, heavy bumper)."""
+    foot = STYLE_FOOT[style]
+    if style == "pickup":
+        return _pickup(pc, foot, seed)
+    tier = 0 if style == "buggy" else 1
+    closed = style in ("truck", "warrig")
+    war = style == "warrig"
     cv = new_rig()
     p = P(cv, foot)
     L = foot.L
-    # spare tyre strapped to the left flank, jerrycan to the right
     fy0 = foot.flank[0] + 1
-    paint(cv, p.rect(3, fy0, 6, fy0 + 9), TYRE, base=2)
-    cv.put(p.rect(4, fy0 + 1, 5, fy0 + 8), TYRE[0])
-    cv.put(p.rect(3, fy0 + 4, 6, fy0 + 4), LEATHER[2])
-    paint(cv, p.rect(28, fy0, 32, fy0 + 8), RUST[1:], base=2, noise=0.3, seed=seed)
-    px(cv, p.pts([(30, fy0), (31, fy0)]), STEEL[1])
-    cv.put(p.rect(28, fy0 + 4, 32, fy0 + 4), LEATHER[1])
+    if not war:  # spare tyre strapped to the left flank, jerrycan to the right
+        paint(cv, p.rect(3, fy0, 6, fy0 + 9), TYRE, base=2)
+        cv.put(p.rect(4, fy0 + 1, 5, fy0 + 8), TYRE[0])
+        cv.put(p.rect(3, fy0 + 4, 6, fy0 + 4), LEATHER[2])
+        paint(cv, p.rect(28, fy0, 32, fy0 + 8), RUST[1:], base=2, noise=0.3, seed=seed)
+        px(cv, p.pts([(30, fy0), (31, fy0)]), STEEL[1])
+        cv.put(p.rect(28, fy0 + 4, 32, fy0 + 4), LEATHER[1])
+    else:  # armoured side skirts with barbed wire
+        for x0, bx in ((3, 2), (28, 33)):
+            sk = p.rect(x0, fy0 - 1, x0 + 4, fy0 + 10)
+            paint(cv, sk, STEEL, noise=0.3, seed=seed + x0)
+            weather(cv, sk, seed + x0, holes=1, scratches=2)
+            rivets(cv, p.pts([(x0 + 1, fy0), (x0 + 3, fy0 + 9)]))
+            barbed(cv, p.xy(bx, fy0), p.xy(bx, fy0 + 9))
     # body tub with a painted rim along the flanks
     tub = p.poly([(11, 5), (24, 5), (28, 10), (28, L - 9), (25, L - 5), (10, L - 5), (7, L - 9), (7, 10)])
     paint(cv, tub, RUST, noise=0.4, seed=seed, depth=2)
@@ -220,40 +260,61 @@ def body(pc, foot, tier, seed=1):
     # salvaged hood plates, both in paint (different coats), welded together
     left = p.poly([(11, 6), (17, 6), (17, 18), (9, 18), (9, 11)])
     right = p.poly([(18, 6), (24, 6), (26, 11), (26, 18), (18, 18)])
-    paint(cv, left, pc, base=3, noise=0.3, seed=seed + 1)
-    paint(cv, right, pc, base=2, noise=0.35, seed=seed + 2)
+    if war:  # armoured hood: steel centre plate between painted cheeks
+        paint(cv, left, pc, base=2, noise=0.3, seed=seed + 1)
+        paint(cv, right, pc, base=2, noise=0.35, seed=seed + 2)
+        mid = p.rect(14, 6, 21, 18)
+        paint(cv, mid, STEEL, base=3, noise=0.3, seed=seed + 5)
+        rivets(cv, p.pts([(15, 8), (20, 8), (15, 16), (20, 16)]))
+        weld(cv, p.pts([(14, 6), (14, 18)]))
+        weld(cv, p.pts([(21, 6), (21, 18)]))
+    else:
+        paint(cv, left, pc, base=3, noise=0.3, seed=seed + 1)
+        paint(cv, right, pc, base=2, noise=0.35, seed=seed + 2)
+        cv.put(p.line([(19, 17), (25, 11)], 1) & right, KHAKI[3])  # a stripe of the old olive coat
+        weld(cv, p.pts([(17, 6), (17, 18)]))
     chip(cv, left, 0.12, seed, STEEL[2])
     chip(cv, right, 0.18, seed + 3, STEEL[3])
-    cv.put(p.line([(19, 17), (25, 11)], 1) & right, KHAKI[3])  # a stripe of the old olive coat
-    weld(cv, p.pts([(17, 6), (17, 18)]))
     weld(cv, p.pts([(9, 19), (26, 19)]))
     weather(cv, tub | left | right, seed, holes=4, dents=3, scratches=6, streaks=4)
     rivets(cv, p.pts([(10, 12), (25, 12), (10, 16), (25, 16)]))
     headlight(cv, *p.xy(11, 8))
     headlight(cv, *p.xy(24, 8), broken=True)
-    # ram bar
-    paint(cv, p.line([(7, 4), (28, 4)], 2), STEEL, base=3)
-    for x in (8, 13, 22, 27):
-        paint(cv, p.poly([(x - 1, 4), (x + 1, 4), (x, 1)]), STEEL[1:], base=2)
-    # open cockpit: seat back, jacket, helmet, scarf in paint
-    paint(cv, p.rect(10, 20, 25, 35), STEEL[:3], base=1, light=False)
-    paint(cv, p.rect(14, 30, 21, 34), LEATHER[:3], base=1)
-    paint(cv, p.ellipse(12, 25, 23, 31), LEATHER, base=1, noise=0.3, seed=seed)
-    cv.put(p.rect(15, 30, 20, 30), pc[1])
-    px(cv, p.pts([(21, 31), (22, 32)]), pc[1])
-    paint(cv, p.circle(17.5, 27, 2.3), STEEL, base=3)
-    if tier >= 1:  # sun canopy in paint over the back of the cockpit
-        can = p.rect(10, 31, 25, 35)
-        paint(cv, can, pc, base=2, noise=0.3, seed=seed + 7)
-        for x in (13, 17, 21):
-            cv.put(p.rect(x, 31, x, 35) & can, pc[1])
-    for seg in [[(9, 20), (26, 20)], [(9, 36), (26, 36)], [(9, 20), (9, 36)], [(26, 20), (26, 36)]]:
-        paint(cv, p.line(seg, 1), STEEL, base=3, light=False)
-    if tier >= 1:
-        for seg in [[(9, 20), (26, 36)], [(26, 20), (9, 36)]]:
-            cv.put(p.line(seg, 1) & ~p.rect(12, 24, 23, 32), STEEL[3])
-    px(cv, p.pts([(9, 20), (26, 20), (9, 36), (26, 36)]), STEEL[5])
-    barbed(cv, p.xy(8, 22), p.xy(8, 34))
+    if war:  # heavy bumper with hazard stripes and corner horns
+        bum = p.rect(5, 1, 30, 4)
+        paint(cv, bum, STEEL, base=3, noise=0.3, seed=seed + 9)
+        hazard_stripes(cv, p.rect(8, 2, 27, 3))
+        for x in (5, 30):
+            paint(cv, p.poly([(x - 1, 4), (x + 1, 4), (x, -1)]), STEEL[1:], base=3)
+    else:  # ram bar
+        paint(cv, p.line([(7, 4), (28, 4)], 2), STEEL, base=3)
+        for x in (8, 13, 22, 27):
+            paint(cv, p.poly([(x - 1, 4), (x + 1, 4), (x, 1)]), STEEL[1:], base=2)
+    if closed:
+        _cab(cv, p, pc, war, seed)
+    else:
+        # open cockpit: seat back, jacket, helmet, scarf in paint
+        paint(cv, p.rect(10, 20, 25, 35), STEEL[:3], base=1, light=False)
+        paint(cv, p.rect(14, 30, 21, 34), LEATHER[:3], base=1)
+        paint(cv, p.ellipse(12, 25, 23, 31), LEATHER, base=1, noise=0.3, seed=seed)
+        cv.put(p.rect(15, 30, 20, 30), pc[1])
+        px(cv, p.pts([(21, 31), (22, 32)]), pc[1])
+        paint(cv, p.circle(17.5, 27, 2.3), STEEL, base=3)
+        if tier >= 1:  # sun canopy in paint over the back of the cockpit
+            can = p.rect(10, 31, 25, 35)
+            paint(cv, can, pc, base=2, noise=0.3, seed=seed + 7)
+            for x in (13, 17, 21):
+                cv.put(p.rect(x, 31, x, 35) & can, pc[1])
+        for seg in [[(9, 20), (26, 20)], [(9, 36), (26, 36)], [(9, 20), (9, 36)], [(26, 20), (26, 36)]]:
+            paint(cv, p.line(seg, 1), STEEL, base=3, light=False)
+        if tier >= 1:
+            for seg in [[(9, 20), (26, 36)], [(26, 20), (9, 36)]]:
+                cv.put(p.line(seg, 1) & ~p.rect(12, 24, 23, 32), STEEL[3])
+            # the welded frame: fresh seams along the tub and over the hood
+            for seg in ([(8, 11), (8, L - 10)], [(27, 11), (27, L - 10)], [(10, 13), (25, 13)]):
+                weld(cv, p.pts(seg))
+        px(cv, p.pts([(9, 20), (26, 20), (9, 36), (26, 36)]), STEEL[5])
+        barbed(cv, p.xy(8, 22), p.xy(8, 34))
     # B: flatbed between the cab and the engine (gun mount 2)
     if foot.deck:
         d0, d1 = foot.deck
@@ -285,14 +346,121 @@ def body(pc, foot, tier, seed=1):
     # antenna with a tattered flag in paint
     px(cv, p.pts([(27, L - 8)]), STEEL[1])
     paint(cv, p.poly([(27, L - 8), (32, L - 7), (30, L - 6), (32, L - 3), (28, L - 3)]), pc, base=3)
-    # pintle MG ammo box
-    paint(cv, p.rect(21, 21, 24, 24), KHAKI, base=2)
-    ammo_belt(cv, p.pts([(21, 22), (19, 22)]))
+    if not closed:  # pintle MG ammo box
+        paint(cv, p.rect(21, 21, 24, 24), KHAKI, base=2)
+        ammo_belt(cv, p.pts([(21, 22), (19, 22)]))
+    if war:  # exhaust stacks either side of the cab, sooted
+        for sx in (4.5, 30.5):
+            soot = p.circle(sx, 18, 3.5)
+            shade(cv, soot & ~tub, 0.55)
+            paint(cv, p.circle(sx, 18, 2.4), STEEL[:4], base=2)
+            cv.put(p.circle(sx, 18, 0.9), OUTLINE)
+    return cv
+
+
+def _cab(cv, p, pc, war, seed):
+    """Closed cab over the cockpit (truck, war rig): windscreen, painted (or armoured) roof, gun ring."""
+    cab = p.rect(9, 20, 26, 36)
+    if war:
+        paint(cv, p.rect(9, 20, 17, 36), STEEL, noise=0.3, seed=seed + 5, depth=2)
+        paint(cv, p.rect(18, 20, 26, 36), RUST, base=2, noise=0.4, seed=seed + 6, depth=2)
+        stripe = p.rect(9, 30, 26, 31)
+        paint(cv, stripe, pc, base=2, light=False)
+        chip(cv, stripe, 0.35, seed + 1, STEEL[2])
+        weld(cv, p.pts([(17, 20), (17, 36)]))
+        rivets(cv, p.pts([(10, 23), (25, 23), (10, 35), (25, 35)]))
+        cv.put(p.rect(10, 20, 25, 21), OUTLINE)  # slit windscreen behind a welded mesh
+        for x in range(10, 26, 3):
+            cv.put(p.rect(x, 20, x, 21), STEEL[3])
+        px(cv, p.pts([(13, 21), (22, 21)]), GLASS[1])
+    else:
+        paint(cv, cab, pc, base=2, noise=0.3, seed=seed + 5, depth=2)
+        chip(cv, cab, 0.15, seed + 6, STEEL[2])
+        cv.put(p.rect(10, 20, 25, 21), OUTLINE)  # windscreen
+        px(cv, p.pts([(12, 20), (13, 21), (21, 20)]), GLASS[1])
+        px(cv, p.pts([(11, 20)]), GLASS[3])
+        weld(cv, p.pts([(9, 33), (26, 33)]))
+        for x in (9, 26):  # dark side windows
+            cv.put(p.rect(x, 23, x, 28), OUTLINE)
+        paint(cv, p.rect(19, 30, 24, 32), STEEL, base=2)  # roof box
+    weather(cv, cab, seed + 7, holes=2, dents=2, scratches=3, streaks=2)
+    paint(cv, p.circle(17.5, 25.5, 4.5), STEEL[1:4], base=1, light=False)  # roof gun ring
+    px(cv, p.pts([(6, 21), (29, 21)]), STEEL[3])  # mirrors
+    px(cv, p.pts([(5, 21), (30, 21)]), STEEL[1])
+
+
+def _pickup(pc, foot, seed):
+    cv = new_rig()
+    p = P(cv, foot)
+    L = foot.L
+    b0, b1 = foot.bed
+    # running boards between the axles
+    for x0 in (5, 28):
+        paint(cv, p.rect(x0, 19, x0 + 2, 37), STEEL[:4], base=2, noise=0.3, seed=seed + x0)
+    tub = p.poly([(10, 3), (25, 3), (28, 7), (28, L - 4), (26, L - 2), (9, L - 2), (7, L - 4), (7, 7)])
+    paint(cv, tub, RUST, noise=0.4, seed=seed, depth=2)
+    # long hood over the front engine, two painted panels with a louvred centre strip
+    hl = p.poly([(10, 4), (17, 4), (17, 15), (8, 15), (8, 8)])
+    hr = p.poly([(18, 4), (25, 4), (27, 8), (27, 15), (18, 15)])
+    paint(cv, hl, pc, base=3, noise=0.3, seed=seed + 1)
+    paint(cv, hr, pc, base=2, noise=0.35, seed=seed + 2)
+    chip(cv, hl, 0.12, seed, STEEL[2])
+    chip(cv, hr, 0.2, seed + 3, STEEL[3])
+    for yy in (7, 9, 11, 13):
+        cv.put(p.rect(15, yy, 20, yy), pc[0])
+    weld(cv, p.pts([(17, 4), (17, 15)]))
+    cv.put(p.line([(19, 14), (26, 8)], 1) & hr, KHAKI[3])
+    headlight(cv, *p.xy(10, 5))
+    headlight(cv, *p.xy(25, 5))
+    # bull bar
+    paint(cv, p.line([(6, 2), (29, 2)], 2), STEEL, base=3)
+    for x in (6, 29):
+        paint(cv, p.line([(x, 2), (x, 6)], 2), STEEL, base=2)
+    # windscreen and closed cab with a painted roof
+    cv.put(p.rect(9, 16, 26, 17), OUTLINE)
+    px(cv, p.pts([(11, 16), (12, 17), (20, 16), (21, 17)]), GLASS[1])
+    px(cv, p.pts([(10, 16)]), GLASS[3])
+    roof = p.rect(9, 18, 26, 29)
+    paint(cv, roof, pc, base=2, noise=0.3, seed=seed + 5, depth=2)
+    chip(cv, roof, 0.15, seed + 6, STEEL[2])
+    for x in (9, 26):
+        cv.put(p.rect(x, 20, x, 26), OUTLINE)
+    paint(cv, p.circle(17.5, 23, 4.5), STEEL[1:4], base=1, light=False)  # roof gun ring
+    cv.put(p.rect(10, 29, 25, 30), OUTLINE)  # rear window
+    px(cv, p.pts([(6, 18), (29, 18)]), STEEL[3])  # mirrors
+    px(cv, p.pts([(5, 18), (30, 18)]), STEEL[1])
+    # open load bed: ribbed floor, painted side boards, tailgate
+    floor = p.rect(9, b0, 26, b1)
+    paint(cv, floor, STEEL[:4], base=1, noise=0.3, seed=seed + 11)
+    for x in (11, 14, 21, 24):
+        cv.put(p.rect(x, b0 + 1, x, b1 - 1), STEEL[2])
+    for x0 in (7, 27):
+        board = p.rect(x0, b0, x0 + 1, b1 + 1)
+        paint(cv, board, pc, base=2, noise=0.3, seed=seed + x0, light=False)
+        chip(cv, board, 0.3, seed + x0, RUST[2])
+        rivets(cv, p.pts([(x0, b0 + 2), (x0, b1 - 2)]))
+    gate = p.rect(8, b1 + 1, 27, b1 + 3)
+    paint(cv, gate, RUST, base=3, noise=0.3, seed=seed + 12)
+    hazard_stripes(cv, p.rect(11, b1 + 2, 24, b1 + 2))
+    paint(cv, p.circle(17.5, 40, 4.5), STEEL[1:4], base=1, light=False)  # bed gun ring
+    paint(cv, p.rect(10, 46, 14, 50), KHAKI, base=2, noise=0.2, seed=seed + 13)  # ammo crate
+    cv.put(p.rect(10, 48, 14, 48), KHAKI[1])
+    tarp(cv, 19, 46, 25, 52, seed + 3)
+    weather(cv, tub | hl | hr | roof, seed, holes=4, dents=3, scratches=6, streaks=4)
+    # exhausts run under the bed and poke out at the back
+    for x in (9, 26):
+        paint(cv, p.line([(x, L - 5), (x, L - 1)], 2), RUST[1:], base=2)
+        px(cv, [p.xy(x, L - 1)], OUTLINE)
+    # antenna with a tattered flag in paint on the cab corner
+    px(cv, p.pts([(26, 29)]), STEEL[1])
+    paint(cv, p.poly([(26, 29), (31, 30), (29, 31), (31, 33), (27, 33)]), pc, base=3)
     return cv
 
 
 def body_for_tier(tier):
-    return (FOOT_B if tier >= 2 else FOOT_A), min(tier, 2)
+    """Sample / preview builds: tier 0 bare buggy, 1 framed buggy, 2 pickup, 3 truck, 4 war rig."""
+    style = ["buggy", "buggy_frame", "pickup", "truck", "warrig"][max(0, min(tier, 4))]
+    return STYLE_FOOT[style], style
 
 
 # ---------------------------------------------------------------- armour layers
@@ -424,7 +592,7 @@ def v8(foot, level, seed=71):
     """Supercharger blower through the rear engine; then zoomie headers, then a twin scoop."""
     cv = new_rig()
     p = P(cv, foot)
-    e0 = foot.L - 15
+    e0 = foot.engine_y
     if level >= 2:
         for side, xs in (("L", (9, 6)), ("R", (26, 29))):
             for i in range(3):
@@ -449,17 +617,22 @@ def nitro_bottles(foot, level, seed=81):
     """Brass nitrous bottles with hazard bands beside the engine, hoses to the manifold."""
     cv = new_rig()
     p = P(cv, foot)
-    e0 = foot.L - 15
+    e0 = foot.engine_y
     spots = [(10, e0 - 9), (22, e0 - 9), (6, e0 - 2), (26, e0 - 2)][:[1, 2, 4][level - 1]]
     if foot.deck:  # B: the bottles ride on the flatbed's sides
         spots = [(x, y - 1) for x, y in spots]
+    if foot.bed:  # P: the bottles ride in the load bed, hoses run forward under the cab
+        spots = [(10, 32), (22, 32), (10, 41), (22, 41)][:[1, 2, 4][level - 1]]
     for i, (x, y) in enumerate(spots):
         b = p.rect(x, y, x + 3, y + 7)
         paint(cv, b, BRASS, base=2)
         cv.put(p.rect(x, y + 3, x + 3, y + 3), OUTLINE)
         hazard_stripes(cv, p.rect(x, y + 4, x + 3, y + 5))
         paint(cv, p.rect(x + 1, y - 1, x + 2, y - 1), STEEL, base=4)
-        cv.put(p.line([(x + 1.5, y + 7), (17.5, e0 + 4)], 1) & ~p.rect(11, e0, 24, e0 + 9), TYRE[2])
+        if not foot.bed:
+            cv.put(p.line([(x + 1.5, y + 7), (17.5, e0 + 4)], 1) & ~p.rect(11, e0, 24, e0 + 9), TYRE[2])
+        else:
+            cv.put(p.line([(x + 1.5, y), (x + 1.5, y - 2)], 1), TYRE[2])
     return cv
 
 
@@ -499,6 +672,101 @@ def kit(foot, card, seed=91):
 
 
 KIT_CARDS = ["scrap_magnet", "berserker", "vulture", "regenerator"]
+
+
+# ---------------------------------------------------------------- tech bolt-ons (tech tree v2.3, "Sichtbar als")
+
+TECH_KIT = ["dozer", "cage", "sidecar", "jerrycans", "scrap_pile"]  # rows of rig_tech.png per footprint
+
+
+def tech_kit(pc, foot, name, seed=101):
+    """Hull-fixed tech bolt-ons: dozer blade, roll cage, sidecar (paint keyed), jerrycans, hoard of scrap."""
+    cv = new_rig()
+    p = P(cv, foot)
+    L = foot.L
+    if name == "dozer":
+        # push arms and hydraulic rams back to the front axle
+        for x in (7, 28):
+            paint(cv, p.line([(x, -1), (x, 8)], 2), STEEL[1:], base=2)
+        for x, s in ((11, 1), (24, -1)):
+            cv.put(p.line([(x, 0), (x + s * 2, 6)], 1), STEEL[4])
+            px(cv, p.pts([(x + s * 2, 6)]), BRASS[2])
+        # a wide, slightly curved blade, wider than the hull
+        blade = p.poly([(-5, -3), (6, -6), (29, -6), (40, -3), (40, 1), (29, -2), (6, -2), (-5, 1)])
+        paint(cv, blade, STEEL, base=3, noise=0.35, seed=seed, depth=2)
+        weather(cv, blade, seed, holes=1, dents=2, scratches=4, streaks=3)
+        cv.put(p.line([(-5, -3), (6, -6), (29, -6), (40, -3)], 1), STEEL[5])  # scraped cutting edge
+        hazard_stripes(cv, p.rect(8, -4, 27, -3) & blade)
+        rivets(cv, p.pts([(-2, -1), (4, -3), (31, -3), (37, -1)]))
+        for x in (-4, 39):  # end caps
+            paint(cv, p.rect(x - 1, -4, x + 1, 2), STEEL[1:], base=2)
+        cv.put(p.pix([(12, -5), (20, -5), (25, -4)]), RUST[3])
+    elif name == "cage":
+        # a heavy tube roll cage over the whole body: side rails, hoops, a diagonal brace
+        y0, y1 = 9, L - 9
+        hoops = [y0, foot.flank[0] - 1, foot.flank[1] + 4, y1]
+        for x in (5, 30):
+            paint(cv, p.line([(x, y0), (x, y1)], 2), STEEL, base=4)
+        for y in hoops:
+            paint(cv, p.line([(5, y), (31, y)], 1), STEEL, base=4, light=False)
+        cv.put(p.line([(6, hoops[1]), (30, hoops[2])], 1), STEEL[3])
+        for x in (5, 30):
+            for y in hoops:
+                paint(cv, p.rect(x - 1, y - 1, x + 2, y + 2), STEEL[1:], base=2)  # welded joints
+                px(cv, p.pts([(x, y)]), RUST[4])
+        for y in (hoops[1] + 3, hoops[2] - 3):  # padding on the cross bar
+            paint(cv, p.rect(15, y, 20, y + 1), LEATHER, base=2)
+    elif name == "sidecar":
+        x0, x1 = SIDECAR_X
+        sy0, sy1 = _sidecar_y(foot)
+        cy = (sy0 + sy1) / 2
+        for y in (sy0 + 3, sy1 - 3):  # struts across to the hull
+            paint(cv, p.line([(29, y), (x0 + 1, y)], 2), STEEL[1:], base=2)
+        wheel(cv, *p.xy(x1 + 1, int(cy) - 5), 5, 10, "R")
+        tub = p.poly([(x0 + 2, sy0), (x1 - 2, sy0), (x1, sy0 + 4), (x1, sy1 - 2), (x1 - 2, sy1), (x0 + 1, sy1),
+                      (x0, sy1 - 3), (x0, sy0 + 5)])
+        paint(cv, tub, pc, base=2, noise=0.3, seed=seed, depth=2)
+        chip(cv, tub, 0.2, seed + 1, RUST[2])
+        weather(cv, tub, seed + 2, holes=1, dents=1, scratches=2, streaks=1)
+        nose = p.poly([(x0 + 2, sy0), (x1 - 2, sy0), (x1 - 4, sy0 - 3), (x0 + 4, sy0 - 3)])
+        paint(cv, nose, STEEL, base=3)
+        paint(cv, p.circle((x0 + x1) / 2, cy, 4.0), STEEL[1:4], base=1, light=False)  # gun ring
+        paint(cv, p.ellipse(x0 + 2, sy1 - 6, x1 - 2, sy1 - 1), LEATHER, base=2)  # gunner's seat
+        rivets(cv, p.pts([(x0 + 1, sy0 + 6), (x1 - 1, sy0 + 6), (x0 + 1, sy1 - 4), (x1 - 1, sy1 - 4)]))
+    elif name == "jerrycans":
+        # spare fuel: red jerrycans strapped along both rear quarters (they go up when the rig dies)
+        ys = [L - 21, L - 14] if foot.name != "P" else [foot.bed[0] + 2, foot.bed[0] + 9]
+        xs = [(1, 5), (30, 34)] if foot.name != "P" else [(9, 13), (22, 26)]
+        for i, (xa, xb) in enumerate(xs):
+            for j, y in enumerate(ys):
+                can = p.rect(xa, y, xb, y + 6)
+                paint(cv, can, ["#3b1210", "#6a1d16", "#94291c", "#b8402a", "#d4654a"], base=2, noise=0.2,
+                      seed=seed + i * 7 + j)
+                cv.put(p.line([(xa + 1, y + 1), (xb - 1, y + 5)], 1) & can, "#d4654a")  # embossed X
+                cv.put(p.line([(xb - 1, y + 1), (xa + 1, y + 5)], 1) & can, "#6a1d16")
+                px(cv, p.pts([(xa + 1, y), (xa + 2, y)]), STEEL[3])  # cap and handle
+                cv.put(p.rect(xa, y + 3, xb, y + 3) & can, HAZARD)
+        if foot.name != "P":  # strap
+            cv.put(p.line([(3, ys[0] - 1), (3, ys[1] + 7)], 1), LEATHER[1])
+    elif name == "scrap_pile":
+        # the hoard: a heap of scrap, a tyre and a pipe lashed onto the rear deck
+        cy = foot.engine_y + 4 if foot.name != "P" else (foot.bed[0] + foot.bed[1]) / 2 + 3
+        if foot.deck:
+            cy = (foot.deck[0] + foot.deck[1]) / 2 + 1
+        rng = np.random.default_rng(seed)
+        heap = p.blob(17.5, cy, 8.5, 6.0, 0.35, seed, 3)
+        paint(cv, heap, RUST, base=2, noise=0.5, seed=seed, depth=2)
+        for k in range(9):
+            x = 17.5 + rng.uniform(-7, 7)
+            y = cy + rng.uniform(-5, 4)
+            ramp = [STEEL, RUST, BRASS, KHAKI][k % 4]
+            paint(cv, p.rect(x - 1, y - 1, x + rng.integers(1, 3), y + rng.integers(0, 2)), ramp, base=2)
+        paint(cv, p.circle(13.5, cy - 2, 3.0), TYRE, base=2)
+        cv.put(p.circle(13.5, cy - 2, 1.0), TYRE[0])
+        paint(cv, p.line([(16, cy + 4), (25, cy - 4)], 2), STEEL, base=3)
+        px(cv, p.pts([(20, cy - 3), (22, cy + 1)]), BRASS[3])
+        chain(cv, p.pts([(9, cy - 5), (26, cy + 5)]))
+    return cv
 
 
 # ---------------------------------------------------------------- trailer (engineering tier 3)
@@ -656,12 +924,12 @@ ARMOUR_LAYERS = [("steel_plates", "plates"), ("reinforced_hull", "reinforced"), 
 
 def layer_canvases(build):
     """Flat (facing north, unrotated) canvases of a build, bottom to top, paint keyed.
-    build: {"paint": name, "tier": 0..3, "cards": {card id: level}}."""
+    build: {"paint": name, "tier": 0..4, "cards": {card id: level}, "tech": [TECH_KIT names]}."""
     tier = build.get("tier", 0)
     cards = build.get("cards", {})
-    foot, btier = body_for_tier(tier)
+    foot, style = body_for_tier(tier)
     gk = "tracks" if "caterpillar_tracks" in cards else ("offroad" if "off_road_tyres" in cards else "wheels")
-    out = [gear(foot, gk), paint_key(lambda r: body(r, foot, btier))]
+    out = [gear(foot, gk), paint_key(lambda r: body(r, style))]
     for card, name in ARMOUR_LAYERS:
         lv = cards.get(card, 0)
         if lv:
@@ -680,6 +948,9 @@ def layer_canvases(build):
     for card in KIT_CARDS:
         if cards.get(card):
             out.append(kit(foot, card))
+    for name in TECH_KIT:
+        if name in build.get("tech", []):
+            out.append(paint_key(lambda r, name=name: tech_kit(r, foot, name)))
     return foot, out
 
 
@@ -699,26 +970,30 @@ def compose(build, ang=0.0, aim=None, size=RIG_FRAME + 24):
     out = Canvas(size, size)
     c = size / 2
     tier = build.get("tier", 0)
-    if tier >= 3:  # trailer straight behind
-        hx, hy = RIG_ANCHORS[foot.name]["hitch"]
-        tx, ty = hx, hy + TRAILER_TONGUE
-        rx = tx * math.cos(ang) - ty * math.sin(ang)
-        ry = tx * math.sin(ang) + ty * math.cos(ang)
+    anchors = RIG_ANCHORS[foot.name]
+
+    def rot(x, y):
+        return x * math.cos(ang) - y * math.sin(ang), x * math.sin(ang) + y * math.cos(ang)
+
+    trailer_c = None
+    if tier >= 4:  # trailer straight behind
+        hx, hy = anchors["hitch"]
+        trailer_c = (hx, hy + TRAILER_TONGUE)
+        rx, ry = rot(*trailer_c)
         t = _rotate_outlined(paint_key(trailer), ang, TRAILER_FRAME)
         paste(out, apply_paint(t, ramp), round(c + rx - TRAILER_FRAME / 2), round(c + ry - TRAILER_FRAME / 2))
     for lay in layers:
         f = apply_paint(_rotate_outlined(lay, ang, RIG_FRAME), ramp)
         paste(out, f, round(c - RIG_FRAME / 2), round(c - RIG_FRAME / 2))
-    mounts = list(RIG_ANCHORS[foot.name]["mounts"])
     guns = build.get("guns", [("mg", 1)])
+    spots = list(anchors["mounts"][:2])
+    if trailer_c:
+        spots += [(trailer_c[0] + mx, trailer_c[1] + my) for mx, my in TRAILER_MOUNTS]
+    spots += anchors["mounts"][2:]
+    if "sidecar" in build.get("tech", []) and len(guns) >= 3:
+        spots = spots[:len(guns) - 1] + [anchors["sidecar"]]
     for i, (kind, lv) in enumerate(guns):
-        if i < 2:
-            mx, my = mounts[i]
-        else:
-            hx, hy = RIG_ANCHORS[foot.name]["hitch"]
-            mx, my = hx + TRAILER_MOUNT[0], hy + TRAILER_TONGUE + TRAILER_MOUNT[1]
-        rx = mx * math.cos(ang) - my * math.sin(ang)
-        ry = mx * math.sin(ang) + my * math.cos(ang)
+        rx, ry = rot(*spots[min(i, len(spots) - 1)])
         g = gun(kind, lv, ang if aim is None else aim)
         paste(out, g, round(c + rx - GUN_FRAME / 2), round(c + ry - GUN_FRAME / 2))
     return out
@@ -727,22 +1002,22 @@ def compose(build, ang=0.0, aim=None, size=RIG_FRAME + 24):
 # Line-up for art/samples/rigs.png (same builds as the "rig_growth" screenshot scenario).
 SAMPLE_BUILDS = [
     ("STARTER", {"paint": "red", "tier": 0, "cards": {}, "guns": [("mg", 1)]}),
-    ("PLATES 2 V8", {"paint": "magenta", "tier": 1, "cards": {"steel_plates": 2, "v8_engine": 1},
-                     "guns": [("mg", 2), ("shotgun", 1)]}),
-    ("SPIKES 3 TRACKS", {"paint": "blue", "tier": 2, "cards": {"spiked_plating": 3, "nitro": 2, "berserker": 1,
-                                                                "caterpillar_tracks": 1},
-                         "guns": [("shotgun", 3), ("flamer", 2)]}),
-    ("TRAILER", {"paint": "green", "tier": 3, "cards": {"reinforced_hull": 3, "ablative_scrap": 2,
-                                                        "off_road_tyres": 1, "scrap_magnet": 1},
-                 "guns": [("cannon", 3), ("mg", 3), ("flamer", 3)]}),
-    ("ABLATIVE 3", {"paint": "white", "tier": 2, "cards": {"steel_plates": 3, "ablative_scrap": 3, "vulture": 1,
-                                                           "regenerator": 1, "v8_engine": 3},
-                    "guns": [("mg", 1), ("cannon", 1)]}),
-    ("NITRO FLAMER", {"paint": "purple", "tier": 0, "cards": {"spiked_plating": 1, "nitro": 1},
-                      "guns": [("mg", 1), ("flamer", 1)]}),
+    ("FRAME PLATES V8", {"paint": "magenta", "tier": 1, "cards": {"steel_plates": 2, "v8_engine": 1},
+                         "guns": [("mg", 2), ("shotgun", 1)]}),
+    ("PICKUP DOZER", {"paint": "blue", "tier": 2, "cards": {"spiked_plating": 3, "nitro": 2, "berserker": 1,
+                                                             "caterpillar_tracks": 1}, "tech": ["dozer"],
+                      "guns": [("shotgun", 3), ("flamer", 2), ("mg", 1)]}),
+    ("WAR RIG", {"paint": "green", "tier": 4, "cards": {"reinforced_hull": 3, "ablative_scrap": 2,
+                                                        "off_road_tyres": 1, "scrap_magnet": 1}, "tech": ["jerrycans"],
+                 "guns": [("cannon", 3), ("mg", 3), ("flamer", 3), ("mg", 2)]}),
+    ("TRUCK CAGE HOARD", {"paint": "white", "tier": 3, "cards": {"steel_plates": 3, "vulture": 1,
+                                                                 "regenerator": 1, "v8_engine": 3},
+                          "tech": ["cage", "scrap_pile"], "guns": [("mg", 1), ("cannon", 1), ("mg", 2)]}),
+    ("SIDECAR", {"paint": "purple", "tier": 0, "cards": {"spiked_plating": 1, "nitro": 1}, "tech": ["sidecar"],
+                 "guns": [("mg", 1), ("flamer", 1), ("mg", 2)]}),
     ("REINFORCED", {"paint": "lime", "tier": 1, "cards": {"reinforced_hull": 1, "steel_plates": 1},
-                    "guns": [("mg", 3), ("cannon", 2)]}),
-    ("BRAWLER", {"paint": "black", "tier": 2, "cards": {"spiked_plating": 2, "steel_plates": 1, "v8_engine": 2,
-                                                        "off_road_tyres": 1},
-                 "guns": [("mg", 1), ("shotgun", 2)]}),
+                    "tech": ["jerrycans"], "guns": [("mg", 3), ("cannon", 2)]}),
+    ("BRAWLER", {"paint": "black", "tier": 3, "cards": {"spiked_plating": 2, "steel_plates": 1, "v8_engine": 2,
+                                                        "off_road_tyres": 1}, "tech": ["dozer", "jerrycans"],
+                 "guns": [("mg", 1), ("shotgun", 2), ("cannon", 1)]}),
 ]

@@ -44,6 +44,20 @@ extends RefCounted
 ## - "spectator_ws" (about 160 ticks) the workshop seen by an eliminated player.
 ## - "awards"       (about 120 ticks) game over with LAN-night awards.
 ##
+## Combat visuals of the tech tree (tech tree v2.3 "Sichtbar als"; CombatFx, EffectsLayer, rig layers):
+## - "fx_firebrand" (about 150 ticks) a FIREBRAND buggy (napalm, mixed belts, glowing barrels, nitro with
+##                  dirty fuel and slipstream, burning wake) drifting through a horde: burning aliens, fire
+##                  trail, oil, soot, two-tone tracers, hot barrels; a rival on hot loads with a jammed barrel.
+## - "fx_fortress"  (about 95 ticks) a FORTRESS war rig with trailer (four guns, repair / junkyard drone,
+##                  swarm logic lasers, salvo, EMP) in a horde.
+## - "fx_scrapper"  (about 95 ticks)  a SCRAPPER buggy (scrap baron chain on 700 scrap, jerrycans, crane,
+##                  armour piercing and one shot one kill) with a boulder contract: banners over boulders,
+##                  saw blades, KILL pops.
+## - "fx_chassis"   parked line-up (any ticks): buggy, framed buggy, pickup with dozer and spike skirts,
+##                  truck, pickup with roll cage, war rig with trailer and drone, a sidecar buggy, jerrycans.
+## - "fx_ram"       (about 60 ticks)  ramming builds: full momentum sparks, nitro jet, war machine
+##                  shockwaves and thunderclap chains, a juggernaut glow, a phantom decoy, a dodge.
+##
 ## UI scenarios (main.gd also builds the menu from ui_state()):
 ## - "menu"     the attract battlefield (eight rigs, one per paint) behind the main menu.
 ## - "join"     the join screen with two fake discovered hosts (one in a match).
@@ -55,7 +69,8 @@ extends RefCounted
 const NAMES: PackedStringArray = ["skirmish", "horde", "workshop", "tech_tree", "gameover", "gameover_mp", "eliminated",
 	"menu", "join", "lobby", "pause", "rematch", "waiting", "rig_growth", "late_round", "pvp_on", "rig_kill",
 	"recap", "recap_pvp", "scouting", "combat_feed", "pvp_grace", "spectator", "spectator_ws", "awards",
-	"tech_mid", "tech_swap", "workshop_mid", "tech_beginner"]
+	"tech_mid", "tech_swap", "workshop_mid", "tech_beginner", "fx_firebrand", "fx_fortress", "fx_scrapper",
+	"fx_chassis", "fx_ram"]
 ## Info-UI line-up: [name, paint, GROWTH_BUILDS index, drive, target, extra tech].
 const LAN_NIGHT: Array = [
 	["MAD MAREK", 0, 6, "circle", "nearest", ["ballistics_ammo_bench"]],
@@ -126,6 +141,8 @@ static func build(name: String, p_seed: int) -> SimWorld:
 			return w4
 		"rig_kill":
 			return _rig_kill(p_seed)
+		"fx_firebrand", "fx_fortress", "fx_scrapper", "fx_chassis", "fx_ram":
+			return _fx_world(name, p_seed)
 		"recap", "recap_pvp", "scouting":
 			var c: Vector2 = SimWorld.ARENA.get_center()
 			var w5: SimWorld = _lan_night(p_seed, [c, c + Vector2(260, -150), c + Vector2(-300, 160), c + Vector2(330, 200), c + Vector2(-380, -170)])
@@ -213,8 +230,11 @@ static func step(name: String, w: SimWorld) -> void:
 	if name in ["recap", "recap_pvp", "scouting", "combat_feed", "pvp_grace", "spectator", "spectator_ws", "awards"]:
 		_step_info(name, w)
 		return
-	if name == "rig_growth":
+	if name == "rig_growth" or name == "fx_chassis":
 		w.tick += 1  # parked: only the clock runs (nitro flicker, ring)
+		return
+	if name.begins_with("fx_"):
+		_fx_step(name, w)
 		return
 	if name == "pvp_on" and w.round >= SimWorld.PVP_START_ROUND and w.phase == SimWorld.PHASE_COMBAT:
 		w.step()
@@ -451,6 +471,147 @@ static func _scatter(w: SimWorld, n: int, boulder_p: float, spitter_p: float, mi
 		w.spawn_enemy(kind, p)
 		placed += 1
 
+
+
+# ================================================================ combat visuals (tech tree v2.3)
+
+## Buys `ids` in order (prerequisites first), grants `cards` (levels), refills hp.
+static func _tech_up(w: SimWorld, v: SimVehicle, ids: Array, cards: Dictionary = {}) -> void:
+	for id: String in cards:
+		for i in int(cards[id]):
+			Cards.grant(v, id)
+	v.scrap = 99999
+	for id: String in ids:
+		if not Tech.buy(v, id, w.round):
+			push_warning("scenarios: could not buy %s" % id)
+	v.scrap = 0
+	Cards.recompute(v)
+	v.hp = v.max_hp
+
+
+const FIREBRAND: Array = ["ballistics_ammo_bench", "ballistics_belt_feed", "ballistics_tables", "ballistics_napalm",
+	"ballistics_mixed_belts", "ballistics_glowing", "propulsion_tuned", "propulsion_drift", "propulsion_nitro",
+	"propulsion_dirty_fuel", "propulsion_slipstream", "fusion_burning_wake"]
+const FORTRESS: Array = ["engineering_frame", "engineering_welder", "engineering_pickup", "engineering_drone",
+	"engineering_truck", "engineering_war_rig", "electronics_rangefinder", "electronics_relay", "electronics_targeting",
+	"electronics_emp", "electronics_neural", "electronics_swarm", "fusion_junkyard", "fusion_fortified"]
+const SCRAPPER: Array = ["salvage_hooks", "salvage_haggler", "salvage_black_market", "salvage_jerrycans", "salvage_crane",
+	"salvage_baron", "ballistics_ammo_bench", "ballistics_heavy_shells", "ballistics_tables", "ballistics_he",
+	"ballistics_tungsten", "ballistics_one_shot"]
+const RAMMER: Array = ["propulsion_tuned", "propulsion_bumper", "propulsion_nitro", "propulsion_battering",
+	"propulsion_turbine", "propulsion_juggernaut", "engineering_frame", "engineering_spikes", "fusion_war_machine",
+	"electronics_rangefinder", "electronics_radar", "electronics_targeting", "electronics_emp", "fusion_thunderclap"]
+const PHANTOM: Array = ["propulsion_tuned", "propulsion_drift", "propulsion_nitro", "propulsion_ghost", "propulsion_sidecar",
+	"propulsion_phantom", "engineering_frame", "engineering_welder", "engineering_pickup", "engineering_dozer",
+	"engineering_roll_cage", "engineering_featherweight"]
+
+
+static func _fx_world(name: String, p_seed: int) -> SimWorld:
+	var w := SimWorld.new(p_seed)
+	w.round = 6
+	w.phase_ticks_left = 99999
+	var c: Vector2 = SimWorld.ARENA.get_center()
+	match name:
+		"fx_firebrand":
+			var me: SimVehicle = w.add_vehicle(1, c, "MAD MAREK", 0)
+			_tech_up(w, me, FIREBRAND, {"flamer": 2, "mg": 2, "shotgun": 1})
+			w.apply_command(1, {"type": "set_drive", "value": "circle"})
+			var rv: SimVehicle = w.add_vehicle(2, c + Vector2(150, -60), "DUNE RAT", 2)
+			_tech_up(w, rv, ["ballistics_ammo_bench", "ballistics_heavy_shells", "ballistics_hot_loads"], {"cannon": 2, "mg": 1})
+			w.apply_command(2, {"type": "set_drive", "value": "kite"})
+			_scatter(w, 240, 0.04, 0.04, 70.0, 460.0)
+		"fx_fortress":
+			var me2: SimVehicle = w.add_vehicle(1, c, "MAD MAREK", 3)
+			_tech_up(w, me2, FORTRESS, {"cannon": 2, "mg": 2, "shotgun": 1})
+			Cards.grant(me2, "flamer")
+			Cards.recompute(me2)
+			me2.hp = me2.max_hp * 0.7
+			w.apply_command(1, {"type": "set_drive", "value": "kite"})
+			w.apply_command(1, {"type": "set_target", "value": "boulders"})  # long swarm-logic lasers
+			_scatter(w, 80, 0.1, 0.08, 190.0, 460.0)
+		"fx_scrapper":
+			var me3: SimVehicle = w.add_vehicle(1, c, "MAD MAREK", 6)
+			_tech_up(w, me3, SCRAPPER, {"cannon": 2, "mg": 2})
+			me3.scrap = 720
+			me3.contract_kind = Salvage.K_BOULDERS
+			me3.contract_need = 5
+			me3.contract_prog = 2.0
+			me3.contract_reward = 70
+			w.apply_command(1, {"type": "set_drive", "value": "circle"})
+			_scatter(w, 110, 0.14, 0.06, 170.0, 440.0)
+		"fx_ram":
+			var me4: SimVehicle = w.add_vehicle(1, c, "MAD MAREK", 0)
+			_tech_up(w, me4, RAMMER, {"shotgun": 1})
+			w.apply_command(1, {"type": "set_drive", "value": "charge"})
+			var ph: SimVehicle = w.add_vehicle(2, c + Vector2(-70, 30), "SANDY", 5)
+			_tech_up(w, ph, PHANTOM, {"mg": 2, "flamer": 1})
+			w.apply_command(2, {"type": "set_drive", "value": "charge"})
+			_scatter(w, 300, 0.04, 0.04, 80.0, 400.0)
+		"fx_chassis":
+			w.spawning_enabled = false
+			# one row, the war rig (the local rig, so the camera centres on it) in the middle: [name, paint, tech, cards, x]
+			var line: Array = [
+				["WAR RIG", 5, FORTRESS.slice(0, 6), {"cannon": 3, "mg": 2, "flamer": 1}, 0.0],
+				["BUGGY", 0, [], {}, -210.0],
+				["FRAME", 1, ["engineering_frame", "engineering_spikes"], {"shotgun": 1}, -140.0],
+				["PICKUP", 2, ["engineering_frame", "engineering_spikes", "engineering_pickup", "engineering_dozer"], {"mg": 1, "cannon": 1}, -70.0],
+				["TRUCK", 3, ["engineering_frame", "engineering_welder", "engineering_pickup", "engineering_reactive", "engineering_truck"], {"cannon": 2, "mg": 1}, 70.0],
+				["CAGE", 4, ["engineering_frame", "engineering_welder", "engineering_pickup", "engineering_dozer", "engineering_roll_cage"], {"shotgun": 2, "flamer": 1}, 140.0],
+				["SIDECAR", 6, ["propulsion_tuned", "propulsion_drift", "propulsion_nitro", "propulsion_slipstream", "propulsion_sidecar"], {"mg": 2, "flamer": 1}, 210.0],
+				["JERRYCANS", 7, ["salvage_hooks", "salvage_lucky", "salvage_black_market", "salvage_jerrycans", "salvage_hoarder"], {"mg": 1}, 280.0],
+			]
+			for i in line.size():
+				var v: SimVehicle = w.add_vehicle(i + 1, c + Vector2(line[i][4], -20.0), line[i][0], line[i][1])
+				_tech_up(w, v, line[i][2], line[i][3])
+				v.heading = -PI / 2.0
+				v.vel = Vector2.from_angle(v.heading) * 60.0
+				v.hp = v.max_hp * (0.6 if i == 0 else 1.0)
+				for k in v.weapons.size():
+					v.weapons[k]["aim"] = v.heading + 0.5 - 0.6 * k
+	for v in w.vehicles:
+		v.invuln_ticks = 0
+	return w
+
+
+## Combat-visual scenarios: keep the fight going and trigger the abilities on cue.
+static func _fx_step(name: String, w: SimWorld) -> void:
+	w.step()
+	w.phase_ticks_left = 99999
+	var me: SimVehicle = w.vehicles[0]
+	me.hp = maxf(me.hp, me.max_hp * 0.5)
+	if w.enemy_count < (120 if name == "fx_firebrand" else 60):
+		_scatter(w, 30, 0.05, 0.05, 200.0, 460.0)
+	_fx_cues(name, w, me)  # after the step: the ability events join this tick's recorded events
+
+
+static func _fx_cues(name: String, w: SimWorld, me: SimVehicle) -> void:
+	match name:
+		"fx_firebrand":
+			me.momentum = 100.0
+			if w.tick % 45 == 20 and me.ab_cd[0] <= 0:
+				w.apply_command(1, {"type": "use_ability", "value": "nitro"})
+		"fx_fortress":
+			for cue: Array in [[88, "salvo"], [92, "emp"]]:  # fire on cue even if the auto-cast already used it
+				var slot: int = me.abilities.find(cue[1])
+				if w.tick == cue[0] and slot >= 0:
+					me.ab_cd[slot] = 0
+					w.apply_command(1, {"type": "use_ability", "value": cue[1]})
+			me.hp = minf(me.hp, me.max_hp * 0.75)
+		"fx_scrapper":
+			if w.tick % 40 == 25:  # scrap-press saw blades (the sim launches them at combat start)
+				for k in 2:
+					var dir: Vector2 = Vector2.from_angle(float(w.tick) * 0.37 + float(k) * 2.6)
+					w.spawn_projectile(me.pos + dir * SimWorld.MUZZLE_OFFSET, dir * Salvage.SAW_SPEED, Salvage.SAW_TTL,
+							Salvage.SAW_DAMAGE, me.id, Salvage.SAW_PIERCE)
+			me.contract_prog = minf(me.contract_prog, 3.0)
+			me.scrap = maxi(me.scrap, 700)
+		"fx_ram":
+			me.momentum = 100.0
+			w.vehicles[1].momentum = 100.0
+			if w.tick % 50 == 10:
+				w.apply_command(1, {"type": "use_ability", "value": "nitro"})
+			if w.tick % 60 == 30:
+				w.apply_command(2, {"type": "use_ability", "value": "nitro"})
 
 
 # ================================================================ playtest session replay

@@ -260,7 +260,7 @@ func _draw_mobility(v: SimVehicle, dock: Rect2) -> void:
 		draw_rect(Rect2(x - 1, y - 1, 62, 7), Gfx.OUTLINE)
 		draw_rect(Rect2(x, y, 60, 5), Gfx.UI_PLATE_DARK)
 		draw_rect(Rect2(x, y, floorf(60.0 * f), 5), Gfx.FIRE[5] if full and (world.tick / 3) % 2 == 0 else Gfx.FIRE[3])
-		UiFont.draw_small(self, "MOMENTUM", Vector2(x + 64, y), Gfx.UI_DIM)
+		UiFont.draw_small(self, "MOMENTUM", Vector2(x + 64, y), Gfx.FIRE[5] if full else Gfx.UI_DIM, Gfx.UI_SHADOW)
 		x += 118.0
 	for s in Abilities.SLOTS:
 		var id: String = v.abilities[s]

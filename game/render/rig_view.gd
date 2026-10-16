@@ -20,12 +20,17 @@ var _guns: Array[Sprite2D] = []
 var _flames: Array[Sprite2D] = []  ## [flame, glow] per exhaust
 var _trailer_dir: Vector2 = Vector2.ZERO  ## trailer forward direction (world), ZERO = not placed yet
 var _trailer_pos: Vector2 = Vector2.ZERO
-var _nitro: int = 0
+var _p: Vector2 = Vector2.ZERO  ## last placed display position and hull frame rotation
+var _rot: float = 0.0
+var _nitro: int = 0  ## nitro card level (0 = none): idle exhaust flames while rolling
+var _nitro_ab: bool = false  ## the nitro ability (propulsion tech): a big jet while it burns
+var _mounts: Array = []  ## per gun: [0 hull / 1 trailer / 2 sidecar, index]
+var jitter: PackedInt32Array = PackedInt32Array()  ## per gun: 1 = shaking this frame (jammed barrel)
 
 
 func _init() -> void:
 	_mat = RigArt.paint_material(0)
-	_shadow = _sprite(RigArt.TEX_SHADOW, Gfx.Z_SHADOWS, 6)
+	_shadow = _sprite(RigArt.TEX_SHADOW, Gfx.Z_SHADOWS, _rows(RigArt.TEX_SHADOW, RigArt.FRAME))
 	var sil := ShaderMaterial.new()
 	sil.shader = Gfx.SILHOUETTE_SHADER
 	_shadow.material = sil
@@ -70,6 +75,7 @@ func setup(v: SimVehicle) -> void:
 		s.material = _mat
 		_layers.append(s)
 	guns = RigArt.guns(v)
+	_mounts = _mount_plan(guns.size(), RigArt.has_trailer(v), RigArt.has_sidecar(v))
 	for g: Array in guns:
 		var s := _sprite(RigArt.GUN_TEX[g[0]], Gfx.Z_TURRETS, 3)
 		s.frame_coords = Vector2i(0, int(g[1]) - 1)
@@ -79,7 +85,8 @@ func setup(v: SimVehicle) -> void:
 	_trailer.visible = trailer
 	_trailer_shadow.visible = trailer
 	_nitro = RigArt.card_level(v, "nitro")
-	if _nitro > 0:
+	_nitro_ab = RigArt.fx(v, "ability_nitro")
+	if _nitro > 0 or _nitro_ab:
 		var add := CanvasItemMaterial.new()
 		add.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
 		for i in 2:
@@ -95,6 +102,8 @@ func setup(v: SimVehicle) -> void:
 func place(v: SimVehicle, p: Vector2, head: float, tick: int, frozen: bool) -> void:
 	var frame: int = Gfx.frame_for_angle(head, Gfx.VEHICLE_DIRS)
 	var rot: float = Gfx.frame_rotation(frame, Gfx.VEHICLE_DIRS)
+	_p = p
+	_rot = rot
 	modulate = Color.WHITE if v.alive else DEAD_TINT
 	_shadow.position = p + Vector2(3, 4)
 	_shadow.frame_coords.x = frame
@@ -123,12 +132,16 @@ func place(v: SimVehicle, p: Vector2, head: float, tick: int, frozen: bool) -> v
 		var g: Sprite2D = _guns[i]
 		g.visible = v.alive
 		g.position = mount_position(i, p, rot)
+		if i < jitter.size() and jitter[i] != 0:  # a jammed barrel stutters
+			g.position += Vector2(((tick + i) % 2) * 2 - 1, 0)
 		var aim: float = float(v.weapons[i].get("aim", head)) if i < v.weapons.size() else head
 		g.frame_coords.x = Gfx.frame_for_angle(aim, Gfx.VEHICLE_DIRS)
 	if not _flames.is_empty():
-		var burning: bool = v.alive and v.vel.length() > NITRO_MIN_SPEED
+		var boost: bool = v.nitro_ticks > 0 and v.sputter_ticks <= 0
+		var burning: bool = v.alive and (boost or (_nitro > 0 and v.vel.length() > NITRO_MIN_SPEED))
 		var fframe: int = Gfx.frame_for_angle(head + PI, Gfx.VEHICLE_DIRS)
-		var row: int = (_nitro - 1) * 2 + (tick / 2 + v.id) % 2
+		var lvl: int = 3 if boost else maxi(_nitro, 1)
+		var row: int = (lvl - 1) * 2 + (tick / 2 + v.id) % 2
 		for i in 2:
 			var pos: Vector2 = p + Gfx.snap(RigArt.EXHAUSTS[foot][i].rotated(rot))
 			for s: Sprite2D in [_flames[i * 2], _flames[i * 2 + 1]]:
@@ -137,14 +150,56 @@ func place(v: SimVehicle, p: Vector2, head: float, tick: int, frozen: bool) -> v
 				s.frame_coords = Vector2i(fframe, row)
 
 
-## Centre of gun sprite `i` (display space). Mount 0/1 on the hull, 2 on the trailer.
+## Where each of `n` guns sits: hull rings 0 and 1, then the trailer's two rings (war rig), then the hull
+## extras; with a sidecar (and at least three guns) the last gun rides the sidecar.
+static func _mount_plan(n: int, trailer: bool, sidecar: bool) -> Array:
+	var spots: Array = [[0, 0], [0, 1]]
+	if trailer:
+		spots += [[1, 0], [1, 1]]
+	spots += [[0, 2], [0, 3]]
+	var out: Array = []
+	for i in n:
+		out.append(spots[mini(i, spots.size() - 1)])
+	if sidecar and n >= 3:
+		out[n - 1] = [2, 0]
+	return out
+
+
+## Centre of gun sprite `i` (display space).
 func mount_position(i: int, p: Vector2, rot: float) -> Vector2:
-	if i < 2:
-		return p + Gfx.snap((RigArt.MOUNTS[foot][i] as Vector2).rotated(rot))
-	if _trailer.visible:
-		var tf: int = _trailer.frame_coords.x
-		return _trailer.position + Gfx.snap(RigArt.TRAILER_MOUNT.rotated(Gfx.frame_rotation(tf, Gfx.VEHICLE_DIRS)))
-	return p + Gfx.snap(Vector2(0, 8 + 6 * foot).rotated(rot))
+	var m: Array = _mounts[i] if i < _mounts.size() else [0, mini(i, 3)]
+	match int(m[0]):
+		1:
+			if _trailer.visible:
+				var tf: int = _trailer.frame_coords.x
+				return _trailer.position + Gfx.snap((RigArt.TRAILER_MOUNTS[int(m[1])] as Vector2).rotated(Gfx.frame_rotation(tf, Gfx.VEHICLE_DIRS)))
+		2:
+			return p + Gfx.snap((RigArt.SIDECAR_MOUNT[foot] as Vector2).rotated(rot))
+	return p + Gfx.snap((RigArt.MOUNTS[foot][int(m[1])] as Vector2).rotated(rot))
+
+
+## Exhaust tips in display space (as last placed).
+func exhausts() -> Array[Vector2]:
+	var out: Array[Vector2] = []
+	for e: Vector2 in RigArt.EXHAUSTS[foot]:
+		out.append(_p + Gfx.snap(e.rotated(_rot)))
+	return out
+
+
+## Number of gun sprites (sim weapons and guns share the order).
+func gun_count() -> int:
+	return _guns.size()
+
+
+## Drawn barrel of gun `i`: [muzzle position, barrel start, aim angle of the drawn frame].
+func barrel(i: int) -> Array:
+	if i < 0 or i >= _guns.size():
+		return [position, position, 0.0]
+	var g: Sprite2D = _guns[i]
+	var a: float = Gfx.frame_rotation(g.frame_coords.x, Gfx.VEHICLE_DIRS) - PI / 2.0
+	var length: float = float((RigArt.BARREL[str(guns[i][0])] as Array)[int(guns[i][1]) - 1])
+	var d := Vector2.from_angle(a)
+	return [g.position + d * length, g.position + d * 3.0, a]
 
 
 ## Muzzle of the first gun of weapon kind `kind` (Cards.WEAPON_KINDS index): [position, aim angle].
