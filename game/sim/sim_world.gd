@@ -61,6 +61,11 @@ const ZONE_EMBER := 0
 const ZONE_OIL := 1
 const ZONE_SMOKE := 2
 const ZONE_FIRE := 3
+const EVO_FIRE_EVERY := 5  # Inferno Spout: one fire zone per this many shots (6 per second at the base rate)
+const EVO_FIRE_RADIUS := 16.0
+const EVO_FIRE_TICKS := 45  # 1.5 s
+const EVO_BURN_MULT := 2.0  # Inferno Spout burn dps = hit damage x this
+const EVO_FLAMER_IDX := 3  # Cards.weapon_kind_index("flamer")
 const MAX_ZONES := 64
 
 const MAX_ENEMIES := 2500
@@ -1766,6 +1771,9 @@ func _fire_weapons(v: SimVehicle) -> void:
 		var amask: int = Ammo.mask(v, kind_name)
 		if (amask & Ammo.AP_BIT) != 0:
 			pierce += 1
+		var evo: bool = bool(w.get("evo", false))
+		if evo:
+			amask |= Ammo.EVO_BIT
 		var ttl: float = float(w["range"]) / speed + 0.05
 		var muzzle: Vector2 = v.pos + Vector2.from_angle(ang) * MUZZLE_OFFSET
 		var spot: bool = kind_name == "cannon" and tk == 1 and ti >= 0 and ti < enemy_count and enemy_kind[ti] == SPITTER \
@@ -1783,6 +1791,12 @@ func _fire_weapons(v: SimVehicle) -> void:
 				for p in SCATTER_PELLETS:
 					var sdir: Vector2 = Vector2.from_angle(ang + rng.randf_range(-SCATTER_SPREAD, SCATTER_SPREAD))
 					spawn_projectile(muzzle, sdir * speed, ttl, dmg * SCATTER_DAMAGE, v.id, 0, 0.0, widx, amask)
+		if evo and kind_name == "flamer":  # Inferno Spout: a short fire zone along the stream every EVO_FIRE_EVERY shots
+			var fshots: int = int(w.get("zn", 0)) + 1
+			w["zn"] = fshots
+			if fshots % EVO_FIRE_EVERY == 0:
+				var reach: float = float(w["range"]) * (0.45 + 0.2 * float((fshots / EVO_FIRE_EVERY) % 3))
+				_add_zone(v.pos + Vector2.from_angle(ang) * reach, EVO_FIRE_RADIUS, ZONE_FIRE, EVO_FIRE_TICKS, v.id)
 		w["cooldown"] = cd + float(w["cooldown_ticks"])
 		_emit("fire", muzzle, v.id, widx)
 
@@ -1925,6 +1939,8 @@ func _update_projectiles() -> void:
 				_splash_damage(hit_pos, proj_splash[i], dmg * SPLASH_FRACTION, owner, hit_enemy)
 			_hit_ammo = 0
 			_hit_weapon = -1
+			if (amask & Ammo.EVO_BIT) != 0 and proj_weapon[i] == EVO_FLAMER_IDX and enemy_hp[hit_enemy] > 0.0:
+				_ignite(hit_enemy, dmg * EVO_BURN_MULT, owner)  # Inferno Spout burns hard (no ammo needed)
 			if (amask & Ammo.FIRE_BIT) != 0 and enemy_hp[hit_enemy] > 0.0:
 				_ignite(hit_enemy, dmg * BURN_FRACTION * ascale / (float(BURN_TICKS) * DT), owner)
 			if proj_pierce[i] > 0:

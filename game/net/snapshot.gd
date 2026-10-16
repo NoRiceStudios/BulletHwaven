@@ -856,6 +856,8 @@ static func _get_vehicle(r: _Reader, with_stats: bool = false) -> SimVehicle:
 			r.fail()
 		cards[cid] = lvl
 	v.cards = cards
+	for w in v.weapons:  # the evolved flag follows from the cards (not sent per weapon)
+		w["evo"] = Cards.is_evolved(v, str(w["kind"]))
 	var tech: Array[String] = []
 	var tech_round := {}
 	var nt: int = r.u8()

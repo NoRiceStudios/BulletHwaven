@@ -462,6 +462,8 @@ static func card_lines(id: String, level: int) -> PackedStringArray:
 					out.append("%s %s>%s" % [k, cur[k], nxt[k]])
 		return out
 	var d: Dictionary = Cards.def(id)
+	if Cards.is_evolution(id):  # evolutions state both ingredients and the result
+		return PackedStringArray([str(d.get("text", ""))])
 	return fx_lines(d.get("fx", {}))
 
 

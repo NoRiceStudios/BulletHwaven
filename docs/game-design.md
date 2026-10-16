@@ -99,7 +99,12 @@ Two systems with clearly separate jobs:
   - *Vulture:* the AI targets damaged players, +damage vs. targets under 30% HP
   - *Circle of Death:* the AI circles enemies, side weapons +50%
 - **Duplicates level up** (2× = level 2, 3× = level 3, as in TFT/Brotato).
-- **Evolutions** (Vampire Survivors): a weapon plus a specific passive or module evolves at max level. Examples: flamethrower + fuel tank → *Inferno Spout*; MG + ammo crate ×2 → *Gatling Hell*; harpoon + V8 → *Chain Drag* (drags enemies behind you).
+- **Evolutions** (Vampire Survivors): a weapon at max level (3) plus a specific partner card (any level) evolves. **As built:** while eligible, the evolution card (category `evolution`, rarity legendary) replaces offer slot 0 in every draft, rerolls and bonus offers included, so you see it at once; picking it evolves the weapon in place (same slot, same kind, no extra slot) and it is never offered again. The card text names both ingredients and the result. Tech-tree multipliers still apply on top. Four evolutions are built (numbers replace the level 3 row; DPS vs a dense swarm roughly 2.1-2.7x level 3, single target 1.2-1.5x):
+  - *Gatling Hell* (Machine Gun + V8 Engine): double fire rate (30 shots/s), 4.5 damage, pierce 1, wider spread, range 275.
+  - *Meat Grinder* (Scatter Gun + Spiked Plating): 12 pellets, 4 damage, pierce 2, range 195.
+  - *Earthshaker* (Siege Cannon + Caterpillar Tracks): 56 damage, splash radius 38, pierce 3, range 345.
+  - *Inferno Spout* (Flamethrower + Nitro Injection): range 150, pierce 5, burns every target it hits, and drops short fire zones (1.5 s, one per five shots) along the stream.
+  - Not yet built: harpoon + V8 -> *Chain Drag* (drags enemies behind you). The visual pass (evolved turrets, projectiles, card style) is still to do; the sim exposes `evo` on each weapon and `EVO_BIT` on shots.
 - **Rarity:** common, rare, epic, legendary. Tech raises the chance.
 
 ### 5b. Tech tree v2.3 (per match, resets every match)

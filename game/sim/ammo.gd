@@ -10,6 +10,7 @@ const FIRE_BIT := 1
 const SHRAPNEL_BIT := 2
 const AP_BIT := 4
 const SHARD_BIT := 8  ## marks a shrapnel shard itself (never shatters again, never executes)
+const EVO_BIT := 16  ## marks a shot of an evolved weapon (Cards.EVOLVED); not an ammo type, ignored by effect_scale
 const SWITCH_TICKS := 30  ## the weapon is silent this long after a switch (1 s) unless ammo_instant
 const MIXED_FACTOR := 0.7  ## mixed belts: every loaded effect works at this fraction
 const AP_BONUS := 0.5  ## armour piercing: extra damage fraction vs boulders and rival vehicles
@@ -60,6 +61,7 @@ static func mask(v: SimVehicle, kind: String) -> int:
 
 ## Strength of the ammo effects for a loaded `m` mask: 1 + ammo_fx, times MIXED_FACTOR with two types.
 static func effect_scale(v: SimVehicle, m: int) -> float:
+	m &= ~EVO_BIT
 	var s: float = 1.0 + float(v.tech_fx.get("ammo_fx", 0.0))
 	if (m & (m - 1)) != 0:  # more than one bit set
 		s *= MIXED_FACTOR
