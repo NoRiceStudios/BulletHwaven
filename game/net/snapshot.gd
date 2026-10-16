@@ -26,13 +26,13 @@ extends RefCounted
 ## current round, SimWorld.enemy_max_hp). Card and tech ids are table indices (Cards.DEFS / Tech.DEFS).
 ## Projectile pierce / splash are not sent: the client world is passive.
 
-const VERSION := 11  # 11: salvage (contract offers and progress, loan debt, reserved card, bonus offers), events contract_done / saw / shockwave / chain / jerry_blast; 10: momentum, abilities (slots, cooldowns, effect timers, decoy), swarm mark, jam flags, stunned bitset; 9: ammo / heat per weapon, ground zones, burning bitset, float cooldowns; 8: tech v2.3 (dormant fusions, respecs, purchase rounds); 7: doctrine rules (rig + per weapon); 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
+const VERSION := 12  # 12: event surge; 11: salvage (contract offers and progress, loan debt, reserved card, bonus offers), events contract_done / saw / shockwave / chain / jerry_blast; 10: momentum, abilities (slots, cooldowns, effect timers, decoy), swarm mark, jam flags, stunned bitset; 9: ammo / heat per weapon, ground zones, burning bitset, float cooldowns; 8: tech v2.3 (dormant fusions, respecs, purchase rounds); 7: doctrine rules (rig + per weapon); 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
 const FLAG_WIDE_IDS := 1  ## enemy ids spread over more than 65535: ids are sent as u32 deltas from 0
 const FLAG_STATS := 2  ## vehicles carry round_stats and match_stats (sent outside combat only)
 const FLAG_BURNING := 4  ## a burning bitset follows the projectiles (only sent while something burns)
 const FLAG_STUNNED := 8  ## a stunned bitset follows the burning one (only sent while an EMP holds something)
 const EVENT_EXTRA_BIT := 0x80
-const EVENT_EXTRAS := {"kill": ["victim", "weapon"], "vehicle_destroyed": ["cause", "killer"]}
+const EVENT_EXTRAS := {"kill": ["victim", "weapon"], "vehicle_destroyed": ["cause", "killer"], "surge": ["in_ticks", "index"]}
 const MAX_DEATHS := 16
 const MAX_ROUND_PLAYERS := 16
 
@@ -48,7 +48,7 @@ const PROJ_BYTES := 13
 const EVENT_BYTES := 7
 
 const MAX_VEHICLES := 64  ## vehicle ids travel as u8 / i8 owners, keep well below 127
-const EVENT_TYPES: PackedStringArray = ["fire", "hit", "kill", "vehicle_destroyed", "retreat", "respawn", "spit", "pvp_on", "bounty", "drain", "shrapnel", "jam", "overheat", "execute", "nitro", "emp", "smoke", "salvo", "dodge", "sparks", "boom", "shed", "contract_done", "saw", "shockwave", "chain", "jerry_blast"]
+const EVENT_TYPES: PackedStringArray = ["fire", "hit", "kill", "vehicle_destroyed", "retreat", "respawn", "spit", "pvp_on", "bounty", "drain", "shrapnel", "jam", "overheat", "execute", "nitro", "emp", "smoke", "salvo", "dodge", "sparks", "boom", "shed", "contract_done", "saw", "shockwave", "chain", "jerry_blast", "surge"]
 const MAX_ROUND := 65535
 const SPEED_STEPS := 7
 const HEADING_STEPS := 128

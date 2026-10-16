@@ -215,6 +215,7 @@ func test_dozer_keeps_mites_off_the_hull() -> void:
 		var w: SimWorld = _world(ids)
 		var v: SimVehicle = w.vehicles[0]
 		v.weapons.clear()
+		w.round = 7  # full contact damage (mites are weak since the horde pass)
 		v.heading = 0.0
 		v.max_hp = 5000.0
 		v.hp = 5000.0
@@ -485,7 +486,7 @@ func test_snapshot_carries_mobility_state() -> void:
 	assert_eq(cv.nitro_count, 5)
 	assert_eq(cv.shed, 2)
 	assert_true(Mobility.is_juggernaut(cv), "tech fx follow from the tech list")
-	assert_eq(Snapshot.VERSION, 11)
+	assert_eq(Snapshot.VERSION, 12)
 	# A rig with none of it pays one byte for the whole block.
 	var plain: SimWorld = _world([])
 	var with_state: PackedByteArray = Snapshot.encode(w)
