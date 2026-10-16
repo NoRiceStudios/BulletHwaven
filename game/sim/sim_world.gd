@@ -271,7 +271,10 @@ func apply_command(peer_id: int, cmd: Dictionary) -> void:
 				v.offers = Cards.roll_offers(rng, v, Cards.OFFER_COUNT, round, v.offers)
 		"buy_tech":
 			if _can_shop(v):
-				Tech.buy(v, str(cmd.get("value", "")))
+				Tech.buy(v, str(cmd.get("value", "")), round)
+		"respec_tech":  # {"from": owned choice id, "value": unowned choice of the same branch and tier}
+			if _can_shop(v):
+				Tech.respec(v, str(cmd.get("from", "")), str(cmd.get("value", "")), round)
 		"ready":
 			if _can_shop(v):
 				v.ready = true
@@ -600,6 +603,12 @@ func checksum() -> int:
 		vf.append(float(v.tech.size()))
 		for tid in v.tech:
 			vf.append(float(Tech.index_of(tid)))
+			vf.append(float(v.tech_round.get(tid, 0)))
+		vf.append(float(v.tech_dormant.size()))
+		for tid in v.tech_dormant:
+			vf.append(float(Tech.index_of(tid)))
+		vf.append(float(v.respecs))
+		vf.append(float(v.chassis))
 		for wp in v.weapons:
 			vf.append(float(str(wp["kind"]).hash()))
 			vf.append(float(wp["damage"]))

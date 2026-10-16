@@ -43,11 +43,16 @@ var offers: Array[String] = []  ## 3 card ids to pick from, empty once picked
 var picked: bool = false
 var reroll_cost: int = SimWorld.REROLL_COST_START
 var cards: Dictionary = {"mg": 1}  ## card id -> level 1..3 (insertion order = acquisition order)
-var tech: Array[String] = []  ## owned tech ids
+var tech: Array[String] = []  ## owned tech ids (acquisition order); only ACTIVE ones apply (Tech.active)
+var tech_dormant: Array[String] = []  ## fusions that lost a requirement through a respec (re-buy at half price)
+var tech_round: Dictionary = {}  ## tech id -> round it was bought in (keystone respec window)
+var respecs: int = 0  ## respecs done this match (the first one is free)
 
 # Derived stats (Cards.recompute): base values plus cards plus tech. speed / turn_rate are multipliers.
 var armor: float = 0.0  ## flat reduction per hit (and, scaled, per touching enemy per tick)
 var speed: float = 1.0
+var chassis: int = 1  ## 1..4 from the chassis tech (render: rig size); 1 + the highest active "chassis" fx
+var tech_fx: Dictionary = {}  ## every fx key of the ACTIVE tech summed (stage 2+ mechanics read e.g. tech_fx.get("momentum", 0.0))
 var turn_rate: float = 1.0
 var scrap_mult: float = 1.0
 var regen: float = 0.0  ## hp / s

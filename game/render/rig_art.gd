@@ -6,8 +6,8 @@ extends RefCounted
 ## sprites that show the same frame lines them up. Rows select the variant (footprint, level).
 ## Guns and the trailer turn on their own and sit on the anchors below (mirrors rig.RIG_ANCHORS).
 ##
-## Footprint 0 = "A" buggy (engineering tier 0-1), 1 = "B" six-wheel truck (engineering 2+);
-## engineering 3 adds an articulated trailer that carries the third gun mount.
+## Footprint 0 = "A" buggy (chassis 1), 1 = "B" six-wheel truck (chassis 2+, pickup / truck / war rig);
+## chassis 3+ adds an articulated trailer that carries the third gun mount.
 
 const FRAME := 80
 const TRAILER_FRAME := 64
@@ -53,8 +53,9 @@ const TRAILER_MOUNT := Vector2(0, 0)  ## gun on the trailer, from the trailer ce
 const RADIUS: PackedFloat32Array = [27.0, 33.0]
 
 
+## Chassis size 1..4 (`SimVehicle.chassis`, from the chassis tech); rows of the body strip follow it.
 static func engineering(v: SimVehicle) -> int:
-	return Tech.branch_tier(v, "engineering")
+	return v.chassis
 
 
 static func footprint(v: SimVehicle) -> int:

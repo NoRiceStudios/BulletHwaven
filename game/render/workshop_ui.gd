@@ -267,11 +267,15 @@ func activate(action: String, arg: Variant) -> void:
 			if v.tech.has(id):
 				_say("ALREADY BUILT")
 			elif Tech.blocked_by(v, id) != "":
-				_say("LOCKED - YOU TOOK %s" % UiKit.tech_name(Tech.blocked_by(v, id)))
+				var swap_from: String = Tech.blocked_by(v, id)
+				if Tech.can_respec(v, swap_from, id, world.round):
+					_send({"type": "respec_tech", "from": swap_from, "value": id})
+				else:
+					_say("CANNOT SWAP %s NOW" % UiKit.tech_name(swap_from))
 			elif Tech.missing(v, id) != "":
 				_say("BUILD %s FIRST" % UiKit.tech_name(Tech.next_step(v, id)))
-			elif v.scrap < Tech.cost(id):
-				_say("NEED %d SCRAP" % Tech.cost(id))
+			elif v.scrap < Tech.price(v, id):
+				_say("NEED %d SCRAP" % Tech.price(v, id))
 			else:
 				_send({"type": "buy_tech", "value": id})
 		"ready":

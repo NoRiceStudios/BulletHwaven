@@ -53,44 +53,43 @@ const CARDS_HUNTER := {
 
 # Tech purchase orders (strict: the bot saves for the first unowned entry).
 const TECH_BALANCED: Array = [
-	"ballistics_1", "engineering_1", "electronics_1", "ballistics_2", "engineering_2", "salvage_1",
-	"electronics_2", "propulsion_1", "ballistics_3", "engineering_3", "electronics_3", "salvage_2",
-	"propulsion_2", "salvage_3", "propulsion_3",
-	"ballistics_heavy_shells", "electronics_relay", "fusion_smart_rounds", "ballistics_4", "engineering_4",
-	"engineering_drone", "electronics_4", "ballistics_5", "engineering_5", "electronics_5", "ballistics_6",
+	"ballistics_ammo_bench", "engineering_frame", "electronics_rangefinder", "ballistics_heavy_shells",
+	"engineering_welder", "salvage_hooks", "electronics_relay", "propulsion_tuned", "fusion_fortified",
+	"ballistics_tables", "engineering_pickup", "electronics_targeting", "propulsion_bumper",
+	"ballistics_he", "engineering_drone", "fusion_junkyard", "ballistics_tungsten", "engineering_truck",
+	"electronics_neural", "ballistics_glowing",
 ]
 const TECH_DAMAGE: Array = [
-	"ballistics_1", "electronics_1", "ballistics_2", "electronics_2", "ballistics_3", "electronics_3",
-	"engineering_1", "engineering_2", "engineering_3",
-	"electronics_relay", "fusion_smart_rounds", "ballistics_4", "ballistics_he_shells", "electronics_4",
-	"electronics_overclock", "ballistics_5", "electronics_5", "ballistics_6", "electronics_6",
+	"ballistics_ammo_bench", "electronics_rangefinder", "ballistics_belt_feed", "electronics_relay",
+	"ballistics_tables", "engineering_frame", "engineering_welder", "engineering_pickup",
+	"electronics_targeting", "ballistics_he", "electronics_hunter", "ballistics_tungsten",
+	"electronics_overclock", "ballistics_glowing", "electronics_swarm",
 ]
 const TECH_TANK: Array = [
-	"engineering_1", "engineering_2", "engineering_3", "ballistics_1", "propulsion_1", "ballistics_2",
-	"salvage_1", "electronics_1",
-	"engineering_welder", "engineering_4", "engineering_reactive", "engineering_5", "engineering_6",
+	"engineering_frame", "engineering_welder", "engineering_pickup", "ballistics_ammo_bench",
+	"propulsion_tuned", "ballistics_heavy_shells", "salvage_hooks", "electronics_rangefinder",
+	"engineering_reactive", "engineering_truck", "engineering_war_rig",
 ]
 const TECH_SPEED: Array = [
-	"propulsion_1", "propulsion_2", "propulsion_3", "engineering_1", "ballistics_1", "electronics_1",
-	"engineering_2",
-	"propulsion_drift", "propulsion_4", "propulsion_ghost", "fusion_war_rig", "propulsion_5", "propulsion_6",
+	"propulsion_tuned", "propulsion_drift", "propulsion_nitro", "engineering_frame", "ballistics_ammo_bench",
+	"electronics_rangefinder", "engineering_welder", "fusion_hot_rod", "propulsion_ghost",
+	"propulsion_turbine", "propulsion_phantom",
 ]
 const TECH_RUSH: Array = [
-	"ballistics_1", "engineering_1", "propulsion_1", "electronics_1", "salvage_1",
-	"ballistics_2", "engineering_2", "propulsion_2", "electronics_2", "salvage_2",
-	"ballistics_3", "engineering_3", "propulsion_3", "electronics_3", "salvage_3",
-	"fusion_smart_rounds", "fusion_war_rig", "fusion_scrap_rounds", "fusion_workshop", "fusion_sensor_drive",
-	"ballistics_4", "engineering_4", "propulsion_4", "electronics_4", "salvage_4",
+	"ballistics_ammo_bench", "engineering_frame", "propulsion_tuned", "electronics_rangefinder", "salvage_hooks",
+	"ballistics_belt_feed", "propulsion_bumper", "engineering_spikes", "salvage_haggler",
+	"fusion_thermite", "fusion_barbed", "ballistics_tables", "engineering_pickup", "propulsion_nitro",
+	"electronics_targeting", "salvage_black_market", "ballistics_napalm", "propulsion_battering",
+	"fusion_war_machine",
 ]
 const TECH_SAVER: Array = [
-	"salvage_1", "salvage_2", "salvage_3", "ballistics_1", "engineering_1", "ballistics_2",
-	"engineering_2", "electronics_1",
-	"salvage_loan_shark", "salvage_4", "salvage_5", "salvage_6",
+	"salvage_hooks", "salvage_haggler", "salvage_black_market", "ballistics_ammo_bench", "engineering_frame",
+	"electronics_rangefinder", "salvage_hoarder", "salvage_crane", "salvage_baron",
 ]
 const TECH_HUNTER: Array = [
-	"ballistics_1", "electronics_1", "engineering_1", "ballistics_2", "propulsion_1", "engineering_2",
-	"electronics_2", "ballistics_3",
-	"electronics_hunter", "electronics_3", "fusion_smart_rounds", "ballistics_4", "electronics_4",
+	"ballistics_ammo_bench", "electronics_rangefinder", "engineering_frame", "ballistics_heavy_shells",
+	"propulsion_tuned", "electronics_radar", "fusion_spotter", "ballistics_tables", "electronics_targeting",
+	"electronics_hunter", "ballistics_he", "electronics_overclock",
 ]
 
 var policy_name: String = ""
@@ -360,7 +359,9 @@ func _next_tech(world: SimWorld, v: SimVehicle) -> String:
 		if Tech.blocked_by(v, id2) != "":
 			continue  # an exclusive sibling was bought first: skip this entry
 		var goal: String = Tech.next_step(v, id2)
-		if Tech.can_buy(v, goal) and v.scrap - Tech.cost(goal) >= reserve:
+		if Tech.blocked_by(v, goal) != "":
+			continue  # the way there runs through a node a sibling choice already locked
+		if Tech.can_buy(v, goal) and v.scrap - Tech.price(v, goal) >= reserve:
 			return goal
 		return ""
 	return ""

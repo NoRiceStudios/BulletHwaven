@@ -6,7 +6,7 @@ extends RefCounted
 ##   header   37 B  version, flags, tick, next_enemy_id, counts, enemy id base,
 ##                   phase, round, phase_ticks_left, winner_peer, leader_peer, pvp_grace_ticks, fuel_drain
 ##   vehicles variable (about 160 B each: doctrine strings, weapons, doctrine rules, fuel / flags,
-##                   offers, cards, tech, player name and colour index). Rules are binary: u8 count,
+##                   offers, cards, tech (+ purchase rounds, dormant fusions, respecs), player name and colour index). Rules are binary: u8 count,
 ##                   per rule u8 action (Doctrine.ACTIONS index), u8 conditions, per condition
 ##                   u8 id (Doctrine.COND_IDS), u8 op (Doctrine.OPS), u16 value
 ##   events   7 B each  type, owner, kind, pos (u16 x2, 1/16 px, offset by POS_ORIGIN); the type byte's
@@ -21,7 +21,7 @@ extends RefCounted
 ## current round, SimWorld.enemy_max_hp). Card and tech ids are table indices (Cards.DEFS / Tech.DEFS).
 ## Projectile pierce / splash are not sent: the client world is passive.
 
-const VERSION := 7  # 7: doctrine rules (rig + per weapon); 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
+const VERSION := 8  # 8: tech v2.3 (dormant fusions, respecs, purchase rounds); 7: doctrine rules (rig + per weapon); 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
 const FLAG_WIDE_IDS := 1  ## enemy ids spread over more than 65535: ids are sent as u32 deltas from 0
 const FLAG_STATS := 2  ## vehicles carry round_stats and match_stats (sent outside combat only)
 const EVENT_EXTRA_BIT := 0x80
@@ -408,13 +408,25 @@ static func _put_vehicle(sp: StreamPeerBuffer, v: SimVehicle, with_stats: bool =
 		sp.put_u8(card_ix[k])
 		sp.put_u8(card_lv[k])
 	var tech_ix: Array[int] = []
+	var tech_rd: Array[int] = []
 	for tid in v.tech:
 		var ti: int = Tech.index_of(tid)
 		if ti >= 0 and tech_ix.size() < 255:
 			tech_ix.append(ti)
+			tech_rd.append(clampi(int(v.tech_round.get(tid, 0)), 0, 255))
 	sp.put_u8(tech_ix.size())
-	for ti in tech_ix:
-		sp.put_u8(ti)
+	for k in tech_ix.size():
+		sp.put_u8(tech_ix[k])
+		sp.put_u8(tech_rd[k])  # purchase round (keystone respec window)
+	var dormant_ix: Array[int] = []
+	for tid in v.tech_dormant:
+		var di: int = Tech.index_of(tid)
+		if di >= 0 and dormant_ix.size() < 255:
+			dormant_ix.append(di)
+	sp.put_u8(dormant_ix.size())
+	for di in dormant_ix:
+		sp.put_u8(di)
+	sp.put_u8(clampi(v.respecs, 0, 255))
 	sp.put_u8(clampi(v.protect_ticks, 0, 255))
 	sp.put_u8(clampi(v.invuln_ticks, 0, 255))
 	if with_stats:
@@ -608,13 +620,26 @@ static func _get_vehicle(r: _Reader, with_stats: bool = false) -> SimVehicle:
 		cards[cid] = lvl
 	v.cards = cards
 	var tech: Array[String] = []
+	var tech_round := {}
 	var nt: int = r.u8()
 	for i in nt:
 		var tid: String = Tech.id_at(r.u8())
+		var trd: int = r.u8()
 		if tid == "":
 			r.fail()
 		tech.append(tid)
+		tech_round[tid] = trd
 	v.tech = tech
+	v.tech_round = tech_round
+	var dormant: Array[String] = []
+	var ndorm: int = r.u8()
+	for i in ndorm:
+		var did: String = Tech.id_at(r.u8())
+		if did == "":
+			r.fail()
+		dormant.append(did)
+	v.tech_dormant = dormant
+	v.respecs = r.u8()
 	v.protect_ticks = r.u8()
 	v.invuln_ticks = r.u8()
 	if with_stats:
@@ -665,6 +690,11 @@ static func _commit_vehicles(world: SimWorld, fresh: Array[SimVehicle]) -> void:
 			dst.offers = src.offers
 			dst.cards = src.cards
 			dst.tech = src.tech
+			dst.tech_dormant = src.tech_dormant
+			dst.tech_round = src.tech_round
+			dst.respecs = src.respecs
+			dst.tech_fx = src.tech_fx
+			dst.chassis = src.chassis
 			dst.armor = src.armor
 			dst.speed = src.speed
 			dst.turn_rate = src.turn_rate

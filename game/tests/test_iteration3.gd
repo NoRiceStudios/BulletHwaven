@@ -621,9 +621,9 @@ func test_interest_cap_scales_with_the_round() -> void:
 	assert_eq(w.interest_for(v), 25, "10% of 300 = 30, capped at 25")
 	v.scrap = 120
 	assert_eq(w.interest_for(v), 12, "10% of held scrap")
-	v.tech = ["salvage_2", "salvage_3"]
+	v.tech = ["salvage_hooks", "salvage_haggler", "salvage_black_market"]
 	Cards.recompute(v)
-	assert_eq(w.interest_cap_for(v), 25 + 5, "salvage tech raises the cap")
+	assert_eq(w.interest_cap_for(v), 25 + 4, "salvage tech raises the cap")
 	v.scrap = 120
 	w._begin_workshop()
 	assert_eq(v.scrap, 132)

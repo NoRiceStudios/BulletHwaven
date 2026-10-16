@@ -6,7 +6,7 @@ extends RefCounted
 ## Round-loop scenarios use fast_rounds (4 s combat) and auto-ready through early workshops:
 ## - "workshop"     (about 400 ticks): the workshop after round 3, red with scrap, cards and tech,
 ##                  magenta already picked and ready.
-## - "tech_tree"    (about 400 ticks): the same workshop later in a match: red owns 16 tech nodes
+## - "tech_tree"    (about 400 ticks): the same workshop later in a match: red owns 14 tech nodes
 ##                  (both ballistics forks taken, a fusion) and 640 scrap, with the TECH view
 ##                  open; --hover a node.
 ## - "gameover"     (about 300 ticks): solo, the last fuel burns in round 2, YOUR CONVOY IS LOST.
@@ -48,11 +48,11 @@ const NAMES: PackedStringArray = ["skirmish", "horde", "workshop", "tech_tree", 
 	"recap", "recap_pvp", "scouting", "combat_feed", "pvp_grace", "spectator", "spectator_ws", "awards"]
 ## Info-UI line-up: [name, paint, GROWTH_BUILDS index, drive, target, extra tech].
 const LAN_NIGHT: Array = [
-	["MAD MAREK", 0, 6, "circle", "nearest", ["ballistics_1"]],
-	["DUNE RAT", 2, 3, "kite", "players_first", ["ballistics_1", "ballistics_2", "electronics_1", "salvage_1"]],
-	["SANDY", 3, 2, "charge", "nearest", ["propulsion_1"]],
+	["MAD MAREK", 0, 6, "circle", "nearest", ["ballistics_ammo_bench"]],
+	["DUNE RAT", 2, 3, "kite", "players_first", ["ballistics_ammo_bench", "ballistics_belt_feed", "electronics_rangefinder", "salvage_hooks"]],
+	["SANDY", 3, 2, "charge", "nearest", ["propulsion_tuned"]],
 	["NIGHTCRAWLER", 7, 7, "circle", "strongest", []],
-	["LIMEADE", 6, 1, "kite", "nearest", ["salvage_1"]],
+	["LIMEADE", 6, 1, "kite", "nearest", ["salvage_hooks"]],
 ]
 ## rig_growth line-up: [engineering tier, {card: level}] per paint (weapon cards in mount order).
 const GROWTH_BUILDS: Array = [
@@ -261,14 +261,14 @@ static func _ready_all(w: SimWorld) -> void:
 		w.apply_command(v.peer_id, {"type": "ready"})
 
 
-## Later in a match: a deep ballistics line with both forks taken, electronics to tier 3, the Smart
-## Rounds fusion, an engineering fork, and scrap for the next big node.
+## Later in a match: a ballistics line to stage 4 (napalm), engineering to the pickup, electronics to
+## stage 3, drift, the Burning Wake fusion, and scrap for the next big node.
 static func _stage_tech_tree(red: SimVehicle) -> void:
 	red.scrap = 99999
-	for id: String in ["ballistics_1", "ballistics_2", "ballistics_3", "ballistics_belt_feed", "ballistics_4",
-			"ballistics_napalm", "engineering_1", "engineering_2",
-			"engineering_welder", "electronics_1", "electronics_2", "electronics_3", "fusion_smart_rounds",
-			"salvage_1", "propulsion_1", "engineering_3"]:
+	for id: String in ["ballistics_ammo_bench", "ballistics_belt_feed", "ballistics_tables", "ballistics_napalm",
+			"engineering_frame", "engineering_welder", "engineering_pickup", "electronics_rangefinder",
+			"electronics_radar", "electronics_targeting", "propulsion_tuned", "propulsion_drift",
+			"fusion_burning_wake", "salvage_hooks"]:
 		Tech.buy(red, id)
 	red.scrap = 640
 
@@ -282,7 +282,7 @@ static func _stage_workshop(w: SimWorld) -> void:
 		Cards.grant(red, id)
 	red.offers = Cards.roll_offers(w.rng, red)  # re-deal for the new loadout (slots are full now)
 	red.scrap = 107
-	for id: String in ["ballistics_1", "engineering_1", "ballistics_2"]:
+	for id: String in ["ballistics_ammo_bench", "engineering_frame", "ballistics_belt_feed"]:
 		w.apply_command(red.peer_id, {"type": "buy_tech", "value": id})
 	red.fuel = 60
 	var mag: SimVehicle = w.vehicles[1]
@@ -295,8 +295,10 @@ static func _outfit(v: SimVehicle, tier: int, cards: Dictionary) -> void:
 	for id: String in cards:
 		for i in int(cards[id]):
 			Cards.grant(v, id)
-	for t in range(1, tier + 1):
-		v.tech.append("engineering_%d" % t)
+	# Engineering "tier" -> the chassis chain: 1 frame, 2 pickup (chassis 2), 3 truck (chassis 3).
+	var chain: PackedStringArray = ["engineering_frame", "engineering_welder", "engineering_pickup", "engineering_drone", "engineering_truck"]
+	for t in [0, 1, 3, 5][clampi(tier, 0, 3)]:
+		v.tech.append(chain[t])
 	Cards.recompute(v)
 	v.hp = v.max_hp
 
@@ -415,7 +417,7 @@ static func _scatter(w: SimWorld, n: int, boulder_p: float, spitter_p: float, mi
 ## Same ring positions as NetSession.spawn_position() (duplicated so tools never depend on net/).
 
 const REPLAY_DEFAULT_OPPONENTS: PackedStringArray = ["balanced", "pvp_hunter", "random"]
-const REPLAY_COMMANDS: PackedStringArray = ["pick_card", "reroll", "buy_tech", "ready", "set_drive", "set_target", "set_rules", "set_weapon_target"]
+const REPLAY_COMMANDS: PackedStringArray = ["pick_card", "reroll", "buy_tech", "respec_tech", "ready", "set_drive", "set_target", "set_rules", "set_weapon_target"]
 
 
 static func replay_spawn_position(slot: int) -> Vector2:
@@ -507,9 +509,10 @@ static func replay_apply(w: SimWorld, v: SimVehicle, cmd: Dictionary) -> String:
 	var label: String = type if val == null else "%s %s" % [type, str(int(val)) if (val is float and val == floorf(val)) else str(val)]
 	var scrap: int = v.scrap
 	var tech_n: int = v.tech.size()
+	var respecs: int = v.respecs
 	var was_picked: bool = v.picked
 	var was_ready: bool = v.ready
-	if v.eliminated and type in ["pick_card", "reroll", "buy_tech", "ready"]:
+	if v.eliminated and type in ["pick_card", "reroll", "buy_tech", "respec_tech", "ready"]:
 		return "%s -> IGNORED (you are eliminated)" % label
 	var old_offers: Array[String] = v.offers.duplicate()
 	var old_doc: Dictionary = v.doctrine.duplicate()
@@ -541,7 +544,11 @@ static func replay_apply(w: SimWorld, v: SimVehicle, cmd: Dictionary) -> String:
 			var pre: String = Tech.missing(v, id2)
 			if pre != "":
 				return "%s -> IGNORED (needs %s first)" % [label, pre]
-			return "%s -> IGNORED (costs %d, you have %d)" % [label, Tech.cost(id2), v.scrap]
+			return "%s -> IGNORED (costs %d, you have %d)" % [label, Tech.price(v, id2), v.scrap]
+		"respec_tech":
+			if v.respecs > respecs:
+				return "%s -> swapped %s (%+d scrap)" % [label, str(cmd.get("from", "")), v.scrap - scrap]
+			return "%s -> IGNORED (needs an owned choice and an unowned one of the same stage, scrap, and for stage 6 the round after buying)" % label
 		"ready":
 			if v.ready and not was_ready:
 				return "ready -> ok"

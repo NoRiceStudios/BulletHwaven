@@ -261,16 +261,33 @@ static func recompute(v: SimVehicle, rebuild_weapons: bool = true, adjust_hp: bo
 		var fx: Dictionary = d["fx"]
 		for k: String in fx:
 			st[k] = float(st.get(k, 0.0)) + float(fx[k]) * float(lvl)
+	var tech_fx := {}
+	var chassis: int = 1
+	var eng_penalty: float = 0.0  ## negative speed of engineering nodes, scaled below
 	for id in v.tech:
-		var td: Dictionary = Tech.def(id)
-		if td.is_empty():
+		if not Tech.active(v, id):
 			continue
+		var td: Dictionary = Tech.def(id)
 		var tfx: Dictionary = td["fx"]
 		for k: String in tfx:
-			st[k] = float(st.get(k, 0.0)) + float(tfx[k])
+			var a: float = float(tfx[k])
+			tech_fx[k] = float(tech_fx.get(k, 0.0)) + a
+			if k == "chassis":
+				chassis = maxi(chassis, int(a))
+			elif k == "speed" and a < 0.0 and td["branch"] == "engineering":
+				eng_penalty += a
+			else:
+				st[k] = float(st.get(k, 0.0)) + a
+	if float(tech_fx.get("no_speed_penalty", 0.0)) > 0.0:
+		eng_penalty = 0.0
+	elif float(tech_fx.get("speed_penalty_half", 0.0)) > 0.0:
+		eng_penalty *= 0.5
+	st["speed"] = float(st["speed"]) + eng_penalty
+	v.tech_fx = tech_fx
+	v.chassis = chassis
 
 	var old_max: float = v.max_hp
-	v.max_hp = maxf(SimVehicle.MAX_HP + float(st["hp"]), 1.0)
+	v.max_hp = maxf((SimVehicle.MAX_HP + float(st["hp"])) * (1.0 + float(st.get("hp_pct", 0.0))), 1.0)
 	if adjust_hp and v.alive and v.max_hp > old_max:
 		v.hp = minf(v.hp + (v.max_hp - old_max), v.max_hp)
 	v.hp = minf(v.hp, v.max_hp)

@@ -60,17 +60,19 @@ func test_card_and_tech_tables() -> void:
 		assert_true(Cards.has(id), id)
 	assert_eq(Cards.index_of("nope"), -1)
 	assert_eq(Cards.id_at(99), "")
-	assert_eq(Tech.count(), 57, "5 x (6 core + 4-5 specs) + 5 fusions")
+	assert_eq(Tech.count(), 72, "61 branch nodes + 11 fusions")
 	for b in Tech.BRANCHES:
 		for t in range(1, Tech.MAX_TIER + 1):
-			var id: String = "%s_%d" % [b, t]
-			assert_true(Tech.has(id), id)
-			assert_eq(Tech.cost(id), Tech.TIER_COSTS[t - 1])
-			assert_eq(Tech.prerequisite(id), "" if t == 1 else "%s_%d" % [b, t - 1])
-		for st in [2, 4]:
-			assert_true(Tech.specs(b, st).size() >= 2, "%s fork after tier %d" % [b, st])
+			var row: int = 0
+			for id in Tech.ids(b):
+				if int(Tech.def(id)["tier"]) == t and Tech.def(id)["kind"] != "proto":
+					row += 1
+					assert_eq(Tech.cost(id), Tech.STAGE_COSTS[t - 1])
+			assert_true(row >= 1, "%s stage %d" % [b, t])
+		for st in [2, 4, 5, 6]:
+			assert_true(Tech.choices(b, st).size() >= 2, "%s choice at stage %d" % [b, st])
 	assert_false(Tech.has("ballistics_7"))
-	assert_eq(Tech.ids("", "fusion").size(), 5)
+	assert_eq(Tech.ids("", "fusion_s").size() + Tech.ids("", "fusion_l").size(), 11)
 	assert_eq(Tech.cost("nope"), 0)
 
 
@@ -183,7 +185,7 @@ func test_ready_ignored_in_combat() -> void:
 	assert_false(w.vehicles[0].ready)
 	w.apply_command(1, {"type": "pick_card", "value": 0})
 	w.apply_command(1, {"type": "reroll"})
-	w.apply_command(1, {"type": "buy_tech", "value": "ballistics_1"})
+	w.apply_command(1, {"type": "buy_tech", "value": "ballistics_ammo_bench"})
 	var v: SimVehicle = w.vehicles[0]
 	assert_eq(v.cards, {"mg": 1})
 	assert_eq(v.tech.size(), 0)
@@ -215,12 +217,12 @@ func test_interest() -> void:
 	# Salvage tech raises the cap.
 	var s := _world(1)
 	var v: SimVehicle = s.vehicles[0]
-	v.tech = ["salvage_1", "salvage_2", "salvage_3"]
+	v.tech = ["salvage_hooks", "salvage_haggler", "salvage_black_market"]
 	Cards.recompute(v)
-	assert_eq(v.interest_cap, 10)
+	assert_eq(v.interest_cap, 9)
 	v.scrap = 400
 	_to_workshop(s)
-	assert_eq(v.scrap, 412)
+	assert_eq(v.scrap, 411)
 
 
 # ---------------------------------------------------------------- offers and picking
@@ -304,9 +306,9 @@ func test_offers_respect_weapon_slots() -> void:
 		assert_false(offers.has("cannon") or offers.has("flamer"), "no new weapon when the slots are full")
 	assert_true(Cards.is_offerable(v, "shotgun"), "owned weapons can still level up")
 	assert_true(Cards.is_offerable(v, "mg"))
-	v.tech = ["engineering_1", "engineering_2", "engineering_3"]
+	v.tech = ["engineering_frame", "engineering_welder", "engineering_pickup"]
 	Cards.recompute(v)
-	assert_eq(v.weapon_slots, 3, "engineering_3 adds a slot")
+	assert_eq(v.weapon_slots, 3, "the pickup chassis adds a slot")
 	assert_true(Cards.is_offerable(v, "cannon"))
 	Cards.grant(v, "cannon")
 	assert_eq(v.weapons.size(), 3)
@@ -379,31 +381,31 @@ func test_tech_prerequisites_and_cost() -> void:
 	var w := _world(1)
 	var v: SimVehicle = w.vehicles[0]
 	v.scrap = 500
-	w.apply_command(1, {"type": "buy_tech", "value": "ballistics_1"})
+	w.apply_command(1, {"type": "buy_tech", "value": "ballistics_ammo_bench"})
 	assert_eq(v.tech.size(), 0, "not in combat")
 	_to_workshop(w)
 	var scrap: int = v.scrap  # includes interest
-	w.apply_command(1, {"type": "buy_tech", "value": "ballistics_2"})
-	assert_eq(v.tech.size(), 0, "tier 2 needs tier 1")
-	w.apply_command(1, {"type": "buy_tech", "value": "ballistics_3"})
+	w.apply_command(1, {"type": "buy_tech", "value": "ballistics_belt_feed"})
+	assert_eq(v.tech.size(), 0, "stage 2 needs stage 1")
+	w.apply_command(1, {"type": "buy_tech", "value": "ballistics_tables"})
 	w.apply_command(1, {"type": "buy_tech", "value": "ballistics_9"})
 	w.apply_command(1, {"type": "buy_tech", "value": ""})
 	w.apply_command(1, {"type": "buy_tech", "value": 3})
 	assert_eq(v.tech.size(), 0)
 	assert_eq(v.scrap, scrap)
-	w.apply_command(1, {"type": "buy_tech", "value": "ballistics_1"})
-	assert_eq(v.tech, ["ballistics_1"] as Array[String])
-	assert_eq(v.scrap, scrap - Tech.cost("ballistics_1"), "tier 1 cost paid")
-	w.apply_command(1, {"type": "buy_tech", "value": "ballistics_1"})
+	w.apply_command(1, {"type": "buy_tech", "value": "ballistics_ammo_bench"})
+	assert_eq(v.tech, ["ballistics_ammo_bench"] as Array[String])
+	assert_eq(v.scrap, scrap - Tech.cost("ballistics_ammo_bench"), "stage 1 cost paid")
+	w.apply_command(1, {"type": "buy_tech", "value": "ballistics_ammo_bench"})
 	assert_eq(v.tech.size(), 1, "cannot buy twice")
-	w.apply_command(1, {"type": "buy_tech", "value": "ballistics_2"})
+	w.apply_command(1, {"type": "buy_tech", "value": "ballistics_belt_feed"})
 	assert_eq(v.tech.size(), 2)
-	assert_eq(v.scrap, scrap - Tech.cost("ballistics_1") - Tech.cost("ballistics_2"))
-	assert_gt(float(Tech.cost("ballistics_2")), float(Tech.cost("ballistics_1")), "costs grow by tier")
-	assert_gt(float(Tech.cost("ballistics_3")), float(Tech.cost("ballistics_2")))
-	# Can't afford tier 3.
-	v.scrap = Tech.cost("ballistics_3") - 1
-	w.apply_command(1, {"type": "buy_tech", "value": "ballistics_3"})
+	assert_eq(v.scrap, scrap - Tech.cost("ballistics_ammo_bench") - Tech.cost("ballistics_belt_feed"))
+	assert_gt(float(Tech.cost("ballistics_belt_feed")), float(Tech.cost("ballistics_ammo_bench")), "costs grow by stage")
+	assert_gt(float(Tech.cost("ballistics_tables")), float(Tech.cost("ballistics_belt_feed")))
+	# Can't afford stage 3.
+	v.scrap = Tech.cost("ballistics_tables") - 1
+	w.apply_command(1, {"type": "buy_tech", "value": "ballistics_tables"})
 	assert_eq(v.tech.size(), 2, "too poor")
 	assert_eq(Tech.branch_tier(v, "ballistics"), 2)
 	assert_eq(Tech.branch_tier(v, "salvage"), 0)
@@ -412,7 +414,6 @@ func test_tech_prerequisites_and_cost() -> void:
 func test_tech_changes_derived_stats() -> void:
 	var v := SimVehicle.new(0, 1, Vector2(100, 100))
 	var base_damage: float = float(v.weapons[0]["damage"])
-	var base_range: float = float(v.weapons[0]["range"])
 	var base_cd: int = int(v.weapons[0]["cooldown_ticks"])
 	assert_eq(v.max_hp, 300.0)
 	assert_eq(v.hp, 300.0)
@@ -422,8 +423,10 @@ func test_tech_changes_derived_stats() -> void:
 	assert_eq(v.scrap_mult, 1.0)
 	assert_eq(v.weapon_slots, 2)
 	assert_eq(v.interest_cap, 5)
+	assert_eq(v.chassis, 1)
 	v.scrap = 3000
-	for id in ["ballistics_1", "ballistics_2", "engineering_1", "propulsion_1", "electronics_1", "salvage_1"]:
+	for id in ["ballistics_ammo_bench", "ballistics_heavy_shells", "engineering_frame", "propulsion_tuned",
+			"propulsion_drift", "electronics_rangefinder", "electronics_relay", "salvage_hooks"]:
 		assert_true(Tech.buy(v, id), id)
 	assert_gt(float(v.weapons[0]["damage"]), base_damage, "ballistics: damage")
 	assert_gt(v.max_hp, 300.0, "engineering: hp")
@@ -431,52 +434,49 @@ func test_tech_changes_derived_stats() -> void:
 	assert_gt(v.armor, 0.0, "engineering: armor")
 	assert_gt(v.speed, 1.0, "propulsion: speed")
 	assert_gt(v.turn_rate, 1.0, "propulsion: turn")
-	assert_gt(float(v.weapons[0]["range"]), base_range, "electronics: range")
 	assert_true(int(v.weapons[0]["cooldown_ticks"]) <= base_cd, "electronics: fire rate")
 	assert_gt(v.scrap_mult, 1.0, "salvage: scrap")
-	assert_true(Tech.buy(v, "electronics_2") and Tech.buy(v, "electronics_3"))
-	assert_true(int(v.weapons[0]["cooldown_ticks"]) < base_cd, "faster fire")
-	assert_true(Tech.buy(v, "engineering_2") and Tech.buy(v, "engineering_3"))
+	assert_eq(Doctrine.slots(v), Doctrine.BASE_SLOTS + 1, "rangefinder: rule slot")
+	assert_true(Tech.buy(v, "electronics_targeting") and Tech.buy(v, "engineering_welder") and Tech.buy(v, "engineering_pickup"))
+	assert_eq(Doctrine.slots(v), Doctrine.BASE_SLOTS + 2)
 	assert_eq(v.weapon_slots, 3)
-	assert_true(Tech.buy(v, "salvage_2"))
-	assert_eq(v.interest_cap, 7)
-	assert_true(Tech.buy(v, "salvage_3"))
-	assert_eq(v.interest_cap, 10)
+	assert_eq(v.chassis, 2)
+	assert_true(Tech.buy(v, "salvage_haggler") and Tech.buy(v, "salvage_black_market"))
+	assert_eq(v.interest_cap, 9)
 
 
-func test_tech_forks_are_exclusive() -> void:
+func test_tech_choices_are_exclusive() -> void:
 	var v := SimVehicle.new(0, 1, Vector2(100, 100))
 	v.scrap = 5000
-	assert_false(Tech.buy(v, "ballistics_belt_feed"), "a fork needs its core tier")
-	assert_true(Tech.buy(v, "ballistics_1") and Tech.buy(v, "ballistics_2"))
-	assert_eq(Tech.cost("ballistics_belt_feed"), Tech.SPEC_COSTS[2])
-	assert_true(Tech.buy(v, "ballistics_belt_feed"))
+	assert_false(Tech.buy(v, "ballistics_belt_feed"), "a choice needs its stage 1")
+	assert_true(Tech.buy(v, "ballistics_ammo_bench") and Tech.buy(v, "ballistics_belt_feed"))
+	assert_eq(Tech.cost("ballistics_belt_feed"), Tech.STAGE_COSTS[1])
 	assert_eq(Tech.blocked_by(v, "ballistics_heavy_shells"), "ballistics_belt_feed")
 	assert_false(Tech.can_buy(v, "ballistics_heavy_shells"), "the sibling is locked")
 	assert_false(Tech.buy(v, "ballistics_heavy_shells"))
-	assert_eq(Tech.branch_tier(v, "ballistics"), 2, "specs do not count as core tiers")
-	# the second fork is a separate group
-	assert_true(Tech.buy(v, "ballistics_3") and Tech.buy(v, "ballistics_4"))
+	assert_eq(Tech.branch_tier(v, "ballistics"), 2)
+	# the next stage is a separate group
+	assert_true(Tech.buy(v, "ballistics_tables"))
 	assert_true(Tech.buy(v, "ballistics_napalm"))
-	assert_false(Tech.can_buy(v, "ballistics_he_shells"))
-	assert_false(Tech.can_buy(v, "ballistics_buckshot"))
-	assert_true(Tech.buy(v, "ballistics_5") and Tech.buy(v, "ballistics_6"))
+	assert_false(Tech.can_buy(v, "ballistics_he"))
+	assert_false(Tech.can_buy(v, "ballistics_scatter"))
+	assert_true(Tech.buy(v, "ballistics_tungsten") and Tech.buy(v, "ballistics_glowing"))
 	assert_eq(Tech.branch_tier(v, "ballistics"), 6)
 
 
 func test_tech_fusions_need_both_branches() -> void:
 	var v := SimVehicle.new(0, 1, Vector2(100, 100))
 	v.scrap = 5000
-	for id in ["ballistics_1", "ballistics_2", "ballistics_3"]:
+	for id in ["ballistics_ammo_bench", "ballistics_belt_feed"]:
 		assert_true(Tech.buy(v, id))
-	assert_eq(Tech.missing(v, "fusion_smart_rounds"), "electronics_3")
-	assert_eq(Tech.next_step(v, "fusion_smart_rounds"), "electronics_1", "next_step walks down to a buyable node")
-	assert_false(Tech.buy(v, "fusion_smart_rounds"))
-	for id in ["electronics_1", "electronics_2", "electronics_3"]:
+	assert_eq(Tech.missing(v, "fusion_thermite"), "propulsion_bumper")
+	assert_eq(Tech.next_step(v, "fusion_thermite"), "propulsion_tuned", "next_step walks down to a buyable node")
+	assert_false(Tech.buy(v, "fusion_thermite"))
+	for id in ["propulsion_tuned", "propulsion_bumper"]:
 		assert_true(Tech.buy(v, id))
-	assert_eq(Tech.next_step(v, "fusion_smart_rounds"), "fusion_smart_rounds")
-	assert_true(Tech.buy(v, "fusion_smart_rounds"))
-	assert_eq(v.scrap, 5000 - 70 - 160 - 300 - 70 - 160 - 300 - Tech.FUSION_COST)
+	assert_eq(Tech.next_step(v, "fusion_thermite"), "fusion_thermite")
+	assert_true(Tech.buy(v, "fusion_thermite"))
+	assert_eq(v.scrap, 5000 - 100 - 140 - 100 - 140 - Tech.SMALL_FUSION_COST)
 
 
 func test_tech_weapon_specific_effects() -> void:
@@ -488,18 +488,18 @@ func test_tech_weapon_specific_effects() -> void:
 	var sg_dmg: float = float(sg["damage"])
 	var sg_pel: int = int(sg["pellets"])
 	var mg_pierce: int = int(mg["pierce"])
-	v.tech.assign(["ballistics_1", "ballistics_2", "ballistics_heavy_shells"])
+	v.tech.assign(["ballistics_ammo_bench", "ballistics_heavy_shells"])
 	Cards.recompute(v)
-	assert_true(absf(float(v.weapons[1]["damage"]) - (sg_dmg * (1.0 + 0.10 + 0.12 + 0.15))) < 0.001, "heavy shells: shotgun dmg")
-	assert_true(absf(float(v.weapons[0]["damage"]) - (4.0 * 1.22)) < 0.001, "mg only gets the core bonus")
-	v.tech.assign(["ballistics_1", "ballistics_2", "ballistics_belt_feed", "ballistics_3", "ballistics_4", "ballistics_buckshot"])
+	assert_true(absf(float(v.weapons[1]["damage"]) - (sg_dmg * (1.0 + 0.15 + 0.10))) < 0.001, "heavy shells: shotgun dmg")
+	assert_true(absf(float(v.weapons[0]["damage"]) - (4.0 * 1.15)) < 0.001, "mg only gets the general bonus")
+	v.tech.assign(["ballistics_ammo_bench", "ballistics_belt_feed", "ballistics_tables", "ballistics_scatter"])
 	Cards.recompute(v)
 	assert_true(int(v.weapons[0]["cooldown_ticks"]) <= mg_cd, "belt feed: mg rate")
-	assert_eq(int(v.weapons[1]["pellets"]), sg_pel + 2, "buckshot: pellets")
-	assert_eq(int(v.weapons[0]["pierce"]), mg_pierce, "no pierce before depleted uranium")
-	v.tech.append_array(["ballistics_5", "ballistics_6"])
+	assert_eq(int(v.weapons[1]["pellets"]), sg_pel + 2, "scatter: pellets")
+	assert_eq(int(v.weapons[0]["pierce"]), mg_pierce, "no pierce before tungsten")
+	v.tech.append("ballistics_tungsten")
 	Cards.recompute(v)
-	assert_eq(int(v.weapons[0]["pierce"]), mg_pierce + 1, "depleted uranium: pierce")
+	assert_eq(int(v.weapons[0]["pierce"]), mg_pierce + 1, "tungsten: pierce")
 
 
 func test_tech_salvage_specials() -> void:
@@ -508,16 +508,16 @@ func test_tech_salvage_specials() -> void:
 	_to_workshop(w)
 	v.scrap = 2000
 	var fuel: int = v.fuel
-	for id in ["salvage_1", "salvage_2", "salvage_haggler", "salvage_3", "salvage_4", "salvage_jerrycans"]:
+	for id in ["salvage_hooks", "salvage_haggler", "salvage_black_market", "salvage_jerrycans"]:
 		w.apply_command(1, {"type": "buy_tech", "value": id})
-	assert_eq(v.tech.size(), 6)
+	assert_eq(v.tech.size(), 4)
 	assert_eq(v.fuel, fuel + 15, "jerrycans: one-off fuel")
 	Cards.recompute(v)
 	assert_eq(v.fuel, fuel + 15, "recompute does not pay fuel again")
 	assert_eq(v.reroll_cost, SimWorld.REROLL_COST_START - 3, "haggler: cheaper rerolls at once")
 	assert_eq(v.reroll_discount, 3)
 	var lucky := SimVehicle.new(1, 2, Vector2.ZERO)
-	lucky.tech.assign(["salvage_1", "salvage_2", "salvage_lucky"])
+	lucky.tech.assign(["salvage_hooks", "salvage_lucky"])
 	Cards.recompute(lucky)
 	assert_gt(lucky.card_luck, 0.0, "lucky charm")
 	assert_eq(Cards._offer_weight(lucky, Cards.def("cannon"), 9), roundi(6.0 * (1.0 + lucky.card_luck)), "rare cards weigh more")
@@ -895,7 +895,7 @@ func test_elimination_and_game_over_two_players() -> void:
 	assert_eq(w.tick, tick + 30, "tick still advances")
 	assert_eq(b.pos, pos)
 	w.apply_command(2, {"type": "ready"})
-	w.apply_command(2, {"type": "buy_tech", "value": "salvage_1"})
+	w.apply_command(2, {"type": "buy_tech", "value": "salvage_hooks"})
 	assert_false(b.ready)
 	assert_eq(w.winner_peer, 2)
 
@@ -971,8 +971,8 @@ func _play_some(w: SimWorld) -> void:
 	for v in w.vehicles:
 		v.scrap = 200
 	w.apply_command(1, {"type": "pick_card", "value": 0})
-	w.apply_command(1, {"type": "buy_tech", "value": "ballistics_1"})
-	w.apply_command(1, {"type": "buy_tech", "value": "engineering_1"})
+	w.apply_command(1, {"type": "buy_tech", "value": "ballistics_ammo_bench"})
+	w.apply_command(1, {"type": "buy_tech", "value": "engineering_frame"})
 	w.apply_command(2, {"type": "reroll"})
 	w.vehicles[1].scrap_frac = 0.25
 
@@ -1078,21 +1078,21 @@ func test_snapshot_rejects_bad_round_state() -> void:
 	assert_true(Snapshot.apply(client, good))
 	client = SimWorld.new(0)
 	client.add_vehicle(1, Vector2(1, 2))
-	# Tail (combat: no stats): ... cards n=1, idx, level, tech n=0, protect_ticks, invuln_ticks.
+	# Tail (combat: no stats): ... cards n=1, idx, level, tech n=0, dormant n=0, respecs, protect_ticks, invuln_ticks.
 	var n: int = good.size()
-	assert_eq(good[n - 6], 1, "one card")
+	assert_eq(good[n - 8], 1, "one card")
 	var bad_level: PackedByteArray = good.duplicate()
-	bad_level[n - 4] = 9
+	bad_level[n - 6] = 9
 	assert_false(Snapshot.apply(client, bad_level), "level out of range")
 	var zero_level: PackedByteArray = good.duplicate()
-	zero_level[n - 4] = 0
+	zero_level[n - 6] = 0
 	assert_false(Snapshot.apply(client, zero_level), "level 0")
 	var bad_card: PackedByteArray = good.duplicate()
-	bad_card[n - 5] = 200
+	bad_card[n - 7] = 200
 	assert_false(Snapshot.apply(client, bad_card), "card index out of range")
 	var bad_tech: PackedByteArray = good.duplicate()
-	bad_tech[n - 3] = 1
-	bad_tech[n - 2] = 250
+	bad_tech[n - 5] = 1
+	bad_tech[n - 4] = 250
 	bad_tech.append(0)
 	assert_false(Snapshot.apply(client, bad_tech), "tech index out of range")
 	var bad_phase: PackedByteArray = good.duplicate()
@@ -1119,7 +1119,7 @@ func _scripted_workshop(w: SimWorld) -> void:
 		if w.round % 2 == 0:
 			w.apply_command(v.peer_id, {"type": "reroll"})
 		w.apply_command(v.peer_id, {"type": "pick_card", "value": (w.round + v.id) % 3})
-		for t in ["engineering_1", "ballistics_1", "salvage_1", "electronics_1", "engineering_2", "ballistics_2"]:
+		for t in ["engineering_frame", "ballistics_ammo_bench", "salvage_hooks", "electronics_rangefinder", "engineering_welder", "ballistics_belt_feed"]:
 			w.apply_command(v.peer_id, {"type": "buy_tech", "value": t})
 		w.apply_command(v.peer_id, {"type": "ready"})
 
@@ -1174,7 +1174,7 @@ func test_checksum_covers_round_state() -> void:
 		func(s: SimWorld) -> void: s.vehicles[0].scrap_frac += 0.5,
 		func(s: SimWorld) -> void: s.vehicles[0].offers = ["vulture", "nitro", "mg"],
 		func(s: SimWorld) -> void: s.vehicles[0].cards["steel_plates"] = 2,
-		func(s: SimWorld) -> void: s.vehicles[0].tech.append("salvage_1"),
+		func(s: SimWorld) -> void: s.vehicles[0].tech.append("salvage_hooks"),
 		func(s: SimWorld) -> void: s.vehicles[0].armor += 1.0,
 		func(s: SimWorld) -> void: s.vehicles[0].weapons[0]["pierce"] = 3,
 	]
@@ -1199,9 +1199,9 @@ func test_validate_round_commands() -> void:
 		assert_true(NetSession.validate_command({"type": "pick_card", "value": b}).is_empty(), "rejected pick %s" % str(b))
 	assert_true(NetSession.validate_command({"type": "pick_card"}).is_empty(), "pick_card needs a value")
 
-	for id in ["ballistics_1", "engineering_3", "salvage_2", "electronics_1", "propulsion_3"]:
+	for id in ["ballistics_ammo_bench", "engineering_pickup", "salvage_haggler", "electronics_rangefinder", "propulsion_nitro"]:
 		assert_eq(NetSession.validate_command({"type": "buy_tech", "value": id}), {"type": "buy_tech", "value": id})
-	var bad_tech: Array = ["", "ballistics_7", "BALLISTICS_1", "ballistics_1 ", "mg", 1, 1.0, null, ["ballistics_1"], "x".repeat(500)]
+	var bad_tech: Array = ["", "ballistics_7", "BALLISTICS_AMMO_BENCH", "ballistics_ammo_bench ", "mg", 1, 1.0, null, ["ballistics_ammo_bench"], "x".repeat(500)]
 	for b: Variant in bad_tech:
 		assert_true(NetSession.validate_command({"type": "buy_tech", "value": b}).is_empty(), "rejected tech %s" % str(b).left(20))
 	assert_true(NetSession.validate_command({"type": "buy_tech"}).is_empty())
@@ -1215,7 +1215,7 @@ func test_validate_round_commands() -> void:
 	# Old commands are unchanged.
 	assert_false(NetSession.validate_command({"type": "set_drive", "value": "kite"}).is_empty())
 	assert_true(NetSession.validate_command({"type": "set_drive", "value": 1}).is_empty())
-	assert_true(NetSession.validate_command({"type": "set_drive", "value": "ballistics_1"}).is_empty())
+	assert_true(NetSession.validate_command({"type": "set_drive", "value": "ballistics_ammo_bench"}).is_empty())
 
 
 func test_session_round_flow_and_departure() -> void:
@@ -1235,9 +1235,9 @@ func test_session_round_flow_and_departure() -> void:
 	assert_true(v.picked, "float index from JSON / RPC works")
 	assert_eq(int(v.cards.get(offered, 0)) >= 1, true)
 	v.scrap = 100
-	s.send_command({"type": "buy_tech", "value": "salvage_1"})
-	assert_eq(v.tech, ["salvage_1"] as Array[String])
-	s.send_command({"type": "buy_tech", "value": "salvage_3"})
+	s.send_command({"type": "buy_tech", "value": "salvage_hooks"})
+	assert_eq(v.tech, ["salvage_hooks"] as Array[String])
+	s.send_command({"type": "buy_tech", "value": "salvage_black_market"})
 	assert_eq(v.tech.size(), 1, "prerequisite enforced through the session")
 	s.send_command({"type": "ready"})
 	s._physics_process(1.0 / 30.0)

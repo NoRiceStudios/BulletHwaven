@@ -274,7 +274,7 @@ func send_command(cmd: Dictionary) -> void:
 
 ## Returns a sanitised copy ({"type"} or {"type", "value"}) if `cmd` is an allowed command, else {}.
 ## pick_card takes an integral number 0..2 (an int or a whole float, since JSON / RPC may deliver
-## either; returned as int); buy_tech takes a known tech id; reroll and ready take no value;
+## either; returned as int); buy_tech takes a known tech id; respec_tech takes two ("from", "value"); reroll and ready take no value;
 ## set_rules / set_weapon_target take a "scope" and are re-encoded in canonical form (Doctrine).
 static func validate_command(cmd: Variant) -> Dictionary:
 	if typeof(cmd) != TYPE_DICTIONARY:
@@ -317,6 +317,13 @@ static func validate_command(cmd: Variant) -> Dictionary:
 		if parsed == null:
 			return {}
 		return {"type": type_s, "scope": scope_s, "value": Doctrine.encode(parsed)}
+	if type_s == "respec_tech":  # {"from": owned tech id, "value": tech id to swap to}
+		var from_v: Variant = d.get("from")
+		if typeof(from_v) != TYPE_STRING or typeof(v) != TYPE_STRING:
+			return {}
+		if String(from_v).length() > 32 or String(v).length() > 32 or not Tech.has(String(from_v)) or not Tech.has(String(v)):
+			return {}
+		return {"type": type_s, "from": String(from_v), "value": String(v)}
 	if type_s == "pick_card":
 		var idx: int = -1
 		if typeof(v) == TYPE_INT:

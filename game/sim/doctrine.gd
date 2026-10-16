@@ -52,9 +52,9 @@ const RIG_TARGETS: PackedStringArray = ["nearest", "strongest", "weakest", "play
 const WEAPON_TARGETS: PackedStringArray = ["follow", "nearest", "strongest", "weakest", "players_first", "boulders", "spitters"]
 
 
-## Rule slots of a list for this vehicle: BASE_SLOTS plus the Electronics tier (design doc 5b / 6).
+## Rule slots of a list for this vehicle: BASE_SLOTS plus the `rule_slots` of the active tech.
 static func slots(v: SimVehicle) -> int:
-	return clampi(BASE_SLOTS + Tech.branch_tier(v, "electronics"), 1, MAX_SLOTS)
+	return clampi(BASE_SLOTS + roundi(float(v.tech_fx.get("rule_slots", 0.0))), 1, MAX_SLOTS)
 
 
 static func is_weapon_scope(scope: String) -> bool:
