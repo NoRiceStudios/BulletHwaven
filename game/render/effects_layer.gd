@@ -2,14 +2,14 @@ class_name EffectsLayer
 extends Node2D
 ## Short-lived effects (muzzle flashes, sparks, ichor, explosions, dust, and the tech tree's combat
 ## effects: fire puffs, armour-piercing flashes, shrapnel, KILL pops, shockwaves, EMP rings, chain
-## bolts, dodge streaks) drawn immediately each frame, plus their additive light on a child canvas
+## bolts, dodge streaks, heavy cannon impacts) drawn immediately each frame, plus their additive light on a child canvas
 ## item. No node per effect. Player effects stay warm or steel: cyan is the aliens' colour.
 
 enum Kind { MUZZLE, SPARKS, ICHOR, EXPLOSION, DUST, EXPLOSION_BIG, DEBRIS, FIRE_PUFF, AP_FLASH, SHARDS, KILL,
-	SHOCK, EMP, BOLT, DODGE, SPARK_BURST, FLARE, SOOT, STEAM }
+	SHOCK, EMP, BOLT, DODGE, SPARK_BURST, FLARE, SOOT, STEAM, IMPACT_HEAVY }
 
 const LIFE: PackedFloat32Array = [0.07, 0.18, 0.3, 0.8, 0.6, 1.1, 0.9, 0.35, 0.16, 0.4, 0.8,
-	0.45, 0.5, 0.22, 0.25, 0.35, 0.3, 0.9, 0.7]
+	0.45, 0.5, 0.22, 0.25, 0.35, 0.3, 0.9, 0.7, 0.24]
 const MAX_EFFECTS := 1500
 
 var frozen: bool = false
@@ -97,6 +97,8 @@ func _draw() -> void:
 				_spark_burst(pos, float(e[5]), sd, t)
 			Kind.FLARE:
 				_flare(pos, t)
+			Kind.IMPACT_HEAVY:
+				_impact_heavy(pos, e[2], sd, t)
 			Kind.SOOT, Kind.STEAM:
 				var row: int = 1 if kind == Kind.SOOT else 0
 				_cell(Gfx.TEX_SMOKE, 8, 2, mini(7, 2 + int(t * 6.0)), row, Gfx.snap(pos + Vector2(float(sd % 5 - 2), -10.0 * t)))
@@ -130,6 +132,11 @@ func _draw_glow() -> void:
 				_center_on(_glow, Gfx.TEX_HALO_WARM, pos, Color(1, 0.8, 0.6, 0.7 * (1.0 - t)))
 			Kind.AP_FLASH:
 				_center_on(_glow, Gfx.TEX_HALO_WARM, pos, Color(1, 1, 1, 0.8 * (1.0 - t)))
+			Kind.IMPACT_HEAVY:  # a cannon shell landing: a hard white-hot flash, then a warm afterglow
+				var hs := Vector2(Gfx.TEX_HALO_WARM.get_size()) * (1.3 - 0.4 * t)
+				_glow.draw_texture_rect(Gfx.TEX_HALO_WARM, Rect2(pos - hs / 2.0, hs), false, Color(1, 1, 1, 0.75 * (1.0 - t)))
+				if t < 0.3:
+					_center_on(_glow, Gfx.TEX_HALO_WARM_BIG, pos, Color(1, 0.9, 0.75, 0.22 * (1.0 - t / 0.3)))
 			Kind.SHARDS:
 				if t < 0.4:
 					_center_on(_glow, Gfx.TEX_HALO_WARM, pos, Color(1, 1, 1, 0.5))
@@ -358,3 +365,28 @@ func _spark_burst(pos: Vector2, radius: float, sd: int, t: float) -> void:
 func _flare(pos: Vector2, t: float) -> void:
 	var src: Rect2 = Gfx.cell_rect(Gfx.TEX_FLAME, 8, 3, int(t * 7.0), 2)
 	draw_texture_rect_region(Gfx.TEX_FLAME, Rect2(pos - Vector2(src.size.x / 2.0, src.size.y / 2.0 + Gfx.FLAME_BASE_Y), src.size), src)
+
+
+## Cannon shell hit: a white-hot four-point star that shrinks, a ring of hot sparks thrown back toward
+## the gun and a few slower embers.
+func _impact_heavy(pos: Vector2, angle: float, sd: int, t: float) -> void:
+	var arm: int = int(6.0 * (1.0 - t)) + 1
+	var hot: Color = Gfx.FIRE[6] if t < 0.4 else Gfx.FIRE[5]
+	for k in range(-arm, arm + 1):
+		_px(pos + Vector2(k, 0), hot)
+		_px(pos + Vector2(0, k), hot)
+	if t < 0.5:
+		for k in range(1, arm / 2 + 2):
+			for dg: Vector2 in [Vector2(1, 1), Vector2(-1, 1), Vector2(1, -1), Vector2(-1, -1)]:
+				_px(pos + dg * float(k), Gfx.FIRE[5])
+	var rng := RandomNumberGenerator.new()
+	rng.seed = sd
+	for i in 12:
+		var a: float = angle + rng.randf_range(-1.6, 1.6) if i < 8 else rng.randf() * TAU
+		var spd: float = rng.randf_range(60.0, 130.0) if i < 8 else rng.randf_range(20.0, 45.0)
+		var d: float = spd * LIFE[Kind.IMPACT_HEAVY] * t * (1.0 - 0.4 * t) + 2.0
+		var p: Vector2 = pos + Vector2.from_angle(a) * d
+		var c: Color = Gfx.FIRE[6] if t < 0.3 else (Gfx.FIRE[5] if t < 0.65 else Gfx.FIRE[3])
+		_px(p, c)
+		if i < 8 and t < 0.5:
+			_px(p - Vector2.from_angle(a) * 1.5, Gfx.FIRE[4])

@@ -31,6 +31,8 @@ var frozen: bool = false:
 		frozen = value
 		if _effects != null:
 			_effects.frozen = value
+		if _kill_fx != null:
+			_kill_fx.frozen = value
 
 var _ground: Sprite2D
 var _decals: DecalLayer
@@ -40,6 +42,9 @@ var _tracers: SheetLayer
 var _acid: SheetLayer
 var _halos: Node2D
 var _combat: CombatFx
+var _kill_fx: KillFx
+## Kill combo of the watched rig and the hive surge warning (read by the HUD).
+var juice: JuiceState = JuiceState.new()
 var _labels: Node2D
 var _camera: Camera2D
 var _hud: Hud
@@ -85,6 +90,14 @@ var _decoys: Dictionary = {}  ## vehicle id -> RigView, the faint phantom decoy 
 var _last_tick: int = -1
 var _tick_age: float = 0.0
 var _chain_from: Vector2 = Vector2.ZERO  ## thunderclap: where the last chain bolt started
+## Aliens hit this tick flash white for that tick: Vector2i cell (HIT_CELL px) -> hit positions,
+## each hit registered in its cell and the 8 around it. Empty in screenshot mode.
+var _hit_cells: Dictionary = {}
+const HIT_CELL := 24.0
+const HITS_PER_TICK := 96
+const HIT_FLASH := 0.85
+## Cannon shells in flight at the previous tick, Vector3(x, y, owner): a "hit" next to one is a cannon hit.
+var _shells_prev: PackedVector3Array = PackedVector3Array()
 
 
 func _ready() -> void:
@@ -139,6 +152,11 @@ func _ready() -> void:
 	_combat = CombatFx.new()
 	_combat.view = self
 	add_child(_combat)
+
+	_kill_fx = KillFx.new()
+	_kill_fx.view = self
+	_kill_fx.frozen = frozen
+	add_child(_kill_fx)
 
 	_labels = Node2D.new()
 	_labels.z_index = Gfx.Z_LABELS
@@ -201,6 +219,10 @@ func set_world(w: SimWorld, peer: int) -> void:
 	_decals.clear()
 	_effects.clear()
 	_combat.clear()
+	_kill_fx.clear()
+	juice.reset()
+	_hit_cells.clear()
+	_shells_prev.clear()
 	_burn_start.clear()
 	_shake = 0.0
 	pvp_on_tick = -1
@@ -227,7 +249,24 @@ static func record_tick(w: SimWorld) -> Dictionary:
 	var veh: Array = []
 	for v in w.vehicles:
 		veh.append([v.id, v.pos, v.heading, v.alive])
-	return {"tick": w.tick, "round": w.round, "events": w.events.duplicate(), "vehicles": veh, "pvp": w.pvp_enabled()}
+	return {"tick": w.tick, "round": w.round, "events": w.events.duplicate(), "vehicles": veh, "pvp": w.pvp_enabled(),
+		"shells": cannon_shells(w)}
+
+
+## Cannon shells in flight, Vector3(x, y, owner vehicle id). The host knows each shot's weapon; a client
+## tells shells by their speed.
+static func cannon_shells(w: SimWorld) -> PackedVector3Array:
+	var out := PackedVector3Array()
+	var cannon: int = Cards.weapon_kind_index("cannon")
+	var speed: float = float(Cards.WEAPONS["cannon"]["speed"])
+	var host: bool = w.proj_weapon.size() >= w.proj_count
+	for i in w.proj_count:
+		var o: int = w.proj_owner[i]
+		if o < 0:
+			continue
+		if (w.proj_weapon[i] == cannon) if host else absf(w.proj_vel[i].length() - speed) < 4.0:
+			out.append(Vector3(w.proj_pos[i].x, w.proj_pos[i].y, float(o)))
+	return out
 
 
 ## Screenshot mode: replays recorded ticks so the frame shows the match's history (persistent goo,
@@ -237,6 +276,7 @@ func prime(history: Array) -> void:
 		return
 	var last_tick: int = history[-1]["tick"]
 	var was_pvp: bool = bool(history[0].get("pvp", false))
+	_update_camera(1.0)  # kill bursts only spawn on screen
 	for h: Dictionary in history:
 		var pvp: bool = bool(h.get("pvp", false))
 		if pvp and not was_pvp:
@@ -247,6 +287,7 @@ func prime(history: Array) -> void:
 			if vd[3]:
 				_trail(vd[0], vd[1], vd[2], age if age < EffectsLayer.LIFE[EffectsLayer.Kind.DUST] else -1.0)
 		_consume_events(h["events"], age, last_tick - int(h["tick"]) < SHOT_EFFECT_TICKS, int(h["tick"]), int(h.get("round", world.round)))
+		_shells_prev = h.get("shells", PackedVector3Array())
 	_last_tick = world.tick
 	_veh_trail.clear()
 
@@ -256,6 +297,7 @@ func _process(delta: float) -> void:
 		return
 	if world.tick != _last_tick:
 		_consume_events(world.events, 0.0, true, world.tick, world.round)
+		_shells_prev = cannon_shells(world)
 		_last_tick = world.tick
 		_tick_age = 0.0
 		var pvp: bool = world.pvp_enabled()
@@ -461,7 +503,10 @@ func _update_enemies(lead: float, k: float) -> void:
 		if kind == ckind and _combat.target_pos.size() < CombatFx.CONTRACT_BANNERS and p.distance_squared_to(fv.pos) < 280.0 * 280.0:
 			_combat.target_pos.append(Gfx.snap(p))
 		if kind < _enemy_layers.size():
-			_enemy_layers[kind].add(p, frame, id % 2)
+			var fl: float = 0.0
+			if not _hit_cells.is_empty():
+				fl = _hit_flash(world.enemy_pos[i], kind)
+			_enemy_layers[kind].add(p, frame, id % 2, fl)
 	_enemy_disp = disp
 	_burn_start = starts
 	for layer in _enemy_layers:
@@ -528,9 +573,45 @@ func _draw_halos() -> void:
 		_halos.draw_texture_rect(Gfx.TEX_HALO_WARM, Rect2(wp - ws / 2.0, ws), false, Color(1, 0.5, 0.35, 0.45 if (world.tick / 3) % 2 == 0 else 0.2))
 
 
+## HIT_FLASH when a hit of this tick landed on the alien at sim position `p`, else 0.
+func _hit_flash(p: Vector2, kind: int) -> float:
+	var hits: Variant = _hit_cells.get(Vector2i(floori(p.x / HIT_CELL), floori(p.y / HIT_CELL)))
+	if hits == null:
+		return 0.0
+	var r: float = SimWorld.ENEMY_RADIUS[kind] + 5.0
+	for q: Vector2 in (hits as PackedVector2Array):
+		if q.distance_squared_to(p) <= r * r:
+			return HIT_FLASH
+	return 0.0
+
+
+func _register_hit(pos: Vector2) -> void:
+	var c := Vector2i(floori(pos.x / HIT_CELL), floori(pos.y / HIT_CELL))
+	for dx in range(-1, 2):
+		for dy in range(-1, 2):
+			var k := Vector2i(c.x + dx, c.y + dy)
+			var arr: PackedVector2Array = _hit_cells.get(k, PackedVector2Array())
+			arr.append(pos)
+			_hit_cells[k] = arr
+
+
+## A "hit" by `owner` at `pos` right next to one of its cannon shells of the previous tick.
+func _cannon_hit(owner: int, pos: Vector2) -> bool:
+	var reach: float = float(Cards.WEAPONS["cannon"]["speed"]) * SimWorld.DT * 1.5 + 20.0
+	for s: Vector3 in _shells_prev:
+		if int(s.z) == owner and Vector2(s.x, s.y).distance_squared_to(pos) <= reach * reach:
+			return true
+	return false
+
+
 # ---------------------------------------------------------------- events
 
 func _consume_events(events: Array, age: float, transient: bool, tick: int = -1, rnd: int = 0) -> void:
+	_kill_fx.begin_tick()
+	_hit_cells.clear()
+	var hits: int = 0
+	var fv0: SimVehicle = focus_vehicle()
+	juice.set_focus(fv0.id if fv0 != null else -1)
 	for e: Dictionary in events:
 		_log_event(e, tick, rnd)
 		var pos: Vector2 = e.get("pos", Vector2.ZERO)
@@ -618,13 +699,24 @@ func _consume_events(events: Array, age: float, transient: bool, tick: int = -1,
 					if owner < 0:  # acid splashing on a rig
 						_effects.spawn(EffectsLayer.Kind.ICHOR, pos, ang, age, h)
 					else:
-						_impact(owner, pos, age, h)
+						_impact(owner, pos, age, h, _cannon_hit(owner, pos))
+						if kind >= 0 and not frozen and hits < HITS_PER_TICK:
+							hits += 1
+							_register_hit(pos)
+			"surge":  # the hive surges in `in_ticks`: the HUD's SWARM INCOMING banner
+				juice.on_surge(tick if tick >= 0 else world.tick, int(e.get("in_ticks", JuiceState.SURGE_DEFAULT_TICKS)))
 			"kill":
 				if kind < 0:
 					continue  # player kill: the wreck comes from "vehicle_destroyed", no alien goo
 				_kill_decal(pos, kind, h)
-				if transient:
-					_effects.spawn(EffectsLayer.Kind.ICHOR, pos, float(h % 628) / 100.0, age, h + 1)
+				juice.on_kill(owner, tick if tick >= 0 else world.tick)
+				if transient and _on_screen(pos) and _kill_fx.burst(kind, pos, age, h + 1):
+					if kind == SimWorld.BOULDER:  # a cracked shell: a dust ring and a light jolt
+						_effects.spawn(EffectsLayer.Kind.SHOCK, pos, 0.0, age, 0, 20.0)
+						if age < 0.05 and not frozen:
+							_shake = maxf(_shake, 0.42)
+					if owner >= 0 and owner == juice.focus_id:
+						_kill_fx.scrap(pos, SimWorld.ENEMY_SCRAP[kind], age, h)
 			"vehicle_destroyed":  # a rig goes up: big blast, flying scrap, shake (#11)
 				_decals.stamp(Gfx.TEX_SCORCH, 2, 1, h % 2, 0, pos)
 				for i in 3:
@@ -691,17 +783,22 @@ func _muzzle_flash(vehicle_id: int, muzzle: Vector2, kind: int, age: float, h: i
 	_effects.spawn(EffectsLayer.Kind.MUZZLE, m[0], m[1], age, rows[first])
 	if rows[0] != rows[1]:  # two-tone: the other belt's colour just ahead of it
 		_effects.spawn(EffectsLayer.Kind.MUZZLE, m[0] + Vector2.from_angle(m[1]) * 3.0, m[1], age, rows[1 - first])
-	if kind == Cards.weapon_kind_index("cannon"):
+	if kind == Cards.weapon_kind_index("cannon"):  # the cannon kicks: back-sparks, a muzzle flare and a smoke puff
 		_effects.spawn(EffectsLayer.Kind.SPARKS, m[0], m[1] + PI, age, Gfx.hash_pos(m[0], 3))
+		_effects.spawn(EffectsLayer.Kind.FLARE, m[0] + Vector2.from_angle(m[1]) * 2.0, m[1], age, h)
+		_effects.spawn(EffectsLayer.Kind.STEAM, m[0] + Vector2.from_angle(m[1]) * 4.0, 0.0, age + 0.15, h)
 
 
-## A shot landing: plain sparks, an incendiary flame lick, a shrapnel spray or an armour-piercing flash.
-func _impact(owner: int, pos: Vector2, age: float, h: int) -> void:
+## A shot landing: plain sparks, an incendiary flame lick, a shrapnel spray or an armour-piercing flash;
+## a cannon shell (`heavy`) also lands with a hard white-hot flash.
+func _impact(owner: int, pos: Vector2, age: float, h: int, heavy: bool = false) -> void:
 	var v: SimVehicle = _vehicle(owner)
 	var ang: float = float(h % 628) / 100.0
 	var row: int = CombatFx.ammo_row(CombatFx.rig_mask(v), h / 5) if v != null else Gfx.TRACER_PLAIN
 	if v != null:
 		ang = (v.pos - pos).angle()  # sparks fly back toward the shooter
+	if heavy:
+		_effects.spawn(EffectsLayer.Kind.IMPACT_HEAVY, pos, ang, age, h)
 	match row:
 		Gfx.TRACER_FIRE:
 			_effects.spawn(EffectsLayer.Kind.FIRE_PUFF, pos, ang, age, h)

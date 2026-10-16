@@ -2,7 +2,8 @@ class_name SheetLayer
 extends Node2D
 ## Draws many copies of one sprite sheet with a single MultiMesh: optional drop shadow pass,
 ## the sprites themselves and an optional additive glow pass all share the same instance data.
-## Usage per frame: begin(), add(pos, frame, row) for every instance, finish().
+## Usage per frame: begin(), add(pos, frame, row) for every instance, finish(). `flash` (0..1) whitens
+## one instance for a frame (aliens taking a hit; the shadow and glow passes ignore it).
 
 var _mm: MultiMesh
 var _count: int = 0
@@ -58,11 +59,11 @@ func begin(expected: int = 0) -> void:
 		_mm.instance_count = nearest_po2(expected)
 
 
-func add(pos: Vector2, frame: int, row: int = 0) -> void:
+func add(pos: Vector2, frame: int, row: int = 0, flash: float = 0.0) -> void:
 	if _count >= _mm.instance_count:
 		_grow(_count * 2)
 	_mm.set_instance_transform_2d(_count, Transform2D(0.0, Gfx.snap(pos)))
-	_mm.set_instance_custom_data(_count, Color(float(frame), float(row), 0.0, 0.0))
+	_mm.set_instance_custom_data(_count, Color(float(frame), float(row), flash, 0.0))
 	_count += 1
 
 

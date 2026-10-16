@@ -370,6 +370,14 @@ The aliens look like **plausible desert ecology**, not like classic sci-fi monst
 - **Starship Troopers / The Riftbreaker:** alien hordes, nests, top-down horde chaos
 - **Death Stranding / Kenshi:** the feel of an empty, rough, beautiful world
 
+### 11h. Combat feedback: the kill is the reward
+The doctrine drives and the player watches, so watching has to feel good. Kill feedback scales with mass and stays readable in hordes of hundreds:
+- **Kill bursts:** a mite pops in a white-cyan splat with a few chitin bits and goo droplets; a boulder cracks into hopping shell plates with a dust ring and a light camera jolt; a spitter bursts in an acid spray. Alien bits glow cyan only for the instant of death and cool to dark teal; shell and dust stay in the desert ramps.
+- **Hits:** an alien that takes a hit flashes white for a frame (its dark outline stays). Cannon shells land with a hard white-hot star and kick at the muzzle (flare and a smoke puff).
+- **Scrap:** kills of your rig throw warm scrap sparkles that fly into the rig; the dock's scrap number ticks up with a short pulse and a floating "+N".
+- **Kill combo:** kills within 1.5 s chain; the counter ("x24") stands next to the rig, grows and warms from pale gold to deep fire, and calls out milestones in stencil: ROADKILL (10), SHREDDED (25), MEAT GRINDER (50), HIVE BREAKER (100), WASTELAND LEGEND (200).
+- **Surges:** two seconds before a hive surge a SWARM INCOMING plate drops in under the clock with a faint cyan pulse on the screen edges (cyan = the hive).
+
 ---
 
 ## 12. Reference games (gameplay): what we take from each

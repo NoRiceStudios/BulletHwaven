@@ -7,7 +7,9 @@ extends Control
 ## screen edge, the PvP grace countdown, a fuel-drain warning before camp, and spectator mode once
 ## the local rig is eliminated (Tab / Left / Right cycle the watched rig, live standings). Reads sim
 ## state and the WorldView logs only, so it works the same for host, client and solo. Workshop and
-## game over have their own overlays.
+## game over have their own overlays. Combat juice (WorldView.juice): the watched rig's kill combo next
+## to it with milestone words, the scrap counter ticking up with a pulse, and the SWARM INCOMING banner
+## with a cyan edge pulse while a hive surge is announced.
 
 const BANNER_TICKS := 75  ## how long a phase-start banner stays up (sim ticks)
 const PVP_BANNER_TICKS := 105  ## the full-width PVP ON banner (#11)
@@ -18,6 +20,20 @@ const DRAIN_WARN_TICKS := 12 * SimWorld.TICK_RATE  ## warn about the camp fuel d
 const FEED_BG := Color(0.1, 0.07, 0.07, 0.78)
 
 var _panels: Array[Rect2] = []  ## HUD rects drawn this frame (rival arrows stay clear of them)
+## Scrap counter of the watched rig: the shown value ticks up to the real one; a gain pulses it and
+## floats "+N" over it. Real time, never in screenshot mode (frozen).
+var _scrap_id: int = -1
+var _scrap_seen: int = 0
+var _scrap_shown: float = 0.0
+var _scrap_pulse: float = 0.0  ## 1 -> 0
+var _gain: int = 0
+var _gain_t: float = 9.0  ## s since the last gain
+## Kill combo pop: 1 on every chained kill, decays fast (real time, 0 when frozen).
+var _combo_seen: int = 0
+var _combo_pop: float = 0.0
+var _combo_left: bool = false  ## the counter sits left of the rig (a rival is on its right)
+const SCRAP_PULSE_S := 0.35
+const GAIN_SHOW_S := 0.9
 
 var world: SimWorld = null
 var local_peer: int = 1
@@ -30,8 +46,41 @@ func _ready() -> void:
 	texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	_tick_juice(delta)
 	queue_redraw()
+
+
+func _tick_juice(delta: float) -> void:
+	var v: SimVehicle = view.focus_vehicle() if view != null and world != null else null
+	var frozen: bool = view == null or view.frozen
+	if v == null:
+		_scrap_id = -1
+		return
+	if v.id != _scrap_id or frozen or v.scrap < _scrap_seen:
+		_scrap_id = v.id
+		_scrap_shown = float(v.scrap)
+		_scrap_pulse = 0.0
+		_gain_t = 9.0
+	elif v.scrap > _scrap_seen:
+		var got: int = v.scrap - _scrap_seen
+		_gain = (_gain + got) if _gain_t < GAIN_SHOW_S * 0.6 else got
+		_gain_t = 0.0
+		_scrap_pulse = 1.0
+	_scrap_seen = v.scrap
+	if not frozen:
+		var gap: float = float(v.scrap) - _scrap_shown
+		_scrap_shown = minf(float(v.scrap), _scrap_shown + maxf(24.0, gap * 9.0) * delta)
+		_scrap_pulse = maxf(0.0, _scrap_pulse - delta / SCRAP_PULSE_S)
+		_gain_t += delta
+	var n: int = view.juice.combo
+	if frozen:
+		_combo_pop = 0.0
+	elif n > _combo_seen:
+		_combo_pop = 1.0
+	else:
+		_combo_pop = maxf(0.0, _combo_pop - delta * 7.0)
+	_combo_seen = n
 
 
 ## Spectator keys: Tab / Right next rig, Shift+Tab / Left previous, Home or A back to auto.
@@ -83,6 +132,8 @@ func _draw() -> void:
 			_dim(vs, view.local_screen_pos() if view else vs / 2.0)
 		elif me != null and me.alive and me.hp / me.max_hp < LOW_HP:
 			_low_hp(vs, me.hp / me.max_hp)
+		if view != null and view.juice.surge_active(world.tick):
+			_surge_edge(vs)
 		_draw_rival_tags()  # under the panels
 		_draw_top(vs)
 		_draw_dock(v, vs)
@@ -97,6 +148,10 @@ func _draw() -> void:
 		_draw_grace(vs, watching)
 		if v != null and (watching or not (me != null and me.eliminated)):
 			_draw_rival_arrows(vs, v)
+			if v.alive:
+				_draw_combo(v)
+		if view != null and view.juice.surge_active(world.tick):
+			_draw_surge(vs, watching)
 		if me != null and me.eliminated and not watching:
 			_draw_eliminated(vs)
 		elif dead:
@@ -215,8 +270,7 @@ func _draw_dock(v: SimVehicle, vs: Vector2) -> void:
 	# scrap and kills, numbers right-aligned
 	var xr: float = r.end.x - 7.0
 	UiFont.draw_small(self, "SCRAP", Vector2(s2 + 6, y1 + 1), Gfx.UI_DIM)
-	var st := str(v.scrap)
-	UiFont.draw(self, st, Vector2(xr - UiFont.width(st), y1), Gfx.FIRE[4], Gfx.UI_SHADOW)
+	_draw_scrap(v, xr, y1)
 	UiFont.draw_small(self, "KILLS", Vector2(s2 + 6, y2 + 1), Gfx.UI_DIM)
 	var kt := str(v.kills)
 	UiFont.draw(self, kt, Vector2(xr - UiFont.width(kt), y2), Gfx.UI_TEXT, Gfx.UI_SHADOW)
@@ -598,3 +652,136 @@ func _banner(vs: Vector2, title: String, sub: String, el: int, y: float) -> void
 	UiKit.tape(self, r, Color("#e8dcc4"))
 	UiKit.center_big(self, title, r.get_center().x, y + 3, Gfx.INK)
 	UiKit.center_text(self, sub, r.get_center().x, y + 13, Gfx.INK_RED)
+
+
+# ---------------------------------------------------------------- combat juice
+
+## The dock's scrap number: ticks up toward the real value; a gain lights it white-hot for a moment
+## (a warm glow behind it) and floats "+N" above the dock.
+func _draw_scrap(v: SimVehicle, xr: float, y: float) -> void:
+	var shown: int = v.scrap if v.id != _scrap_id else mini(int(_scrap_shown), v.scrap)
+	var st := str(shown)
+	var w: float = UiFont.width(st)
+	var p: float = _scrap_pulse
+	if p > 0.0:
+		draw_rect(Rect2(xr - w - 2.0, y - 2.0, w + 4.0, UiFont.HEIGHT + 4.0), Color(Gfx.FIRE[3], 0.35 * p))
+	var col: Color = Gfx.FIRE[4].lerp(Gfx.FIRE[6], p)
+	UiFont.draw(self, st, Vector2(xr - w, y - roundf(p * 2.0) / 2.0), col, Gfx.UI_SHADOW)
+	if _gain > 0 and _gain_t < GAIN_SHOW_S:
+		var f: float = _gain_t / GAIN_SHOW_S
+		var gt: String = "+%d" % _gain
+		var gy: float = y - 14.0 - f * 5.0
+		var gc: Color = Color(Gfx.FIRE[5], 1.0 if f < 0.6 else (1.0 - f) / 0.4)
+		UiFont.draw_big_rim(self, gt, Vector2(xr - UiFont.width_big_px(gt, 10), gy), gc, Color(Gfx.OUTLINE, gc.a), 10)
+
+
+## The watched rig's kill chain next to it: "x24" growing and warming (pale gold to deep fire) with the
+## combo, popping on every kill, and a stencil milestone word at 10 / 25 / 50 / 100 / 200.
+func _draw_combo(v: SimVehicle) -> void:
+	var j: JuiceState = view.juice
+	var n: int = j.combo_shown(world.tick)
+	if n <= 0:
+		return
+	var heat: float = JuiceState.heat(n)
+	var live: bool = j.combo_live(world.tick)
+	var a: float = 1.0
+	if not live:
+		a = clampf(1.0 - float(world.tick - j.combo_last - JuiceState.COMBO_WINDOW) / float(JuiceState.COMBO_FADE), 0.0, 1.0)
+	var ramp: Array[Color] = [Gfx.FIRE[5], Gfx.FIRE[4], Gfx.FIRE[3], Gfx.FIRE[2]]
+	var fi: float = heat * 3.0
+	var col: Color = ramp[mini(int(fi), 2)].lerp(ramp[mini(int(fi) + 1, 3)], fi - floorf(fi))
+	if _combo_pop > 0.6:
+		col = Gfx.FIRE[6]
+	col.a = a
+	var size: int = 13 + int(round(heat * 13.0)) + int(round(_combo_pop * 4.0))
+	var p: Vector2 = view.screen_pos(v)
+	var r: float = view.rig_radius(v)
+	var ma: int = j.milestone_age(world.tick) if live else -1
+	var xw: int = UiFont.width_big_px("x", int(size * 0.7))
+	var bw: float = float(xw + 1 + UiFont.width_big_px(str(n), size))
+	if ma >= 0:
+		bw = maxf(bw, float(UiFont.width_big_px(j.milestone_word, 11, true)))
+	var bh: float = float(size) * UiFont.CAP + 16.0
+	var y: float = p.y - r - 6.0 - float(size) * UiFont.CAP
+	# right of the rig unless a rival rig or its tag is there (sticky, so it does not flip every frame)
+	var right := Rect2(p.x + r + 8.0, y - 14.0, bw, bh)
+	var left := Rect2(p.x - r - 8.0 - bw, y - 14.0, bw, bh)
+	var cur: Rect2 = left if _combo_left else right
+	var other: Rect2 = right if _combo_left else left
+	if _rival_near(v, cur) and not _rival_near(v, other):
+		_combo_left = not _combo_left
+	var x: float = (left if _combo_left else right).position.x
+	var rim := Color(Gfx.OUTLINE, a)
+	var xe: float = UiFont.draw_big_rim(self, "x", Vector2(x, y + float(size) * 0.25), col, rim, int(size * 0.7))
+	UiFont.draw_big_rim(self, str(n), Vector2(xe + 1.0, y), col, rim, size)
+	if not live:
+		return
+	if ma < 0:
+		UiFont.draw_big_rim(self, "KILL CHAIN", Vector2(x + 1.0, y - 8.0), Color(Gfx.UI_DIM, 0.9), rim, 7)
+		return
+	# milestone: slams in big, settles, blinks out
+	var slam: float = clampf(1.0 - float(ma) / 5.0, 0.0, 1.0)
+	if ma > JuiceState.MILESTONE_TICKS - 8 and (ma / 2) % 2 == 0:
+		return
+	var ms: int = 11 + int(round(slam * 8.0))
+	var mc: Color = Gfx.FIRE[6] if ma < 3 else (Gfx.UI_BAD if (ma / 4) % 2 == 0 else Gfx.FIRE[4])
+	UiFont.draw_big_rim(self, j.milestone_word, Vector2(x + 1.0, y - float(ms) * UiFont.TITLE_CAP - 4.0), mc, rim, ms, true)
+
+
+## True when another live rig (with its name tag and hp bar) overlaps `r` on screen.
+func _rival_near(v: SimVehicle, r: Rect2) -> bool:
+	for o in world.vehicles:
+		if o == v or not o.alive:
+			continue
+		var op: Vector2 = view.screen_pos(o)
+		var orad: float = view.rig_radius(o)
+		if r.intersects(Rect2(op.x - maxf(orad, 26.0), op.y - orad - 13.0, maxf(orad, 26.0) * 2.0, orad * 2.0 + 13.0)):
+			return true
+	return false
+
+
+## Top centre while a hive surge is announced: SWARM INCOMING on a plate with a cyan (the hive) rim
+## that flickers, the seconds to go, then HERE THEY COME as it hits. Dormant unless a "surge" arrives.
+func _draw_surge(vs: Vector2, below: bool) -> void:
+	var j: JuiceState = view.juice
+	var el: int = world.tick - j.surge_tick
+	var left: int = j.surge_left(world.tick)
+	var cx: float = floorf(vs.x / 2.0)
+	var y: float = 37.0 + (29.0 if below else 0.0) + (31.0 if world.pvp_grace_ticks > 0 else 0.0)
+	y -= floorf(clampf(1.0 - float(el) / 5.0, 0.0, 1.0) * 30.0)  # drops in from under the top plate
+	if left <= 0 and -left > JuiceState.SURGE_HOLD - 8 and (el / 2) % 2 == 0:
+		return
+	var title := "SWARM INCOMING"
+	var w: float = UiFont.width_big(title, 1) + 46.0
+	var r := Rect2(cx - floorf(w / 2.0), y, w, 26)
+	UiKit.panel(self, r)
+	var flick: bool = (el / 3) % 2 == 0
+	UiKit.outline_rect(self, r.grow(-2.0), Gfx.GLOW[3] if flick else Gfx.GLOW[2])
+	var glow: Color = Gfx.GLOW[4] if left <= 0 or flick else Gfx.GLOW[3]
+	UiKit.center_big(self, title, cx, r.position.y + 5, glow, Gfx.OUTLINE)
+	var sub: String = "HIVE SURGE IN %d" % ceili(float(left) / float(SimWorld.TICK_RATE)) if left > 0 else "HERE THEY COME"
+	UiKit.center_small(self, sub, cx, r.position.y + 16, Gfx.UI_TEXT if left > 0 else Gfx.GLOW[4], Gfx.UI_SHADOW)
+	for sx: float in [r.position.x + 8.0, r.end.x - 13.0]:  # bioluminescent pips, beating faster as it nears
+		var on: bool = (el / maxi(2, mini(6, left / 10 + 2))) % 2 == 0
+		draw_rect(Rect2(sx - 1, r.position.y + 9, 7, 7), Gfx.OUTLINE)
+		draw_rect(Rect2(sx, r.position.y + 10, 5, 5), Gfx.GLOW[4] if on else Gfx.GLOW[1])
+	_panels.append(r)
+
+
+## A faint cyan pulse on the screen edges while the surge is announced (dithered bands like the low-hp
+## warning, much weaker).
+func _surge_edge(vs: Vector2) -> void:
+	var j: JuiceState = view.juice
+	var el: int = world.tick - j.surge_tick
+	var fade: float = clampf(float(j.surge_in + JuiceState.SURGE_HOLD - el) / 12.0, 0.0, 1.0) * clampf(float(el) / 4.0, 0.0, 1.0)
+	var k: float = (0.6 + 0.4 * sin(float(el) * 0.5)) * fade
+	var col: Color = Gfx.GLOW[2]
+	var bands: PackedFloat32Array = [0.26, 0.15, 0.07]
+	for i in bands.size():
+		var w: float = 4.0
+		var a: float = bands[i] * k
+		var o: float = float(i) * w
+		draw_rect(Rect2(o, o, vs.x - 2.0 * o, w), Color(col, a))
+		draw_rect(Rect2(o, vs.y - o - w, vs.x - 2.0 * o, w), Color(col, a))
+		draw_rect(Rect2(o, o + w, w, vs.y - 2.0 * o - 2.0 * w), Color(col, a))
+		draw_rect(Rect2(vs.x - o - w, o + w, w, vs.y - 2.0 * o - 2.0 * w), Color(col, a))

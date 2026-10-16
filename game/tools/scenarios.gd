@@ -58,6 +58,12 @@ extends RefCounted
 ## - "fx_ram"       (about 60 ticks)  ramming builds: full momentum sparks, nitro jet, war machine
 ##                  shockwaves and thunderclap chains, a juggernaut glow, a phantom decoy, a dodge.
 ##
+## Combat juice (KillFx, JuiceState, HUD combo / scrap / surge; docs/architecture.md "Combat visuals"):
+## - "juice"        (about 150 ticks) a cannon / scattergun / MG pickup mowing through a dense mite horde
+##                  with boulders and spitters: kill bursts, scrap sparkles, cannon impacts, the kill combo.
+## - "juice_surge"  the same with a faked "surge" warning at tick JUICE_SURGE_TICK (appended to that tick's
+##                  events like a scenario cue): SWARM INCOMING; shoot about 20 ticks later.
+##
 ## UI scenarios (main.gd also builds the menu from ui_state()):
 ## - "menu"     the attract battlefield (eight rigs, one per paint) behind the main menu.
 ## - "join"     the join screen with two fake discovered hosts (one in a match).
@@ -70,7 +76,8 @@ const NAMES: PackedStringArray = ["skirmish", "horde", "workshop", "tech_tree", 
 	"menu", "join", "lobby", "pause", "rematch", "waiting", "rig_growth", "late_round", "pvp_on", "rig_kill",
 	"recap", "recap_pvp", "scouting", "combat_feed", "pvp_grace", "spectator", "spectator_ws", "awards",
 	"tech_mid", "tech_swap", "workshop_mid", "tech_beginner", "fx_firebrand", "fx_fortress", "fx_scrapper",
-	"fx_chassis", "fx_ram"]
+	"fx_chassis", "fx_ram", "juice", "juice_surge"]
+const JUICE_SURGE_TICK := 100
 ## Info-UI line-up: [name, paint, GROWTH_BUILDS index, drive, target, extra tech].
 const LAN_NIGHT: Array = [
 	["MAD MAREK", 0, 6, "circle", "nearest", ["ballistics_ammo_bench"]],
@@ -143,6 +150,8 @@ static func build(name: String, p_seed: int) -> SimWorld:
 			return _rig_kill(p_seed)
 		"fx_firebrand", "fx_fortress", "fx_scrapper", "fx_chassis", "fx_ram":
 			return _fx_world(name, p_seed)
+		"juice", "juice_surge":
+			return _juice_world(p_seed)
 		"recap", "recap_pvp", "scouting":
 			var c: Vector2 = SimWorld.ARENA.get_center()
 			var w5: SimWorld = _lan_night(p_seed, [c, c + Vector2(260, -150), c + Vector2(-300, 160), c + Vector2(330, 200), c + Vector2(-380, -170)])
@@ -235,6 +244,9 @@ static func step(name: String, w: SimWorld) -> void:
 		return
 	if name.begins_with("fx_"):
 		_fx_step(name, w)
+		return
+	if name.begins_with("juice"):
+		_juice_step(name, w)
 		return
 	if name == "pvp_on" and w.round >= SimWorld.PVP_START_ROUND and w.phase == SimWorld.PHASE_COMBAT:
 		w.step()
@@ -612,6 +624,48 @@ static func _fx_cues(name: String, w: SimWorld, me: SimVehicle) -> void:
 				w.apply_command(1, {"type": "use_ability", "value": "nitro"})
 			if w.tick % 60 == 30:
 				w.apply_command(2, {"type": "use_ability", "value": "nitro"})
+
+
+# ================================================================ combat juice
+
+static func _juice_world(p_seed: int) -> SimWorld:
+	var w := SimWorld.new(p_seed)
+	w.round = 5
+	w.phase_ticks_left = 99999
+	var c: Vector2 = SimWorld.ARENA.get_center()
+	var me: SimVehicle = w.add_vehicle(1, c, "MAD MAREK", 0)
+	_tech_up(w, me, ["engineering_frame", "engineering_welder", "engineering_pickup", "ballistics_ammo_bench"],
+			{"cannon": 2, "shotgun": 3, "mg": 3})
+	w.apply_command(1, {"type": "set_drive", "value": "circle"})
+	var rv: SimVehicle = w.add_vehicle(2, c + Vector2(260, 120), "DUNE RAT", 2)
+	_tech_up(w, rv, [], {"mg": 2})
+	w.apply_command(2, {"type": "set_drive", "value": "kite"})
+	_scatter(w, 300, 0.05, 0.04, 120.0, 460.0)
+	for v in w.vehicles:
+		v.invuln_ticks = 0
+	return w
+
+
+static func _juice_step(name: String, w: SimWorld) -> void:
+	w.step()
+	w.phase_ticks_left = 99999
+	var me: SimVehicle = w.vehicles[0]
+	me.hp = maxf(me.hp, me.max_hp * 0.6)
+	if w.enemy_count < 240:
+		_scatter(w, 30, 0.05, 0.04, 170.0, 380.0)
+	if w.tick % 9 == 0:  # soften the nearest boulder and spitter so their kill bursts show up often
+		for kind: int in [SimWorld.BOULDER, SimWorld.SPITTER]:
+			var best: int = -1
+			var best_d: float = 170.0 * 170.0
+			for j in w.enemy_count:
+				var d: float = w.enemy_pos[j].distance_squared_to(me.pos)
+				if w.enemy_kind[j] == kind and d < best_d:
+					best_d = d
+					best = j
+			if best >= 0:
+				w.enemy_hp[best] = minf(w.enemy_hp[best], 2.0)
+	if name == "juice_surge" and w.tick == JUICE_SURGE_TICK:  # faked: the sim's own surge warning lands later
+		w.events.append({"type": "surge", "pos": me.pos, "owner": -1, "kind": -1, "in_ticks": 60})
 
 
 # ================================================================ playtest session replay
