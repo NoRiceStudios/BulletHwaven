@@ -499,6 +499,8 @@ func _run_shot(args: Dictionary) -> void:
 	_menu.pointer_override = hover
 	if ui.has("rules"):
 		_view.rules.open(str(ui["rules"]))
+	if ui.has("workshop_tab"):
+		_view.workshop.activate("tab", str(ui["workshop_tab"]))
 	for i in 4:
 		await get_tree().process_frame
 	if args.has("click"):
@@ -507,10 +509,10 @@ func _run_shot(args: Dictionary) -> void:
 			var ok: bool = false
 			if _menu.visible:
 				ok = _menu.click_at(p)
+			elif _view.workshop.visible:
+				ok = _view.workshop.click_at(p)  # forwards to the embedded rule editor in the RULES view
 			elif _view.rules.is_open:
 				ok = _view.rules.click_at(p)
-			elif _view.workshop.visible:
-				ok = _view.workshop.click_at(p)
 			print("SHOT_CLICK %s -> %s" % [spec, "hit" if ok else "miss"])
 			await get_tree().process_frame
 			await get_tree().process_frame

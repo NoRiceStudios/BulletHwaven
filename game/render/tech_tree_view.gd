@@ -1,20 +1,23 @@
 class_name TechTreeView
 extends RefCounted
-## Full tech tree panel of the workshop (design doc section 5b), opened with T or the TECH TREE
-## button. Five branch columns (core spine of 6 tiers with a pick-one fork after tiers 2 and 4),
-## a fusion row (nodes that need tier 3 in two branches) and an info strip for the hovered node.
-## Drawn into the WorkshopUi canvas; clicks are registered as its hits ("tech", id).
+## The workshop's TECH view (design doc section 5b), opened with T or its tab. Five branch columns
+## (core spine of 6 tiers with a pick-one fork after tiers 2 and 4), a fusion row (nodes that need
+## tier 3 in two branches) and an info strip for the hovered node. Hovering a node also marks the
+## nodes still missing on the way to it. Drawn into the WorkshopUi canvas; clicks are registered as
+## its hits ("tech", id).
 
-const TITLE_H := 16.0
+const TITLE_H := 12.0
 const HEAD_H := 13.0
-const ROW_H := 20.0
-const NODE_H := 17.0
-const FUSION_H := 18.0
+const ROW_H := 23.0
+const NODE_H := 18.0
+const FUSION_H := 19.0
 ## Layout rows of a branch column: [kind, core tier].
 const ROWS: Array = [["core", 1], ["core", 2], ["spec", 2], ["core", 3], ["core", 4], ["spec", 4], ["core", 5], ["core", 6]]
 
-## Node states, also used by the compact column.
+## Node states (also used for the TECH tab badge).
 enum State { OWNED, BUYABLE, POOR, LOCKED, EXCLUDED }
+
+static var _path: Dictionary = {}  ## tech ids still missing on the way to the hovered node
 
 
 static func state(v: SimVehicle, id: String) -> State:
@@ -29,19 +32,15 @@ static func state(v: SimVehicle, id: String) -> State:
 
 ## Draws the tree into `r` and returns the hovered tech id ("" = none).
 static func draw(ui: WorkshopUi, v: SimVehicle, r: Rect2) -> String:
-	UiKit.plate(ui, r)
+	UiKit.panel(ui, r)
+	ui.add_hit(r, "none", null)
 	var x0: float = r.position.x + 4.0
-	var y: float = r.position.y + 4.0
-	UiFont.draw_big(ui, "TECH TREE", Vector2(x0 + 2, y + 1), Gfx.UI_TEXT, Gfx.OUTLINE)
-	var sub := "%d / %d BUILT   FORKS: PICK ONE, THE OTHERS LOCK" % [v.tech.size(), Tech.count()]
-	UiFont.draw(ui, sub, Vector2(x0 + 66, y + 2), Gfx.UI_DIM, Gfx.UI_SHADOW)
-	var close := Rect2(r.end.x - 70, y - 1, 66, 12)
-	UiKit.steel(ui, close)
-	if ui.is_hover("tree", false):
-		UiKit.outline_rect(ui, close, Gfx.HAZARD)
-	UiKit.center_text(ui, "CLOSE  T", close.get_center().x, close.position.y + 4, Gfx.UI_TEXT, Gfx.OUTLINE)
-	ui.add_hit(close, "tree", false)
+	var y: float = r.position.y + 5.0
+	var lx: float = _legend(ui, Vector2(r.end.x - 8.0, y))
+	UiKit.section(ui, "%d / %d BUILT    FORKS: PICK ONE, THE OTHERS LOCK FOR THE MATCH" % [v.tech.size(), Tech.count()],
+		Vector2(x0 + 2, y), lx - x0 - 10.0)
 	y += TITLE_H
+	_path = _missing_path(v, str(ui.hover_arg("tech")) if ui.hover_arg("tech") != null else "")
 
 	var hover_id: String = ""
 	var col_w: float = floorf((r.size.x - 8.0) / float(Tech.BRANCHES.size()))
@@ -99,10 +98,44 @@ static func draw(ui: WorkshopUi, v: SimVehicle, r: Rect2) -> String:
 	return hover_id
 
 
+## Every unowned node the hovered node still needs, itself included ({} = no hover).
+static func _missing_path(v: SimVehicle, id: String) -> Dictionary:
+	var out: Dictionary = {}
+	if id == "" or v.tech.has(id):
+		return out
+	var todo: Array = [id]
+	while not todo.is_empty():
+		var cur: String = str(todo.pop_back())
+		if out.has(cur) or v.tech.has(cur):
+			continue
+		out[cur] = true
+		for rq in Tech.requirements(cur):
+			todo.append(str(rq))
+	return out
+
+
+## Colour key (built, can build now, too expensive, locked) ending at `right`; returns its left x.
+static func _legend(ui: WorkshopUi, right: Vector2) -> float:
+	var items: Array = [["BUILT", Gfx.BRASS[2]], ["BUILD NOW", Gfx.HAZARD], ["NEED SCRAP", Gfx.UI_BAD], ["LOCKED", Gfx.STEEL[2]]]
+	var x: float = right.x
+	for i in range(items.size() - 1, -1, -1):
+		var w: float = UiFont.width_small(items[i][0])
+		x -= w
+		UiFont.draw_small(ui, items[i][0], Vector2(x, right.y), Gfx.UI_DIM)
+		x -= 7.0
+		ui.draw_rect(Rect2(x, right.y, 5, 5), Gfx.OUTLINE)
+		ui.draw_rect(Rect2(x + 1, right.y + 1, 3, 3), items[i][1])
+		x -= 8.0
+	return x
+
+
 ## One node: name on top, cost (or state) below. `tag` replaces the tier label on the left.
 static func _node(ui: WorkshopUi, v: SimVehicle, id: String, nr: Rect2, label: String, tag: String) -> void:
 	var st: State = state(v, id)
 	var hov: bool = ui.is_hover("tech", id)
+	if _path.has(id) and not hov:
+		# on the way to the hovered node: a lit frame around it
+		UiKit.outline_rect(ui, nr.grow(1.0), Gfx.UI_TEXT)
 	ui.add_hit(nr, "tech", id)
 	var cost: int = Tech.cost(id)
 	var lx: float = nr.position.x + 3.0
@@ -209,6 +242,12 @@ static func _info(ui: WorkshopUi, v: SimVehicle, id: String, r: Rect2) -> void:
 		_:
 			status = "CLICK TO BUILD - %d SCRAP" % Tech.cost(id)
 			scol = Gfx.HAZARD
+	if _path.size() > 1:
+		var total: int = 0
+		for pid: String in _path:
+			total += Tech.cost(pid)
+		UiFont.draw(ui, "PATH: %d NODES, %d SCRAP IN ALL" % [_path.size(), total], Vector2(sx, sy + 2), Gfx.UI_TEXT)
+		sy += 9.0
 	if Tech.blocked_by(v, id) == "" and str(d["group"]) != "" and not v.tech.has(id):
 		UiFont.draw(ui, "LOCKS THE OTHER FORK NODES", Vector2(sx, sy + 2), Gfx.STEEL[4])
 		sy += 7.0

@@ -37,6 +37,81 @@ static func plate(ci: CanvasItem, r: Rect2, modulate: Color = Color.WHITE) -> vo
 		ci.draw_rect(r.grow(-3.0), Color(PANEL_WASH, PANEL_WASH.a * modulate.a))
 
 
+# ---------------------------------------------------------------- building blocks (UI revamp)
+# One look per role: `panel` holds information, `bar_plate` is the workshop's top bar, `tab` switches
+# a view, `go_button` is the one primary action of a screen (hazard stripes mean "go"), `section`
+# titles a group inside a panel. Rust and tape stay as accents on the frame, never under text.
+
+const PANEL_FILL := Color(0.075, 0.055, 0.05, 0.88)
+const PANEL_EDGE := Color("#5a4636")
+const PANEL_SHEEN := Color(1.0, 0.85, 0.6, 0.07)
+const HOVER_WASH := Color(1.0, 0.8, 0.5, 0.10)
+
+
+## Calm dark panel: one even field for text, a dark outline and a faint warm edge.
+static func panel(ci: CanvasItem, r: Rect2, alpha: float = 1.0) -> void:
+	ci.draw_rect(r, Color(Gfx.OUTLINE, 0.9 * alpha))
+	ci.draw_rect(r.grow(-1.0), Color(PANEL_FILL, PANEL_FILL.a * alpha))
+	outline_rect(ci, r.grow(-1.0), Color(PANEL_EDGE, 0.55 * alpha))
+	ci.draw_rect(Rect2(r.position + Vector2(2, 2), Vector2(r.size.x - 4, 1)), Color(PANEL_SHEEN, PANEL_SHEEN.a * alpha))
+
+
+## Small dim title with a hairline to the right edge of `w` (groups inside a panel).
+static func section(ci: CanvasItem, text: String, pos: Vector2, w: float, right: String = "", right_col: Color = Gfx.UI_DIM) -> void:
+	var x: float = UiFont.draw_small(ci, text, pos, Gfx.UI_DIM)
+	var end: float = pos.x + w
+	if right != "":
+		var rw: float = UiFont.width_small(right)
+		UiFont.draw_small(ci, right, Vector2(end - rw, pos.y), right_col)
+		end -= rw + 4.0
+	if end - x > 8.0:
+		ci.draw_rect(Rect2(x + 4.0, pos.y + 3.0, end - x - 4.0, 1), Color(PANEL_EDGE, 0.7))
+
+
+## A view tab: filled amber when on, dark otherwise; `key` hint at the right, optional badge.
+static func tab(ci: CanvasItem, r: Rect2, label: String, key: String, on: bool, hov: bool, badge: String = "") -> void:
+	if on:
+		ci.draw_rect(r, Gfx.OUTLINE)
+		ci.draw_rect(r.grow(-1.0), Gfx.FIRE[4])
+		ci.draw_rect(Rect2(r.position + Vector2.ONE, Vector2(r.size.x - 2, 1)), Gfx.FIRE[5])
+	else:
+		ci.draw_rect(r, Gfx.OUTLINE)
+		ci.draw_rect(r.grow(-1.0), Color(0.16, 0.12, 0.1) if hov else Color(0.11, 0.08, 0.07))
+		outline_rect(ci, r.grow(-1.0), Gfx.FIRE[3] if hov else PANEL_EDGE)
+	var ink: Color = Gfx.INK if on else (Gfx.FIRE[5] if hov else Gfx.UI_TEXT)
+	var ty: float = floorf(r.get_center().y - UiFont.BIG_HEIGHT / 2.0)
+	var x: float = UiFont.draw_big(ci, label, Vector2(r.position.x + 6, ty), ink)
+	if badge != "":
+		var bw: float = UiFont.width_small(badge) + 5.0
+		var br := Rect2(x + 4.0, ty - 1.0, bw, 9)
+		ci.draw_rect(br, Gfx.INK if on else Gfx.FIRE[4])
+		UiFont.draw_small(ci, badge, br.position + Vector2(3, 2), Gfx.FIRE[5] if on else Gfx.INK)
+	if key != "":
+		UiFont.draw_small(ci, key, Vector2(r.end.x - 5 - UiFont.width_small(key), ty + 1), Color(Gfx.INK, 0.7) if on else Gfx.UI_DIM)
+
+
+## The screen's primary action (ROLL OUT): steel with a hazard frame, big title, small key line.
+static func go_button(ci: CanvasItem, r: Rect2, title: String, sub: String, hov: bool, live: bool, pulse: bool = true) -> void:
+	if not live:
+		steel(ci, r, Color(0.6, 0.55, 0.55))
+		center_big(ci, title, r.get_center().x, r.position.y + 3, Gfx.UI_DIM, Gfx.OUTLINE)
+		center_small(ci, sub, r.get_center().x, r.end.y - 8, Gfx.UI_DIM, Gfx.OUTLINE)
+		return
+	steel(ci, r)
+	hazard_frame(ci, r, 2.0, Color.WHITE if hov or pulse else Color(0.75, 0.75, 0.75))
+	center_big(ci, title, r.get_center().x, r.position.y + 4, Gfx.FIRE[5] if hov else Gfx.UI_TEXT, Gfx.OUTLINE)
+	center_small(ci, sub, r.get_center().x, r.end.y - 8, Gfx.UI_DIM, Gfx.OUTLINE)
+
+
+## Small secondary button (dark, outlined, amber on hover); returns its rect.
+static func button(ci: CanvasItem, r: Rect2, label: String, hov: bool, enabled: bool = true) -> void:
+	ci.draw_rect(r, Gfx.OUTLINE)
+	ci.draw_rect(r.grow(-1.0), Color(0.18, 0.13, 0.1) if hov and enabled else Color(0.12, 0.09, 0.08))
+	outline_rect(ci, r.grow(-1.0), Gfx.FIRE[3] if hov and enabled else PANEL_EDGE)
+	var ty: float = floorf(r.get_center().y - UiFont.HEIGHT / 2.0)
+	center_text(ci, label, r.get_center().x, ty, (Gfx.FIRE[5] if hov else Gfx.UI_TEXT) if enabled else Gfx.UI_DIM)
+
+
 ## Bare steel plate (CRT housing, buttons, tech nodes).
 static func steel(ci: CanvasItem, r: Rect2, modulate: Color = Color.WHITE) -> void:
 	if _steel == null:
