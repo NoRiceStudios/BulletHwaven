@@ -91,6 +91,40 @@ const TECH_HUNTER: Array = [
 	"propulsion_tuned", "electronics_radar", "fusion_spotter", "ballistics_tables", "electronics_targeting",
 	"electronics_hunter", "ballistics_he", "electronics_overclock",
 ]
+# Build-template paths (tech tree v2.3, design doc section 5b / 8): the same node order the in-game
+# build plans (render/tech_guide.gd) suggest, continued to the keystone. Ammo is auto-loaded by the
+# sim, contracts are accepted in next_command(), abilities auto-cast: bots never touch those.
+const TECH_FIREBRAND: Array = [
+	"ballistics_ammo_bench", "propulsion_tuned", "ballistics_belt_feed", "propulsion_drift",
+	"ballistics_tables", "ballistics_napalm", "fusion_burning_wake", "propulsion_nitro", "ballistics_tungsten",
+	"propulsion_slipstream", "propulsion_turbine", "ballistics_glowing", "propulsion_phantom",
+]
+const TECH_FORTRESS: Array = [
+	"engineering_frame", "electronics_rangefinder", "engineering_welder", "electronics_relay",
+	"fusion_fortified", "engineering_pickup", "electronics_targeting", "engineering_drone", "fusion_junkyard",
+	"engineering_truck", "electronics_neural", "engineering_war_rig", "electronics_swarm",
+]
+const TECH_SCRAPPER: Array = [
+	"salvage_hooks", "ballistics_ammo_bench", "salvage_lucky", "ballistics_heavy_shells",
+	"salvage_black_market", "salvage_press", "fusion_scrap_storm", "ballistics_tables", "ballistics_he",
+	"salvage_crane", "ballistics_tungsten", "salvage_baron",
+]
+## Rammer: propulsion + engineering to the War Machine fusion and a keystone, no weapon focus.
+const TECH_RAMMER: Array = [
+	"propulsion_tuned", "engineering_frame", "propulsion_bumper", "engineering_spikes", "propulsion_nitro",
+	"engineering_pickup", "propulsion_battering", "fusion_war_machine", "engineering_dozer",
+	"propulsion_turbine", "propulsion_juggernaut", "engineering_truck",
+]
+## Single-branch probe: one branch straight to its keystone (the 2,130 scrap "focused player" of the design).
+const TECH_BRANCH_BALLISTICS: Array = [
+	"ballistics_ammo_bench", "ballistics_belt_feed", "ballistics_tables", "ballistics_napalm",
+	"ballistics_tungsten", "ballistics_glowing",
+]
+const CARDS_RAMMER := {
+	"steel_plates": 8.0, "reinforced_hull": 8.0, "ablative_scrap": 7.0, "spiked_plating": 8.0,
+	"caterpillar_tracks": 6.0, "regenerator": 7.0, "v8_engine": 6.0, "nitro": 5.0, "off_road_tyres": 4.0,
+	"mg": 1.0, "shotgun": NEVER, "cannon": NEVER, "flamer": NEVER,
+}
 
 var policy_name: String = ""
 var cfg: Dictionary = {}
@@ -110,7 +144,7 @@ static func names() -> PackedStringArray:
 
 
 static func has(policy_name_: String) -> bool:
-	return _table().has(policy_name_)
+	return _table().has(policy_name_) or not probe_path(policy_name_).is_empty()
 
 
 ## One-line description of a policy ("" if unknown).
@@ -124,12 +158,47 @@ static func describe(policy_name_: String) -> String:
 static func create(policy_name_: String, p_seed: int = 0) -> BotPolicy:
 	var t: Dictionary = _table()
 	if not t.has(policy_name_):
-		return null
+		var path: Array = probe_path(policy_name_)
+		if path.is_empty():
+			return null
+		t = {policy_name_: {
+			"desc": "Node probe.", "cards": CARDS_DAMAGE, "default_card": 1.0, "upgrade_bonus": 1.5,
+			"tech_mode": "order", "tech": path, "tech_reserve": 0, "reroll_below": 7.0, "max_rerolls": 4,
+			"reroll_reserve": 10, "drive": "circle", "target": "nearest"}}
 	var b := BotPolicy.new()
 	b.policy_name = policy_name_
 	b.cfg = (t[policy_name_] as Dictionary).duplicate(true)
 	b.rng.seed = hash([policy_name_, p_seed])
 	return b
+
+
+## Per-node ablation probes (`probe_<node id>`): damage cards, one branch straight to its keystone
+## along PROBE_BASE, with the choice at the node's stage swapped for that node. Only for the league's
+## node-strength check (`--policies=probe_...`): all variants of a branch share everything else.
+const PROBE_BASE := {
+	"ballistics": ["ballistics_ammo_bench", "ballistics_belt_feed", "ballistics_tables", "ballistics_napalm", "ballistics_tungsten", "ballistics_glowing"],
+	"engineering": ["engineering_frame", "engineering_welder", "engineering_pickup", "engineering_drone", "engineering_truck", "engineering_war_rig"],
+	"propulsion": ["propulsion_tuned", "propulsion_bumper", "propulsion_nitro", "propulsion_battering", "propulsion_turbine", "propulsion_juggernaut"],
+	"electronics": ["electronics_rangefinder", "electronics_relay", "electronics_targeting", "electronics_hunter", "electronics_overclock", "electronics_swarm"],
+	"salvage": ["salvage_hooks", "salvage_lucky", "salvage_black_market", "salvage_hoarder", "salvage_crane", "salvage_baron"],
+}
+
+
+## The probe path of `node` (a stage 2, 4, 5 or 6 choice, or a branch's base path via "base_<branch>"), or [].
+static func probe_path(name_: String) -> Array:
+	if name_.begins_with("base_") and PROBE_BASE.has(name_.substr(5)):
+		return PROBE_BASE[name_.substr(5)]
+	var id: String = name_.substr(6) if name_.begins_with("probe_") else ""
+	if id == "" or not Tech.has(id):
+		return []
+	var d: Dictionary = Tech.def(id)
+	var path: Array = (PROBE_BASE.get(str(d["branch"]), []) as Array).duplicate()
+	if path.is_empty() or d["kind"] != "choice":
+		return []
+	path[int(d["tier"]) - 1] = id
+	if id == "engineering_roll_cage":
+		path[5] = "engineering_featherweight"  # the war rig needs the truck
+	return path
 
 
 static func _focus(weapon: String, desc: String) -> Dictionary:
@@ -225,6 +294,55 @@ static func _table() -> Dictionary:
 			"reroll_below": 5.5, "max_rerolls": 3, "reroll_reserve": 15,
 			"drive": "charge", "target": "nearest",
 		},
+		"tpl_firebrand": {
+			"desc": "Build template FIREBRAND: ballistics + propulsion path, flamer and damage cards.",
+			"cards": CARDS_DAMAGE, "default_card": 1.0, "upgrade_bonus": 1.0, "lvl_decay": 0.08,
+			"tech_mode": "order", "tech": TECH_FIREBRAND, "tech_reserve": 0,
+			"reroll_below": 5.5, "max_rerolls": 3, "reroll_reserve": 15,
+			"drive": "circle", "target": "nearest",
+		},
+		"tpl_fortress": {
+			"desc": "Build template FORTRESS: engineering + electronics path, balanced cards.",
+			"cards": CARDS_BALANCED, "default_card": 1.0, "upgrade_bonus": 1.0, "lvl_decay": 0.08,
+			"tech_mode": "order", "tech": TECH_FORTRESS, "tech_reserve": 0,
+			"reroll_below": 5.5, "max_rerolls": 3, "reroll_reserve": 15,
+			"drive": "circle", "target": "nearest",
+		},
+		"tpl_scrapper": {
+			"desc": "Build template SCRAPPER: salvage + ballistics path, balanced cards; the scrap press sells junk cards.",
+			"cards": CARDS_BALANCED, "default_card": 1.0, "upgrade_bonus": 1.0, "lvl_decay": 0.08, "press_below": 2.5,
+			"tech_mode": "order", "tech": TECH_SCRAPPER, "tech_reserve": 0,
+			"reroll_below": 5.5, "max_rerolls": 3, "reroll_reserve": 15,
+			"drive": "circle", "target": "nearest",
+		},
+		"tpl_rammer": {
+			"desc": "Rammer: propulsion + engineering to the War Machine, charge driving, armour and speed cards, never takes weapons.",
+			"cards": CARDS_RAMMER, "default_card": 1.0, "upgrade_bonus": 1.0, "lvl_decay": 0.08, "new_weapon_bonus": 0.0,
+			"tech_mode": "order", "tech": TECH_RAMMER, "tech_reserve": 0,
+			"reroll_below": 5.5, "max_rerolls": 3, "reroll_reserve": 15,
+			"drive": "charge", "target": "nearest",
+		},
+		"tpl_rammer_hunt": {
+			"desc": "Rammer that hunts rivals (players_first, PvP stress test): propulsion + engineering to the War Machine, charge driving, armour and speed cards, never takes weapons.",
+			"cards": CARDS_RAMMER, "default_card": 1.0, "upgrade_bonus": 1.0, "lvl_decay": 0.08, "new_weapon_bonus": 0.0,
+			"tech_mode": "order", "tech": TECH_RAMMER, "tech_reserve": 0,
+			"reroll_below": 5.5, "max_rerolls": 3, "reroll_reserve": 15,
+			"drive": "charge", "target": "players_first",
+		},
+		"tpl_press_abuse": {
+			"desc": "Stress test: SCRAPPER path, but sells every card it can the moment the press is built.",
+			"cards": CARDS_BALANCED, "default_card": 1.0, "upgrade_bonus": 1.0, "lvl_decay": 0.08, "press_below": 99.0,
+			"tech_mode": "order", "tech": TECH_SCRAPPER, "tech_reserve": 0,
+			"reroll_below": 5.5, "max_rerolls": 3, "reroll_reserve": 15,
+			"drive": "circle", "target": "nearest",
+		},
+		"branch_ballistics": {
+			"desc": "Probe: damage cards, one tech branch (ballistics) straight to its keystone.",
+			"cards": CARDS_DAMAGE, "default_card": 1.0, "upgrade_bonus": 1.5,
+			"tech_mode": "order", "tech": TECH_BRANCH_BALLISTICS, "tech_reserve": 0,
+			"reroll_below": 7.0, "max_rerolls": 4, "reroll_reserve": 10,
+			"drive": "circle", "target": "nearest",
+		},
 		"pvp_hunter": {
 			"desc": "players_first + charge, damage cards, hunts rivals.",
 			"cards": CARDS_HUNTER, "default_card": 1.0, "upgrade_bonus": 1.5,
@@ -312,6 +430,13 @@ func next_command(world: SimWorld, v: SimVehicle) -> Dictionary:
 		_pick_done = true
 		if best_s >= 0.0:
 			return {"type": "pick_card", "value": best_i}
+
+	# 1b. scrap press: turn cards the policy rates below `press_below` into scrap (before shopping)
+	if float(v.tech_fx.get("scrap_press", 0.0)) > 0.0 and cfg.has("press_below"):
+		for cid: String in v.cards.keys():
+			if card_score(v, cid) < float(cfg["press_below"]) and not (
+					Cards.is_weapon(cid) and int(v.cards[cid]) <= 1 and Cards.weapon_cards_owned(v) <= 1):
+				return {"type": "scrap_card", "value": cid}
 
 	# 2. tech
 	var tid: String = _next_tech(world, v)
