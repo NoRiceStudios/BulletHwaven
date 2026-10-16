@@ -246,6 +246,7 @@ var _hit_weapon: int = -1  # weapon kind index of the projectile being resolved 
 var _hit_ammo: int = 0  # Ammo mask of the projectile being resolved (shrapnel on kill)
 var _hit_dmg: float = 0.0  # its damage
 var _hit_scale: float = 1.0  # its ammo effect scale
+var _in_splash: bool = false  # inside _splash_damage (scrap storm counts splash kills)
 var _burning: bool = false  # some enemy may be burning (skips the burn loop otherwise)
 var _pending_proj: Array = []  # projectiles to add once the projectile loop is done: [pos, vel, ttl, dmg, owner, weapon, ammo mask]
 var _spitter_gap: int = 0
@@ -297,8 +298,8 @@ func get_vehicle_for_peer(peer_id: int) -> SimVehicle:
 	return null
 
 
-## Applies a (pre-validated) command from `peer_id`. Card / tech / ready / set_ability commands only work in the
-## workshop, use_ability only in combat; set_drive, set_target, set_rules, set_ammo and set_weapon_target work in every phase. Unknown or illegal commands are ignored.
+## Applies a (pre-validated) command from `peer_id`. Card / tech / ready / set_ability / accept_contract / reserve_card / scrap_card
+## commands only work in the workshop, use_ability only in combat; set_drive, set_target, set_rules, set_ammo and set_weapon_target work in every phase. Unknown or illegal commands are ignored.
 func apply_command(peer_id: int, cmd: Dictionary) -> void:
 	var v: SimVehicle = get_vehicle_for_peer(peer_id)
 	if v == null:
@@ -333,19 +334,30 @@ func apply_command(peer_id: int, cmd: Dictionary) -> void:
 			if _can_shop(v) and not v.picked:
 				var idx: int = _integral(cmd.get("value"))
 				if idx >= 0 and idx < v.offers.size() and Cards.grant(v, v.offers[idx]):
+					if v.reserved_card == v.offers[idx]:
+						v.reserved_card = ""
 					v.picked = true
 					v.offers = []
 		"reroll":
 			if _can_shop(v) and not v.picked and v.scrap >= v.reroll_cost:
 				v.scrap -= v.reroll_cost
 				v.reroll_cost += 1
-				v.offers = Cards.roll_offers(rng, v, Cards.OFFER_COUNT, round, v.offers)
+				v.offers = Cards.roll_offers(rng, v, maxi(Cards.OFFER_COUNT, v.offers.size()), round, v.offers)
 		"buy_tech":
 			if _can_shop(v):
 				Tech.buy(v, str(cmd.get("value", "")), round)
 		"respec_tech":  # {"from": owned choice id, "value": unowned choice of the same branch and tier}
 			if _can_shop(v):
 				Tech.respec(v, str(cmd.get("from", "")), str(cmd.get("value", "")), round)
+		"accept_contract":  # {"value": offer index}; workshop only, needs offers (Salvage.accept)
+			if _can_shop(v):
+				Salvage.accept(v, _integral(cmd.get("value")))
+		"reserve_card":  # {"value": offer index}; haggler, workshop only (Salvage.reserve)
+			if _can_shop(v):
+				Salvage.reserve(v, _integral(cmd.get("value")))
+		"scrap_card":  # {"value": card id}; scrap press, workshop only (Salvage.scrap_card)
+			if _can_shop(v):
+				Salvage.scrap_card(v, str(cmd.get("value", "")))
 		"ready":
 			if _can_shop(v):
 				v.ready = true
@@ -399,13 +411,17 @@ static func fuel_drain_for_round(r: int) -> int:
 	return FUEL_DRAIN_BASE + (r - FUEL_DRAIN_START_ROUND) / FUEL_DRAIN_ROUNDS_PER_STEP
 
 
-## Interest cap at the current round: the vehicle's own cap (5 + salvage tech) + 2 per round.
+## Interest cap at the current round: the vehicle's own cap (5 + salvage tech) + 2 per round (hoarder: +10 and 6 per round).
 func interest_cap_for(v: SimVehicle) -> int:
+	if Salvage.is_hoarder(v):
+		return v.interest_cap + Salvage.HOARDER_CAP_BONUS + Salvage.HOARDER_CAP_PER_ROUND * round
 	return v.interest_cap + INTEREST_CAP_PER_ROUND * round
 
 
-## Interest a vehicle would earn now: 10% of held scrap (INTEREST_PER), capped at interest_cap_for().
+## Interest a vehicle would earn now: 10% of held scrap (INTEREST_PER; 12% for the hoarder), capped at interest_cap_for().
 func interest_for(v: SimVehicle) -> int:
+	if Salvage.is_hoarder(v):
+		return mini(v.scrap * Salvage.HOARDER_PCT / 100, interest_cap_for(v))
 	return mini(v.scrap / INTEREST_PER, interest_cap_for(v))
 
 
@@ -726,6 +742,25 @@ func checksum() -> int:
 		vf.append(float(v.jammed_by))
 		vf.append(float(v.shed))
 		vf.append(float(v.mark_id))
+		vf.append(float(v.contract_kind))
+		vf.append(float(v.contract_need))
+		vf.append(float(v.contract_reward))
+		vf.append(v.contract_prog)
+		vf.append(float(v.contract_offers.size()))
+		for co in v.contract_offers:
+			vf.append(float(co.x * 1000000 + co.y * 1000 + co.z))
+		vf.append(float(v.loan_debt))
+		vf.append(float(v.loan_left))
+		vf.append(float(v.reserved_card.hash()))
+		vf.append(float(v.bonus_offers))
+		vf.append(float(v.lucky_round))
+		vf.append(float(v.saws))
+		vf.append(v.raid_acc)
+		vf.append(float(v.barbed_scrap))
+		vf.append(float(v.storm_count))
+		vf.append(v.fort_regen)
+		vf.append(float(v.fort_ticks))
+		vf.append(float(v.clap_cd))
 		for wp in v.weapons:
 			vf.append(float(str(wp["kind"]).hash()))
 			vf.append(float(wp["damage"]))
@@ -928,16 +963,21 @@ func _begin_workshop() -> void:
 		if not v.alive:
 			_respawn(v)
 			v.invuln_ticks = 0
+		Salvage.settle(self, v)
 		var interest: int = interest_for(v)
 		v.scrap += interest
 		_note_scrap(v, interest)
 		v.round_stats["interest"] = interest
+		Salvage.repay(self, v)
 		if fuel_drain > 0:
 			var d: int = mini(fuel_drain, maxi(v.fuel - 1, 0))
 			v.fuel -= d
 			v.round_stats["fuel_drained"] = d
 			_emit("drain", v.pos, v.id, d)
-		v.offers = Cards.roll_offers(rng, v, Cards.OFFER_COUNT, round)
+		v.offers = Cards.roll_offers(rng, v, Cards.OFFER_COUNT + v.bonus_offers, round)
+		v.bonus_offers = 0
+		Salvage.apply_reserve(v)
+		Salvage.roll(self, v)
 
 
 ## Workshop -> combat: the next round starts, vehicles are repaired, unused offers are dropped.
@@ -966,6 +1006,17 @@ func _begin_combat() -> void:
 			v.invuln_ticks = INVULN_TICKS
 		Abilities.reset_round(v)
 		v.ram_fx.clear()
+		v.contract_offers = []
+		v.barbed_scrap = 0
+		v.storm_count = 0
+		v.fort_regen = 0.0
+		v.fort_ticks = 0
+		v.clap_cd = 0
+		v.raid_acc = 0.0
+		if v.alive and not v.eliminated:
+			Salvage.launch_saws(self, v)
+		else:
+			v.saws = 0
 		for w in v.weapons:
 			w["cooldown"] = 0.0
 			w["heat"] = 0
@@ -1248,6 +1299,8 @@ func _hit_enemy(j: int, dmg: float, killer: int, by_ram: bool = false) -> void:
 	if kv != null:
 		kv.round_stats["dealt"] = float(kv.round_stats["dealt"]) + applied
 		kv.match_stats["dmg_dealt"] = float(kv.match_stats["dmg_dealt"]) + applied
+		if by_ram and kv.contract_kind == Salvage.K_RAM:
+			kv.contract_prog += applied
 	if enemy_hp[j] > 0.0:
 		return
 	var kind: int = enemy_kind[j]
@@ -1266,6 +1319,10 @@ func _hit_enemy(j: int, dmg: float, killer: int, by_ram: bool = false) -> void:
 		kv.match_stats["kills"] = int(kv.match_stats["kills"]) + 1
 		if by_ram:
 			kv.match_stats["ram_kills"] = int(kv.match_stats["ram_kills"]) + 1
+		if kv.contract_kind >= 0:
+			Salvage.on_kill(kv, kind)
+		if not kv.tech_fx.is_empty():
+			Fusions.on_kill(self, kv, j, by_ram, _in_splash)
 
 
 ## Books `n` scrap as earned in the round and match stats (the scrap itself is already added).
@@ -1405,6 +1462,7 @@ func _update_vehicles() -> void:
 		Abilities.auto_cast(self, v)
 		VehicleAI.steer(self, v)
 		Mobility.update(self, v)
+		Fusions.tick(self, v)
 		v.pos += v.vel * DT
 		v.pos.x = clampf(v.pos.x, lo.x, hi.x)
 		v.pos.y = clampf(v.pos.y, lo.y, hi.y)
@@ -1497,10 +1555,18 @@ func _damage_vehicle(v: SimVehicle, dmg: float, attacker: int, use_armor: bool =
 		av.round_stats["dealt"] = float(av.round_stats["dealt"]) + applied
 		av.round_stats["dealt_players"] = float(av.round_stats["dealt_players"]) + applied
 		av.match_stats["dmg_dealt"] = float(av.match_stats["dmg_dealt"]) + applied
+		if av.contract_kind >= 0:
+			if src == SRC_PLAYER and av.contract_kind == Salvage.K_LEADER and v.peer_id == leader_peer:
+				av.contract_prog += 1.0
+			elif src == SRC_RAM and av.contract_kind == Salvage.K_RAM:
+				av.contract_prog += applied
+		if not av.tech_fx.is_empty():
+			Salvage.raid(self, av, v, applied)
 	if v.hp > 0.0:
 		return
 	v.hp = 0.0
 	v.alive = false
+	Salvage.on_destroyed(v)
 	Abilities.clear_effects(v)
 	v.momentum = 0.0
 	v.vel = Vector2.ZERO
@@ -1529,6 +1595,7 @@ func _damage_vehicle(v: SimVehicle, dmg: float, attacker: int, use_armor: bool =
 		v.respawn_ticks = 0
 	else:
 		v.respawn_ticks = RESPAWN_TICKS
+	Salvage.on_death(self, v)
 	if by_player:
 		_reward_player_kill(av, v, src, lost)
 
@@ -1592,6 +1659,9 @@ func _reward_player_kill(av: SimVehicle, v: SimVehicle, src: int, fuel_lost: int
 	if src == SRC_RAM:
 		ms["ram_kills"] = int(ms["ram_kills"]) + 1
 	var bounty: int = roundi(float(PVP_KILL_SCRAP * (LEADER_BOUNTY_MULT if is_leader else 1)) * factor)
+	if float(av.tech_fx.get("bounty_office", 0.0)) > 0.0:
+		bounty *= Salvage.BOUNTY_MULT
+	Salvage.loot_baron(self, av, v)
 	av.scrap += bounty
 	_note_scrap(av, bounty)
 	if not av.eliminated:
@@ -1690,7 +1760,7 @@ func _fire_weapons(v: SimVehicle) -> void:
 		var pellets: int = int(w.get("pellets", 1))
 		var pierce: int = int(w.get("pierce", 0))
 		var splash: float = float(w.get("splash", 0.0))
-		var dmg: float = float(w["damage"])
+		var dmg: float = float(w["damage"]) * Salvage.baron_mult(v)
 		if v.vulture > 0.0 and _is_weak(tk, ti, tid):
 			dmg *= 1.0 + v.vulture
 		var amask: int = Ammo.mask(v, kind_name)
@@ -1698,9 +1768,14 @@ func _fire_weapons(v: SimVehicle) -> void:
 			pierce += 1
 		var ttl: float = float(w["range"]) / speed + 0.05
 		var muzzle: Vector2 = v.pos + Vector2.from_angle(ang) * MUZZLE_OFFSET
+		var spot: bool = kind_name == "cannon" and tk == 1 and ti >= 0 and ti < enemy_count and enemy_kind[ti] == SPITTER \
+				and enemy_id[ti] == tid and float(fx.get("spotter", 0.0)) > 0.0
 		for p in pellets:
 			var dir: Vector2 = Vector2.from_angle(ang + rng.randf_range(-spread, spread))
-			spawn_projectile(muzzle, dir * speed, ttl, dmg, v.id, pierce, splash, widx, amask)
+			if spot:  # spotter: the shell is born on the spitter, so it cannot miss
+				spawn_projectile(enemy_pos[ti], Vector2.from_angle(ang) * speed, ttl, dmg, v.id, pierce, splash, widx, amask)
+			else:
+				spawn_projectile(muzzle, dir * speed, ttl, dmg, v.id, pierce, splash, widx, amask)
 		if scatter and kind_name != "shotgun":
 			var shots: int = int(w.get("shots", 0)) + 1
 			w["shots"] = shots
@@ -1829,6 +1904,10 @@ func _update_projectiles() -> void:
 					var bb: float = float(ofx.get("burn_bonus", 0.0))
 					if bb > 0.0:
 						dmg *= 1.0 + bb
+				if proj_weapon[i] == 2 and ekind == SPITTER:
+					var spf: float = float(ofx.get("spotter", 0.0))
+					if spf > 0.0:
+						dmg *= 1.0 + spf
 				var sw: float = float(ofx.get("swarm_logic", 0.0))
 				if sw > 0.0 and enemy_id[hit_enemy] == ov.mark_id:
 					dmg *= 1.0 + sw
@@ -1892,10 +1971,12 @@ func _update_projectiles() -> void:
 ## Damages every living enemy within `radius` of `center` except index `skip`.
 func _splash_damage(center: Vector2, radius: float, dmg: float, owner: int, skip: int) -> void:
 	var cnt: int = _hash.query_circle(center, radius, enemy_pos, _splash_buf, STALE_MARGIN)
+	_in_splash = true
 	for q in cnt:
 		var j: int = _splash_buf[q]
 		if j != skip:
 			_hit_enemy(j, dmg, owner)
+	_in_splash = false
 
 
 # ---------------------------------------------------------------- burn, shards and zones

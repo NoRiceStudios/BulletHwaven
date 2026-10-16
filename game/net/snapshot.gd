@@ -19,14 +19,14 @@ extends RefCounted
 ##   burning ceil(enemies / 8) B (only with FLAG_BURNING): bit i set = enemy i burns (burn dps and owner are host-side)
 ##   stunned ceil(enemies / 8) B (only with FLAG_STUNNED): bit i set = enemy i is EMP-stunned
 ##
-## Vehicle extras since version 10 (right after scrap_frac): a flags byte and the groups it names, see _put_extras().
+## Vehicle extras since version 10 (right after scrap_frac): a flags byte and the groups it names, see _put_extras() (bit 64: salvage, version 11).
 ##
 ## Positions are quantized to 1/16 px (max error POS_ERROR). Enemy velocity is quantized to
 ## 1/7 of the kind's speed and 128 headings; enemy hp to 1/15 of the kind's max hp (for the
 ## current round, SimWorld.enemy_max_hp). Card and tech ids are table indices (Cards.DEFS / Tech.DEFS).
 ## Projectile pierce / splash are not sent: the client world is passive.
 
-const VERSION := 10  # 10: momentum, abilities (slots, cooldowns, effect timers, decoy), swarm mark, jam flags, stunned bitset; 9: ammo / heat per weapon, ground zones, burning bitset, float cooldowns; 8: tech v2.3 (dormant fusions, respecs, purchase rounds); 7: doctrine rules (rig + per weapon); 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
+const VERSION := 11  # 11: salvage (contract offers and progress, loan debt, reserved card, bonus offers), events contract_done / saw / shockwave / chain / jerry_blast; 10: momentum, abilities (slots, cooldowns, effect timers, decoy), swarm mark, jam flags, stunned bitset; 9: ammo / heat per weapon, ground zones, burning bitset, float cooldowns; 8: tech v2.3 (dormant fusions, respecs, purchase rounds); 7: doctrine rules (rig + per weapon); 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
 const FLAG_WIDE_IDS := 1  ## enemy ids spread over more than 65535: ids are sent as u32 deltas from 0
 const FLAG_STATS := 2  ## vehicles carry round_stats and match_stats (sent outside combat only)
 const FLAG_BURNING := 4  ## a burning bitset follows the projectiles (only sent while something burns)
@@ -48,7 +48,7 @@ const PROJ_BYTES := 13
 const EVENT_BYTES := 7
 
 const MAX_VEHICLES := 64  ## vehicle ids travel as u8 / i8 owners, keep well below 127
-const EVENT_TYPES: PackedStringArray = ["fire", "hit", "kill", "vehicle_destroyed", "retreat", "respawn", "spit", "pvp_on", "bounty", "drain", "shrapnel", "jam", "overheat", "execute", "nitro", "emp", "smoke", "salvo", "dodge", "sparks", "boom", "shed"]
+const EVENT_TYPES: PackedStringArray = ["fire", "hit", "kill", "vehicle_destroyed", "retreat", "respawn", "spit", "pvp_on", "bounty", "drain", "shrapnel", "jam", "overheat", "execute", "nitro", "emp", "smoke", "salvo", "dodge", "sparks", "boom", "shed", "contract_done", "saw", "shockwave", "chain", "jerry_blast"]
 const MAX_ROUND := 65535
 const SPEED_STEPS := 7
 const HEADING_STEPS := 128
@@ -544,6 +544,8 @@ static func _put_extras(sp: StreamPeerBuffer, v: SimVehicle) -> void:
 		ext |= 16
 	if v.mark_id >= 0:
 		ext |= 32
+	if not v.contract_offers.is_empty() or v.contract_kind >= 0 or v.loan_debt > 0 or v.reserved_card != "" or v.bonus_offers > 0:
+		ext |= 64
 	sp.put_u8(ext)
 	if (ext & 1) != 0:
 		sp.put_float(v.momentum)
@@ -570,11 +572,28 @@ static func _put_extras(sp: StreamPeerBuffer, v: SimVehicle) -> void:
 		sp.put_32(v.mark_id)
 		sp.put_float(v.mark_pos.x)
 		sp.put_float(v.mark_pos.y)
+	if (ext & 64) != 0:
+		var offers: Array[Vector3i] = v.contract_offers
+		var no: int = mini(offers.size(), Salvage.MAX_OFFERS)
+		sp.put_u8(no)
+		for i in no:
+			sp.put_u8(clampi(offers[i].x, 0, 255))
+			sp.put_u16(clampi(offers[i].y, 0, 65535))
+			sp.put_u16(clampi(offers[i].z, 0, 65535))
+		sp.put_8(clampi(v.contract_kind, -1, 127))
+		if v.contract_kind >= 0:
+			sp.put_u16(clampi(v.contract_need, 0, 65535))
+			sp.put_u16(clampi(v.contract_reward, 0, 65535))
+			sp.put_16(clampi(int(v.contract_prog), -1, 32767))
+		sp.put_u16(clampi(v.loan_debt, 0, 65535))
+		sp.put_u8(clampi(v.loan_left, 0, 255))
+		sp.put_u8(Cards.index_of(v.reserved_card) if v.reserved_card != "" else 255)
+		sp.put_u8(clampi(v.bonus_offers, 0, 255))
 
 
 static func _get_extras(r: _Reader, v: SimVehicle, slot_ids: Array[String], slot_cd: PackedInt32Array) -> void:
 	var ext: int = r.u8()
-	if ext >= 64:
+	if ext >= 128:
 		r.fail()
 		return
 	if (ext & 1) != 0:
@@ -604,6 +623,38 @@ static func _get_extras(r: _Reader, v: SimVehicle, slot_ids: Array[String], slot
 	if (ext & 32) != 0:
 		v.mark_id = r.s32()
 		v.mark_pos = Vector2(r.f32(), r.f32())
+	if (ext & 64) != 0:
+		var no: int = r.u8()
+		if no > Salvage.MAX_OFFERS:
+			r.fail()
+			return
+		var offers: Array[Vector3i] = []
+		for i in no:
+			var ok: int = r.u8()
+			var on: int = r.u16()
+			var orw: int = r.u16()
+			if ok >= Salvage.K_COUNT:
+				r.fail()
+				return
+			offers.append(Vector3i(ok, on, orw))
+		v.contract_offers = offers
+		var ck: int = r.s8()
+		if ck >= Salvage.K_COUNT:
+			r.fail()
+			return
+		v.contract_kind = ck
+		if ck >= 0:
+			v.contract_need = r.u16()
+			v.contract_reward = r.u16()
+			v.contract_prog = float(r.s16())
+		v.loan_debt = r.u16()
+		v.loan_left = r.u8()
+		var rix: int = r.u8()
+		if rix != 255:
+			v.reserved_card = Cards.id_at(rix)
+			if v.reserved_card == "":
+				r.fail()
+		v.bonus_offers = r.u8()
 
 
 ## Round and match stats of one vehicle (see SimWorld.new_round_stats / new_match_stats).
@@ -915,6 +966,15 @@ static func _commit_vehicles(world: SimWorld, fresh: Array[SimVehicle]) -> void:
 			dst.shed = src.shed
 			dst.mark_id = src.mark_id
 			dst.mark_pos = src.mark_pos
+			dst.contract_offers = src.contract_offers
+			dst.contract_kind = src.contract_kind
+			dst.contract_need = src.contract_need
+			dst.contract_reward = src.contract_reward
+			dst.contract_prog = src.contract_prog
+			dst.loan_debt = src.loan_debt
+			dst.loan_left = src.loan_left
+			dst.reserved_card = src.reserved_card
+			dst.bonus_offers = src.bonus_offers
 			if not src.round_stats.is_empty():
 				dst.round_stats = src.round_stats
 				dst.match_stats = src.match_stats
@@ -975,6 +1035,12 @@ class _Reader:
 			return 0
 		pos += 4
 		return bytes.decode_u32(pos - 4)
+
+	func s16() -> int:
+		if not _take(2):
+			return 0
+		pos += 2
+		return bytes.decode_s16(pos - 2)
 
 	func s32() -> int:
 		if not _take(4):

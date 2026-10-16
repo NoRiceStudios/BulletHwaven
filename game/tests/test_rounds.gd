@@ -1189,12 +1189,12 @@ func test_checksum_covers_round_state() -> void:
 # ---------------------------------------------------------------- command validation (net)
 
 func test_validate_round_commands() -> void:
-	for i in [0, 1, 2]:
+	for i in [0, 1, 2, 3]:
 		assert_eq(NetSession.validate_command({"type": "pick_card", "value": i}), {"type": "pick_card", "value": i})
 		var from_float: Dictionary = NetSession.validate_command({"type": "pick_card", "value": float(i)})
 		assert_eq(from_float, {"type": "pick_card", "value": i}, "integral float accepted and returned as int")
 		assert_eq(typeof(from_float["value"]), TYPE_INT)
-	var bad_picks: Array = [3, -1, 100, 1.5, 0.1, 2.0000001, -0.5, NAN, INF, -INF, "1", "0", "", true, null, [1], {"v": 1}, 1.0e30]
+	var bad_picks: Array = [4, -1, 100, 1.5, 0.1, 2.0000001, -0.5, NAN, INF, -INF, "1", "0", "", true, null, [1], {"v": 1}, 1.0e30]
 	for b: Variant in bad_picks:
 		assert_true(NetSession.validate_command({"type": "pick_card", "value": b}).is_empty(), "rejected pick %s" % str(b))
 	assert_true(NetSession.validate_command({"type": "pick_card"}).is_empty(), "pick_card needs a value")

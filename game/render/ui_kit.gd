@@ -351,6 +351,42 @@ const FX_TEXT := {
 	"thunderclap": "CONTACT KILLS TRIGGER A MINI EMP",
 }
 
+## Short text of a salvage contract ("KILL 3 BOULDERS").
+static func contract_title(kind: int, need: int) -> String:
+	match kind:
+		Salvage.K_BOULDERS:
+			return "KILL %d BOULDERS" % need
+		Salvage.K_SPITTERS:
+			return "KILL %d SPITTERS" % need
+		Salvage.K_ALIENS:
+			return "KILL %d ALIENS" % need
+		Salvage.K_RAM:
+			return "DEAL %d RAM DAMAGE" % need
+		Salvage.K_NO_DEATH:
+			return "DO NOT GET DESTROYED"
+		Salvage.K_LEADER:
+			return "HIT THE LEADER %d TIMES" % need
+	return "?"
+
+
+## "+87 SCRAP" (the payout of a contract with base reward `base` for `v`), with the fuel it adds.
+static func contract_reward_text(v: SimVehicle, base: int) -> String:
+	var t := "+%d SCRAP" % Salvage.payout(v, base)
+	var fuel: int = int(v.tech_fx.get("fuel_per_contract", 0.0)) + (Salvage.NO_DEATH_FUEL if v.contract_kind == Salvage.K_NO_DEATH else 0)
+	if fuel > 0:
+		t += " +%d FUEL" % fuel
+	return t
+
+
+## Progress of the accepted contract of `v` as text ("12/20", "ALIVE", "FAILED", "DONE").
+static func contract_progress(v: SimVehicle) -> String:
+	if v.contract_kind == Salvage.K_NO_DEATH:
+		return "FAILED" if v.contract_prog < 0.0 else "ALIVE"
+	if Salvage.is_done(v):
+		return "DONE"
+	return "%d/%d" % [int(v.contract_prog), v.contract_need]
+
+
 ## One line per effect key (amounts as given: per level for cards, flat for tech).
 static func fx_lines(fx: Dictionary) -> PackedStringArray:
 	var out := PackedStringArray()

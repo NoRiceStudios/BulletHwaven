@@ -41,7 +41,7 @@ const COMMANDS := {
 ## Commands without a value (any "value" key is dropped).
 const VALUELESS_COMMANDS: PackedStringArray = ["reroll", "ready"]
 const LOBBY_COMMANDS: PackedStringArray = ["profile", "lobby_ready"]
-const OFFER_SLOTS := Cards.OFFER_COUNT  ## pick_card takes an offer index 0..OFFER_SLOTS-1
+const OFFER_SLOTS := Cards.OFFER_COUNT + 1  ## pick_card / reserve_card take an offer index 0..OFFER_SLOTS-1 (a lucky strike adds a fourth offer)
 
 enum Mode { NONE, SOLO, HOST, CLIENT }
 enum State { IDLE, LOBBY, MATCH }
@@ -277,7 +277,8 @@ func send_command(cmd: Dictionary) -> void:
 ## pick_card takes an integral number 0..2 (an int or a whole float, since JSON / RPC may deliver
 ## either; returned as int); buy_tech takes a known tech id; respec_tech takes two ("from", "value"); reroll and ready take no value;
 ## set_rules / set_weapon_target / set_ammo take a "scope" and are re-encoded in canonical form (Doctrine);
-## use_ability takes an ability id, set_ability a "slot" (0..1) and an ability id.
+## use_ability takes an ability id, set_ability a "slot" (0..1) and an ability id; reserve_card an offer index 0..3, accept_contract a
+## contract index 0..1, scrap_card a card id.
 static func validate_command(cmd: Variant) -> Dictionary:
 	if typeof(cmd) != TYPE_DICTIONARY:
 		return {}
@@ -338,7 +339,7 @@ static func validate_command(cmd: Variant) -> Dictionary:
 		if String(from_v).length() > 32 or String(v).length() > 32 or not Tech.has(String(from_v)) or not Tech.has(String(v)):
 			return {}
 		return {"type": type_s, "from": String(from_v), "value": String(v)}
-	if type_s == "pick_card":
+	if type_s == "pick_card" or type_s == "reserve_card":
 		var idx: int = -1
 		if typeof(v) == TYPE_INT:
 			idx = v
@@ -349,6 +350,11 @@ static func validate_command(cmd: Variant) -> Dictionary:
 		if idx < 0 or idx >= OFFER_SLOTS:
 			return {}
 		return {"type": type_s, "value": idx}
+	if type_s == "accept_contract":  # {"value": contract offer index 0..MAX_OFFERS-1}
+		var cidx: int = _small_int(v, Salvage.MAX_OFFERS)
+		if cidx < 0:
+			return {}
+		return {"type": type_s, "value": cidx}
 	if typeof(v) != TYPE_STRING:
 		return {}
 	var value_s: String = v
@@ -356,6 +362,10 @@ static func validate_command(cmd: Variant) -> Dictionary:
 		return {}
 	if type_s == "buy_tech":
 		if not Tech.has(value_s):
+			return {}
+		return {"type": type_s, "value": value_s}
+	if type_s == "scrap_card":
+		if not Cards.has(value_s):
 			return {}
 		return {"type": type_s, "value": value_s}
 	if not COMMANDS.has(type_s):

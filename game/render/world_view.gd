@@ -481,6 +481,16 @@ func _consume_events(events: Array, age: float, transient: bool, tick: int = -1,
 					_effects.spawn(EffectsLayer.Kind.SPARKS, pos, float(h % 628) / 100.0, age, h)
 			"nitro":
 				_add_ring(pos, 16.0, tick, 8, Gfx.FIRE[3] if kind == 0 else Gfx.UI_DIM)
+			"shockwave":
+				_add_ring(pos, Fusions.WAR_RADIUS, tick, 10, Gfx.FIRE[5])
+			"jerry_blast":
+				_add_ring(pos, Salvage.JERRY_RADIUS, tick, 12, Gfx.FIRE[4])
+			"chain":
+				_add_ring(pos, Fusions.CLAP_RADIUS if kind == 0 else 10.0, tick, 8, Gfx.STEEL[5])
+			"saw":
+				_add_ring(pos, 14.0, tick, 6, Gfx.STEEL[4])
+			"contract_done":
+				_add_ring(pos, 30.0, tick, 14, Gfx.FIRE[5])
 			"smoke", "salvo":
 				_add_ring(pos, 24.0 if str(e.get("type", "")) == "smoke" else 30.0, tick, 10, Gfx.UI_DIM if str(e.get("type", "")) == "smoke" else Gfx.FIRE[5])
 			"dodge":

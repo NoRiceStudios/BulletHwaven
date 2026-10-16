@@ -411,6 +411,7 @@ static func buy(v: SimVehicle, id: String, world_round: int = 0) -> bool:
 	if fx.has("fuel"):
 		v.fuel += int(fx["fuel"])
 	_recompute(v)
+	Salvage.on_buy(v, fx)
 	return true
 
 

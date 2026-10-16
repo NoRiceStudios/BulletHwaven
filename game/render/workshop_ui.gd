@@ -173,7 +173,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	var key: Key = (event as InputEventKey).keycode
 	var handled: bool = true
 	match key:
-		KEY_1, KEY_2, KEY_3:
+		KEY_1, KEY_2, KEY_3, KEY_4:
 			activate("pick", int(key - KEY_1))
 		KEY_R:
 			activate("reroll", null)
@@ -278,6 +278,26 @@ func activate(action: String, arg: Variant) -> void:
 				_say("NEED %d SCRAP" % Tech.price(v, id))
 			else:
 				_send({"type": "buy_tech", "value": id})
+		"accept":  # a contract offer
+			if int(arg) >= 0 and int(arg) < v.contract_offers.size():
+				_send({"type": "accept_contract", "value": int(arg)})
+				_say("CONTRACT ACCEPTED")
+		"reserve":  # haggler: keep an offered card for the next workshop
+			var ri: int = int(arg)
+			if v.picked or ri < 0 or ri >= v.offers.size():
+				_say("NOTHING TO RESERVE")
+			else:
+				_send({"type": "reserve_card", "value": ri})
+				_say("RESERVE CLEARED" if v.reserved_card == v.offers[ri] else "RESERVED FOR NEXT TIME")
+		"scrap":  # scrap press: sell one level of an owned card
+			var sid: String = str(arg)
+			if not v.cards.has(sid):
+				_say("NO SUCH PART")
+			elif Cards.is_weapon(sid) and int(v.cards[sid]) <= 1 and Cards.weapon_cards_owned(v) <= 1:
+				_say("KEEP YOUR LAST GUN")
+			else:
+				_send({"type": "scrap_card", "value": sid})
+				_say("SCRAPPED +%d" % (int(v.cards[sid]) * Salvage.PRESS_PER_LEVEL))
 		"ready":
 			if not v.ready:
 				_send({"type": "ready"})
@@ -327,6 +347,7 @@ func _draw() -> void:
 		_:
 			_draw_rig_panel(v)
 			_draw_cards(v, vs)
+			_draw_contracts(v, vs)
 			_draw_recap(v)
 			_draw_convoy(v)
 			var scout: SimVehicle = _scout_target()
@@ -454,18 +475,26 @@ func _draw_rig_panel(v: SimVehicle) -> void:
 		stats.append(["REPAIR", "%s/S" % UiKit.num(v.regen)])
 	if v.contact_damage > 0.0:
 		stats.append(["RAM", "%s/T" % UiKit.num(v.contact_damage)])
+	if Salvage.baron_mult(v) > 1.0:
+		stats.append(["BARON", "+%s DMG" % UiKit.pct(Salvage.baron_mult(v) - 1.0)])
 	for i in stats.size():
 		var sx: float = x0 + (i % 2) * floorf(w / 2.0)
 		var sy: float = y + (i / 2) * 18.0
 		UiFont.draw_small(self, stats[i][0], Vector2(sx, sy), Gfx.UI_DIM)
 		UiFont.draw_big(self, stats[i][1], Vector2(sx, sy + 7), Gfx.UI_TEXT, Gfx.OUTLINE)
 	y += ceilf(stats.size() / 2.0) * 18.0 + 4.0
+	if v.loan_debt > 0:  # loan shark: what is still owed
+		var dt := "DEBT %d  (%d LEFT)" % [v.loan_debt, maxi(v.loan_left, 1)]
+		draw_rect(Rect2(x0 - 1, y - 2, w + 2, 10), Color(0.35, 0.08, 0.06, 0.7))
+		UiFont.draw(self, dt, Vector2(x0 + 2, y), Gfx.UI_BAD, Gfx.UI_SHADOW)
+		y += 11.0
 	# guns, then the other parts
+	var press: bool = float(v.tech_fx.get("scrap_press", 0.0)) > 0.0
 	UiKit.section(self, "GUNS", Vector2(x0, y), w, "%d/%d SLOTS" % [Cards.weapon_cards_owned(v), v.weapon_slots])
 	y += 10.0
 	for id: String in v.cards:
 		if Cards.is_weapon(id):
-			_part_row(id, int(v.cards[id]), x0, xr, y)
+			_part_row(id, int(v.cards[id]), x0, xr, y, press)
 			y += 10.0
 	for k in maxi(v.weapon_slots - Cards.weapon_cards_owned(v), 0):
 		UiFont.draw(self, "- FREE SLOT", Vector2(x0 + 10, y), Gfx.STEEL[3])
@@ -480,7 +509,7 @@ func _draw_rig_panel(v: SimVehicle) -> void:
 				UiFont.draw(self, "+ MORE", Vector2(x0 + 10, y), Gfx.UI_DIM)
 				y += 10.0
 				break
-			_part_row(id, int(v.cards[id]), x0, xr, y)
+			_part_row(id, int(v.cards[id]), x0, xr, y, press)
 			y += 10.0
 			parts += 1
 	if parts == 0:
@@ -507,24 +536,37 @@ func _draw_rig_panel(v: SimVehicle) -> void:
 		UiFont.draw(self, ut, ur.position + Vector2(5, 2), Gfx.INK)
 
 
-func _part_row(id: String, lvl: int, x0: float, xr: float, y: float) -> void:
+func _part_row(id: String, lvl: int, x0: float, xr: float, y: float, scrappable: bool = false) -> void:
 	draw_rect(Rect2(x0, y - 1, 7, 7), Gfx.OUTLINE)
 	draw_rect(Rect2(x0 + 1, y, 5, 5), UiKit.card_color(id))
 	UiFont.draw(self, UiKit.card_name(id), Vector2(x0 + 10, y), Gfx.UI_TEXT, Gfx.UI_SHADOW)
 	UiKit.pips(self, Vector2(xr - 16, y), lvl, Cards.MAX_LEVEL, Gfx.FIRE[4])
+	if scrappable:  # scrap press: sell one level
+		var label := "+%d" % (lvl * Salvage.PRESS_PER_LEVEL)
+		var br := Rect2(xr - 20.0 - UiFont.width(label) - 6.0, y - 2.0, UiFont.width(label) + 6.0, 9.0)
+		var hov: bool = _is_hover("scrap", id)
+		draw_rect(br, Gfx.OUTLINE)
+		draw_rect(br.grow(-1.0), Color(0.22, 0.14, 0.08) if hov else Color(0.14, 0.1, 0.08))
+		UiFont.draw(self, label, br.position + Vector2(3, 1), Gfx.FIRE[5] if hov else Gfx.FIRE[3])
+		_hits.append([br, "scrap", id])
 
 
 # ---------------------------------------------------------------- draft cards (centre)
 
 func _draw_cards(v: SimVehicle, vs: Vector2) -> void:
 	var cx: float = floorf(vs.x / 2.0)
-	var total: float = 3.0 * CARD_SIZE.x + 2.0 * CARD_GAP
-	var x0: float = cx - floorf(total / 2.0)
 	var showing: Array[String] = v.offers
 	var picked_view: bool = false
 	if v.picked:
 		picked_view = true
 		showing = _offers_cache if _offers_round == world.round else ([] as Array[String])
+	# three cards side by side; a lucky strike's fourth one makes them overlap
+	var step: float = CARD_SIZE.x + CARD_GAP
+	if showing.size() > 3:
+		step = floorf((324.0 - CARD_SIZE.x) / float(showing.size() - 1))
+	var total: float = step * float(maxi(showing.size(), 3) - 1) + CARD_SIZE.x
+	var x0: float = cx - floorf(total / 2.0)
+	var can_reserve: bool = float(v.tech_fx.get("reserve_card", 0.0)) > 0.0
 	var title: String = "PICK ONE PART - FREE" if not v.picked else "PART FITTED"
 	UiKit.tape_label(self, title, cx, CARD_Y - 15.0, Color("#e8dcc4"))
 	if showing.is_empty():
@@ -532,7 +574,7 @@ func _draw_cards(v: SimVehicle, vs: Vector2) -> void:
 		UiKit.center_text(self, msg, cx, CARD_Y + 50.0, Gfx.UI_TEXT, Gfx.OUTLINE)
 	for i in showing.size():
 		var id: String = showing[i]
-		var pos := Vector2(x0 + i * (CARD_SIZE.x + CARD_GAP), CARD_Y)
+		var pos := Vector2(x0 + float(i) * step, CARD_Y)
 		var hov: bool = not picked_view and _is_hover("pick", i)
 		var state: int = 0  # 0 offer, 1 fitted, 2 scrapped
 		if picked_view:
@@ -540,6 +582,14 @@ func _draw_cards(v: SimVehicle, vs: Vector2) -> void:
 		_draw_card(id, i, pos + (Vector2(0, -3) if hov else Vector2.ZERO), int(v.cards.get(id, 0)) - (1 if state == 1 else 0), hov, state)
 		if not picked_view:
 			_hits.append([Rect2(pos, CARD_SIZE), "pick", i])
+			if can_reserve:
+				var kept: bool = v.reserved_card == id
+				var rb := Rect2(pos.x + 6.0, pos.y + 2.0, 42.0, 10.0)
+				var rh: bool = _is_hover("reserve", i)
+				draw_rect(rb, Gfx.OUTLINE)
+				draw_rect(rb.grow(-1.0), Color(0.4, 0.28, 0.1) if kept else (Color(0.26, 0.2, 0.14) if rh else Color(0.14, 0.1, 0.08)))
+				UiFont.draw(self, "KEPT" if kept else "RESERVE", rb.position + Vector2(3, 2), Gfx.FIRE[5] if kept or rh else Gfx.UI_TEXT)
+				_hits.append([rb, "reserve", i])
 	# reroll: a secondary button with its price
 	var rr := Rect2(cx - 50, CARD_Y + CARD_SIZE.y + 8.0, 100, 15)
 	var can: bool = not v.picked and v.scrap >= v.reroll_cost
@@ -553,6 +603,35 @@ func _draw_cards(v: SimVehicle, vs: Vector2) -> void:
 	UiFont.draw(self, cost, Vector2(lx + UiFont.width(label) + 17, rr.position.y + 5),
 		(Gfx.FIRE[4] if can else (Gfx.UI_BAD if not v.picked else Gfx.UI_DIM)), Gfx.OUTLINE)
 	_hits.append([rr, "reroll", null])
+
+
+## Bottom centre: the contract offers with ACCEPT, or the accepted contract with its progress.
+func _draw_contracts(v: SimVehicle, vs: Vector2) -> void:
+	if v.contract_offers.is_empty() and v.contract_kind < 0:
+		return
+	var cx: float = floorf(vs.x / 2.0)
+	var r := Rect2(cx - 158.0, 309.0, 316.0, 32.0)
+	UiKit.panel(self, r)
+	_hits.append([r, "none", null])
+	var x0: float = r.position.x + 6.0
+	var w: float = r.size.x - 12.0
+	if v.contract_kind >= 0:
+		UiKit.section(self, "CONTRACT ACCEPTED", Vector2(x0, r.position.y + 4.0), w, UiKit.contract_reward_text(v, v.contract_reward), Gfx.FIRE[4])
+		UiFont.draw(self, UiKit.contract_title(v.contract_kind, v.contract_need), Vector2(x0, r.position.y + 16.0), Gfx.UI_TEXT, Gfx.UI_SHADOW)
+		UiFont.draw(self, "FINISH IT IN THE NEXT ROUND", Vector2(x0, r.position.y + 24.0), Gfx.UI_DIM, Gfx.UI_SHADOW)
+		return
+	var n: int = v.contract_offers.size()
+	UiKit.section(self, "CONTRACT OFFER" if n == 1 else "CONTRACTS - PICK ONE", Vector2(x0, r.position.y + 4.0), w, "PAID AT THE END OF THE ROUND", Gfx.UI_DIM)
+	var col_w: float = floorf(w / float(n))
+	for i in n:
+		var o: Vector3i = v.contract_offers[i]
+		var cx0: float = x0 + float(i) * col_w
+		UiFont.draw(self, UiKit.contract_title(o.x, o.y), Vector2(cx0, r.position.y + 15.0), Gfx.UI_TEXT, Gfx.UI_SHADOW)
+		UiFont.draw(self, UiKit.contract_reward_text(v, o.z), Vector2(cx0, r.position.y + 23.0), Gfx.FIRE[4], Gfx.UI_SHADOW)
+		var br := Rect2(cx0 + col_w - 50.0, r.position.y + 15.0, 44.0, 14.0)
+		var hov: bool = _is_hover("accept", i)
+		UiKit.button(self, br, "ACCEPT", hov)
+		_hits.append([br, "accept", i])
 
 
 ## One draft card. `level` = owned level before the pick (0 = new).

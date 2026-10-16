@@ -221,6 +221,28 @@ func _draw_dock(v: SimVehicle, vs: Vector2) -> void:
 	var kt := str(v.kills)
 	UiFont.draw(self, kt, Vector2(xr - UiFont.width(kt), y2), Gfx.UI_TEXT, Gfx.UI_SHADOW)
 	_draw_mobility(v, r)
+	_draw_contract(v, r)
+
+
+## The accepted contract on top of the dock: what it asks, a progress bar and the count.
+func _draw_contract(v: SimVehicle, dock: Rect2) -> void:
+	if v.contract_kind < 0:
+		return
+	var up: bool = Mobility.has_momentum(v) or v.abilities[0] != "" or v.abilities[1] != ""
+	var y: float = dock.position.y - (18.0 if up else 9.0)
+	var done: bool = Salvage.is_done(v)
+	var failed: bool = v.contract_kind == Salvage.K_NO_DEATH and v.contract_prog < 0.0
+	var col: Color = Gfx.UI_BAD if failed else (Gfx.FIRE[5] if done else Gfx.UI_DIM)
+	var txt: String = "%s  %s" % [UiKit.contract_title(v.contract_kind, v.contract_need), UiKit.contract_progress(v)]
+	var x: float = dock.position.x + 7.0
+	UiFont.draw_small(self, "CONTRACT", Vector2(x, y), Gfx.UI_DIM, Gfx.UI_SHADOW)
+	x += UiFont.width_small("CONTRACT") + 5.0
+	if v.contract_kind != Salvage.K_NO_DEATH:
+		var f: float = clampf(v.contract_prog / float(maxi(v.contract_need, 1)), 0.0, 1.0)
+		UiKit.bar(self, Rect2(x, y, 40, 5), f, Gfx.FIRE[5] if done else Gfx.FIRE[3])
+		x += 44.0
+	UiFont.draw_small(self, txt, Vector2(x, y), col, Gfx.UI_SHADOW)
+	UiFont.draw_small(self, UiKit.contract_reward_text(v, v.contract_reward), Vector2(x + UiFont.width_small(txt) + 6.0, y), Gfx.FIRE[4], Gfx.UI_SHADOW)
 
 
 ## Momentum bar (warm; sparks at full) and the two ability slots, on top of the dock. Only for rigs that have

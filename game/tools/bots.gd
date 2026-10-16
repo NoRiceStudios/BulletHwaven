@@ -285,6 +285,10 @@ func next_command(world: SimWorld, v: SimVehicle) -> Dictionary:
 		_pick_done = false
 	var random_mode: bool = str(cfg.get("mode", "")) == "random"
 
+	# 0. contract: take the first offer (accepting clears the offers, so this answers once per workshop)
+	if not v.contract_offers.is_empty() and v.contract_kind < 0:
+		return {"type": "accept_contract", "value": 0}
+
 	# 1. card
 	if not v.picked and not _pick_done and not v.offers.is_empty():
 		if random_mode:

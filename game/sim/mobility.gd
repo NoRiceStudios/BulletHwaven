@@ -9,6 +9,7 @@ const TOP_SPEED := 120.0  ## px/s reference for momentum: rigs that cannot drive
 const GAIN_FRACTION := 0.8  ## momentum builds while the drive style asks for more than this share of TOP_SPEED
 const GAIN_PER_TICK := 20.0 * SimWorld.DT  ## +20 / s
 const DRIFT_DIFF := 0.35  ## rad of heading error that counts as turning hard (drift tuning doubles the gain)
+const DRIFT_MIN_SPEED := 60.0  ## px/s: a hard turn at least this fast counts as drifting (hot rod, burning wake)
 const STOP_FRACTION := 0.2  ## "nearly stopped": below this share of TOP_SPEED
 const DECAY_PER_TICK := 30.0 * SimWorld.DT  ## -30 / s when nearly stopped (halved by the turbine)
 const HIT_LOSS := 10.0  ## per hit of more than HIT_LOSS_MIN_DAMAGE
@@ -67,6 +68,7 @@ static func is_juggernaut(v: SimVehicle) -> bool:
 ## Per tick after steering: momentum, juggernaut armour, turbine boom, dozer blade.
 static func update(w: SimWorld, v: SimVehicle) -> void:
 	v.eff_armor = v.armor
+	v.drifting = v.turn_diff > DRIFT_DIFF and v.vel.length_squared() > DRIFT_MIN_SPEED * DRIFT_MIN_SPEED
 	var fx: Dictionary = v.tech_fx
 	if fx.is_empty():
 		return
@@ -167,8 +169,13 @@ static func _ram_common(w: SimWorld, v: SimVehicle, at: Vector2, skip: int) -> v
 		v.ram_fx[-1] = w.tick
 		v.momentum = maxf(v.momentum - RAM_COST, 0.0)
 	if float(fx.get("sparks", 0.0)) > 0.0:
-		w._splash_damage(at, SPARKS_RADIUS, SPARKS_DAMAGE, v.id, skip)
+		if float(fx.get("thermite", 0.0)) > 0.0:
+			Fusions.thermite(w, v, at, skip)
+		else:
+			w._splash_damage(at, SPARKS_RADIUS, SPARKS_DAMAGE, v.id, skip)
 		w._emit("sparks", at, v.id, 0)
+	if float(fx.get("war_machine", 0.0)) > 0.0:
+		Fusions.war_machine(w, v)
 
 
 # ---------------------------------------------------------------- jammer

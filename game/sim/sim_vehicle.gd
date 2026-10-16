@@ -93,6 +93,26 @@ var shed: int = 0  ## armour plates shed this round (scrap armour)
 var mark_id: int = -1  ## swarm logic: enemy id of the marked target, -1 = none
 var mark_pos: Vector2 = Vector2.ZERO
 
+# Salvage and fusion state (tech tree v2.3 stage 3; Salvage, Fusions). The contract / loan / reserve / bonus fields are synced.
+var contract_offers: Array[Vector3i] = []  ## workshop: offered contracts as (kind, need, reward); empty once one is accepted
+var contract_kind: int = -1  ## accepted contract (Salvage.K_*), -1 = none; paid when the combat ends
+var contract_need: int = 0
+var contract_reward: int = 0  ## base scrap, before contract_bonus
+var contract_prog: float = 0.0  ## progress towards contract_need; -1 = failed (stirb nicht)
+var loan_debt: int = 0  ## scrap still owed to the loan shark
+var loan_left: int = 0  ## scheduled instalments left (the last one takes whatever is owed)
+var reserved_card: String = ""  ## haggler: this card is added to the next workshop's offers
+var bonus_offers: int = 0  ## lucky strike: extra card offers at the next workshop
+var lucky_round: int = -10  ## round of the last lucky-strike bonus offer
+var saws: int = 0  ## scrapped cards waiting to fly off as saw blades at the next combat start
+var raid_acc: float = 0.0  ## host-only: raider damage not yet turned into stolen scrap
+var barbed_scrap: int = 0  ## host-only: barbed wire scrap earned this round (cap)
+var storm_count: int = 0  ## host-only: scrap storm bursts this round (cap)
+var fort_regen: float = 0.0  ## host-only: fortified relay repair rate (hp/s) while fort_ticks run
+var fort_ticks: int = 0
+var clap_cd: int = 0  ## host-only: thunderclap cooldown ticks
+var drifting: bool = false  ## host-only: hard turn at speed this tick (hot rod, burning wake)
+
 ## Last combat round's numbers, for the workshop recap (see SimWorld.new_round_stats()). Reset at the
 ## start of every combat, filled while it runs. Snapshots carry it only outside combat.
 var round_stats: Dictionary = {}

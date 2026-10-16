@@ -228,6 +228,7 @@ static func step(name: String, w: SimWorld) -> void:
 					_stage_workshop(w)
 					if name == "tech_tree":
 						_stage_tech_tree(w.vehicles[0])
+						_stage_salvage(w, w.vehicles[0])
 		"gameover":
 			if w.phase == SimWorld.PHASE_WORKSHOP:
 				_ready_all(w)
@@ -271,6 +272,19 @@ static func _stage_tech_tree(red: SimVehicle) -> void:
 			"fusion_burning_wake", "salvage_hooks"]:
 		Tech.buy(red, id)
 	red.scrap = 640
+
+
+## Salvage UI check: haggler, black market (two contract offers), scrap press, a lucky-strike fourth card and a loan debt.
+static func _stage_salvage(w: SimWorld, red: SimVehicle) -> void:
+	red.scrap = 99999
+	for id: String in ["salvage_haggler", "salvage_black_market", "salvage_press"]:
+		Tech.buy(red, id)
+	red.scrap = 640
+	red.loan_debt = 220
+	red.loan_left = 2
+	red.offers = Cards.roll_offers(w.rng, red, Cards.OFFER_COUNT + 1, w.round)
+	red.reserved_card = red.offers[1]
+	Salvage.roll(w, red)
 
 
 ## A mid-game workshop: some scrap, a few cards and tech, 19 s on the clock, rival ready.
