@@ -297,6 +297,9 @@ func _report() -> void:
 	md.append("")
 
 	var pol_names: PackedStringArray = BotPolicy.names()
+	for sp: Dictionary in solo:  # node probes (probe_<id>, base_<branch>) are not in the registry
+		if not pol_names.has(str(sp["policy"])):
+			pol_names.append(str(sp["policy"]))
 	# ---- solo policies
 	var solo_rows: Array = []
 	var solo_csv: PackedStringArray = PackedStringArray(["policy,n,mean_reached,median_reached,p25,p75,capped_pct,mean_kills,mean_income,mean_first_death_s,mean_deaths"])
@@ -332,6 +335,38 @@ func _report() -> void:
 		md.append_array(_table(["policy", "n", "score (mean)", "median", "p25-p75", "capped%", "kills", "scrap earned", "1st death (s)", "deaths"], solo_rows))
 		md.append("")
 		_save_lines(out_dir.path_join("solo_policies.csv"), solo_csv)
+
+		# keystone timing: round of the first tier 6 purchase (and the first tier 5 one), per policy
+		var key_rows: Array = []
+		for pn in pol_names:
+			var k6: Array = []
+			var k5: Array = []
+			var nrows: int = 0
+			for p: Dictionary in solo:
+				if str(p["policy"]) != pn:
+					continue
+				nrows += 1
+				for tb: Array in p["tech_buys"]:
+					var td: Dictionary = Tech.def(str(tb[0]))
+					if td.is_empty() or td["kind"] == "proto":
+						continue
+					if int(td["tier"]) == 6:
+						k6.append(float(tb[1]))
+						break
+				for tb2: Array in p["tech_buys"]:
+					var td2: Dictionary = Tech.def(str(tb2[0]))
+					if not td2.is_empty() and td2["kind"] != "proto" and int(td2["tier"]) == 5:
+						k5.append(float(tb2[1]))
+						break
+			if nrows > 0 and not str(pn).begins_with("never"):
+				key_rows.append([pn, nrows, "%d%%" % int(100.0 * k5.size() / nrows), _f(_mean(k5), 1) if not k5.is_empty() else "-",
+					"%d%%" % int(100.0 * k6.size() / nrows), _f(_mean(k6), 1) if not k6.is_empty() else "-"])
+		md.append("## Keystone timing (solo)")
+		md.append("")
+		md.append("Workshop round of the first tier 5 / tier 6 purchase (round 1 = first workshop after round 0). Design target: a focused good player reaches a keystone around round 9-10.")
+		md.append("")
+		md.append_array(_table(["policy", "n", "reached t5", "t5 round (mean)", "reached t6", "t6 round (mean)"], key_rows))
+		md.append("")
 
 		# fuel by round + cause of death
 		var fuel_rows: Array = []

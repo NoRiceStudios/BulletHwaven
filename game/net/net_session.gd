@@ -36,11 +36,12 @@ const MAX_RAW_NAME := 64  ## longer raw names are junk and rejected; shorter one
 const COMMANDS := {
 	"set_drive": ["circle", "kite", "charge"],
 	"set_target": Doctrine.RIG_TARGETS,
+	"use_ability": Abilities.IDS,
 }
 ## Commands without a value (any "value" key is dropped).
 const VALUELESS_COMMANDS: PackedStringArray = ["reroll", "ready"]
 const LOBBY_COMMANDS: PackedStringArray = ["profile", "lobby_ready"]
-const OFFER_SLOTS := Cards.OFFER_COUNT  ## pick_card takes an offer index 0..OFFER_SLOTS-1
+const OFFER_SLOTS := Cards.OFFER_COUNT + 1  ## pick_card / reserve_card take an offer index 0..OFFER_SLOTS-1 (a lucky strike adds a fourth offer)
 
 enum Mode { NONE, SOLO, HOST, CLIENT }
 enum State { IDLE, LOBBY, MATCH }
@@ -274,8 +275,10 @@ func send_command(cmd: Dictionary) -> void:
 
 ## Returns a sanitised copy ({"type"} or {"type", "value"}) if `cmd` is an allowed command, else {}.
 ## pick_card takes an integral number 0..2 (an int or a whole float, since JSON / RPC may deliver
-## either; returned as int); buy_tech takes a known tech id; reroll and ready take no value;
-## set_rules / set_weapon_target take a "scope" and are re-encoded in canonical form (Doctrine).
+## either; returned as int); buy_tech takes a known tech id; respec_tech takes two ("from", "value"); reroll and ready take no value;
+## set_rules / set_weapon_target / set_ammo take a "scope" and are re-encoded in canonical form (Doctrine);
+## use_ability takes an ability id, set_ability a "slot" (0..1) and an ability id; reserve_card an offer index 0..3, accept_contract a
+## contract index 0..1, scrap_card a card id.
 static func validate_command(cmd: Variant) -> Dictionary:
 	if typeof(cmd) != TYPE_DICTIONARY:
 		return {}
@@ -317,7 +320,26 @@ static func validate_command(cmd: Variant) -> Dictionary:
 		if parsed == null:
 			return {}
 		return {"type": type_s, "scope": scope_s, "value": Doctrine.encode(parsed)}
-	if type_s == "pick_card":
+	if type_s == "set_ammo":  # {"scope": weapon kind, "value": ammo id} (the sim checks it is unlocked)
+		var ascope: Variant = d.get("scope")
+		if typeof(ascope) != TYPE_STRING or typeof(v) != TYPE_STRING:
+			return {}
+		if not Doctrine.is_weapon_scope(String(ascope)) or not Ammo.is_valid_id(String(v)):
+			return {}
+		return {"type": type_s, "scope": String(ascope), "value": String(v)}
+	if type_s == "set_ability":  # {"slot": 0..SLOTS-1, "value": ability id} (the sim checks it is unlocked)
+		var slot: int = _small_int(d.get("slot"), Abilities.SLOTS)
+		if slot < 0 or typeof(v) != TYPE_STRING or not Abilities.IDS.has(String(v)):
+			return {}
+		return {"type": type_s, "slot": slot, "value": String(v)}
+	if type_s == "respec_tech":  # {"from": owned tech id, "value": tech id to swap to}
+		var from_v: Variant = d.get("from")
+		if typeof(from_v) != TYPE_STRING or typeof(v) != TYPE_STRING:
+			return {}
+		if String(from_v).length() > 32 or String(v).length() > 32 or not Tech.has(String(from_v)) or not Tech.has(String(v)):
+			return {}
+		return {"type": type_s, "from": String(from_v), "value": String(v)}
+	if type_s == "pick_card" or type_s == "reserve_card":
 		var idx: int = -1
 		if typeof(v) == TYPE_INT:
 			idx = v
@@ -328,6 +350,11 @@ static func validate_command(cmd: Variant) -> Dictionary:
 		if idx < 0 or idx >= OFFER_SLOTS:
 			return {}
 		return {"type": type_s, "value": idx}
+	if type_s == "accept_contract":  # {"value": contract offer index 0..MAX_OFFERS-1}
+		var cidx: int = _small_int(v, Salvage.MAX_OFFERS)
+		if cidx < 0:
+			return {}
+		return {"type": type_s, "value": cidx}
 	if typeof(v) != TYPE_STRING:
 		return {}
 	var value_s: String = v
@@ -335,6 +362,10 @@ static func validate_command(cmd: Variant) -> Dictionary:
 		return {}
 	if type_s == "buy_tech":
 		if not Tech.has(value_s):
+			return {}
+		return {"type": type_s, "value": value_s}
+	if type_s == "scrap_card":
+		if not Cards.has(value_s):
 			return {}
 		return {"type": type_s, "value": value_s}
 	if not COMMANDS.has(type_s):

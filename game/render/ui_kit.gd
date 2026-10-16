@@ -268,6 +268,125 @@ static func splat(ci: CanvasItem, pos: Vector2, color_index: int, alpha: float =
 
 # ---------------------------------------------------------------- card and tech text
 
+## Short text of the tech fx keys that are not plain stats: {s} = sign, {n} = number, {p} = percent.
+const FX_TEXT := {
+	"hp_pct": "{s}{p} MAX HP",
+	"chassis": "CHASSIS {n}",
+	"ammo_fire": "FIRE AMMO: HITS BURN 2 S",
+	"ammo_shrapnel": "SHRAPNEL AMMO: KILLS SPLIT IN 3",
+	"ammo_ap": "AP AMMO: +1 PIERCE, +50% VS BOULDERS",
+	"ammo_instant": "AMMO SWAPS INSTANTLY",
+	"ammo_fx": "{s}{p} AMMO EFFECTS",
+	"jam": "JAMS 0.8 S AFTER 4 S OF FIRE",
+	"scatter": "EVERY 4TH SHOT FIRES A 3-PELLET BURST",
+	"napalm": "BURN SPREADS WITHIN {n} PX",
+	"burn_bonus": "{s}{p} DMG VS BURNING",
+	"ember": "PIERCES LEAVE EMBERS THAT SPREAD BURN",
+	"mixed_belts": "2 AMMO TYPES PER GUN AT 70%",
+	"overheat": "OVERHEATS 1 S AFTER 6 S OF FIRE",
+	"execute": "KILLS ALIENS UNDER {p} HP",
+	"armor_shed": "BIG HITS SHED 1 ARMOUR AS A PLATE",
+	"blast_resist": "-{p} ACID AND BLAST DMG",
+	"drone": "REPAIR DRONE",
+	"dozer": "PUSHES MITES AWAY",
+	"speed_penalty_half": "ENGINEERING SPEED PENALTY HALVED",
+	"knock_immune": "NO KNOCKBACK",
+	"no_speed_penalty": "NO ENGINEERING SPEED PENALTY",
+	"dodge": "{p} DODGE",
+	"momentum": "BUILDS MOMENTUM AT SPEED",
+	"momentum_ram": "{s}{p} RAM AT FULL MOMENTUM",
+	"ram_free": "RAMMING COSTS NO MOMENTUM",
+	"sparks": "RAMS BURST INTO SPARKS",
+	"drift_momentum": "DRIFTING BUILDS 2X MOMENTUM",
+	"ability_nitro": "ABILITY: NITRO",
+	"dirty_fuel": "2X MOMENTUM, SMOKE NITRO, 1 IN 4 SPUTTERS",
+	"knockback": "RAMS KNOCK ENEMIES BACK",
+	"ghost": "{p} DODGE ABOVE 70 MOMENTUM",
+	"slipstream": "NITRO DROPS OIL (-40% SPEED)",
+	"momentum_decay_half": "MOMENTUM DECAYS HALF AS FAST",
+	"turbine_boom": "SHOCKWAVE AT FULL MOMENTUM",
+	"sidecar": "SIDE-ARC GUN",
+	"juggernaut": "MOMENTUM ADDS ARMOUR, RAMS DO NOT SLOW",
+	"phantom": "NITRO: INVULNERABLE + DECOY",
+	"rule_slots": "{s}{n} RULE SLOT",
+	"cond_boulders": "RULE: BOULDERS NEAR",
+	"laser": "LASER MARKS THE TARGET",
+	"cond_fuel": "RULE: FUEL",
+	"cond_rival_weaker": "RULE: RIVAL WEAKER",
+	"scout_rules": "SCOUTING SHOWS RIVAL RULES",
+	"spit_warn": "SPITTERS MARKED BEFORE SPITTING",
+	"act_focus": "RULE ACTION: FOCUS FIRE",
+	"max_conds": "4 CONDITIONS PER RULE",
+	"cond_ability_ready": "RULE: ABILITY READY",
+	"ability_emp": "ABILITY: EMP PULSE",
+	"ability_smoke": "ABILITY: SMOKE",
+	"cond_t_leader": "RULE: TARGET IS LEADER",
+	"ability_salvo": "ABILITY: SALVO",
+	"ability_cd": "{s}{p} ABILITY COOLDOWN",
+	"swarm_logic": "{s}{p} DMG ON THE SHARED TARGET",
+	"jammer": "JAMS RIVAL RULES WITHIN {n} PX",
+	"contracts": "{s}{n} CONTRACT OFFER",
+	"reserve_card": "RESERVE 1 CARD",
+	"contract_bonus": "{s}{p} CONTRACT REWARDS",
+	"loan": "LOAN: +250 SCRAP, REPAY 3 x 110",
+	"insurance": "+{n} SCRAP ON YOUR DEATH",
+	"fuel_per_contract": "+{n} FUEL PER CONTRACT",
+	"jerry_blast": "EXPLODES WHEN DESTROYED",
+	"scrap_press": "SCRAP CARDS FOR LEVEL x 50",
+	"hoarder": "INTEREST CAP 15 + 6 PER ROUND, 12%",
+	"bounty_office": "PVP CONTRACTS, BOUNTIES x2",
+	"baron": "+3% DMG PER 100 SCRAP, KILLER GETS 10%",
+	"raider": "PVP HITS STEAL SCRAP",
+	"contracts_max": "{s}{n} CONTRACT OFFER",
+	"thermite": "RAM SPARKS 45 PX, IGNITE, SHRAPNEL",
+	"spotter": "CANNON {s}{p} VS SPITTERS, NEVER MISSES",
+	"drift_regen": "DRIFTING REPAIRS {n} HP/S",
+	"barbed": "CONTACT KILLS +{n} SCRAP",
+	"lucky_strike": "{p} BONUS CARD ON FOCUS KILLS",
+	"fortified": "FOCUS KILLS REPAIR {n} HP/S",
+	"burning_wake": "DRIFT AND NITRO LEAVE FIRE",
+	"war_machine": "RAMS MAKE A SHOCKWAVE",
+	"scrap_storm": "SPLASH KILLS THROW SCRAP SHARDS",
+	"junkyard": "DRONE ATTACKS ENEMIES",
+	"thunderclap": "CONTACT KILLS TRIGGER A MINI EMP",
+}
+
+## Short text of a salvage contract ("KILL 3 BOULDERS").
+static func contract_title(kind: int, need: int) -> String:
+	match kind:
+		Salvage.K_BOULDERS:
+			return "KILL %d BOULDERS" % need
+		Salvage.K_SPITTERS:
+			return "KILL %d SPITTERS" % need
+		Salvage.K_ALIENS:
+			return "KILL %d ALIENS" % need
+		Salvage.K_RAM:
+			return "DEAL %d RAM DAMAGE" % need
+		Salvage.K_NO_DEATH:
+			return "DO NOT GET DESTROYED"
+		Salvage.K_LEADER:
+			return "HIT THE LEADER %d TIMES" % need
+	return "?"
+
+
+## "+87 SCRAP" (the payout of a contract with base reward `base` for `v`), with the fuel it adds.
+static func contract_reward_text(v: SimVehicle, base: int) -> String:
+	var t := "+%d SCRAP" % Salvage.payout(v, base)
+	var fuel: int = int(v.tech_fx.get("fuel_per_contract", 0.0)) + (Salvage.NO_DEATH_FUEL if v.contract_kind == Salvage.K_NO_DEATH else 0)
+	if fuel > 0:
+		t += " +%d FUEL" % fuel
+	return t
+
+
+## Progress of the accepted contract of `v` as text ("12/20", "ALIVE", "FAILED", "DONE").
+static func contract_progress(v: SimVehicle) -> String:
+	if v.contract_kind == Salvage.K_NO_DEATH:
+		return "FAILED" if v.contract_prog < 0.0 else "ALIVE"
+	if Salvage.is_done(v):
+		return "DONE"
+	return "%d/%d" % [int(v.contract_prog), v.contract_need]
+
+
 ## One line per effect key (amounts as given: per level for cards, flat for tech).
 static func fx_lines(fx: Dictionary) -> PackedStringArray:
 	var out := PackedStringArray()
@@ -296,6 +415,8 @@ static func fx_lines(fx: Dictionary) -> PackedStringArray:
 			"reroll": out.append("REROLLS %s%s CHEAPER" % ["" if a >= 0.0 else "-", num(m)])
 			"luck": out.append("%s%s RARE PART ODDS" % [sgn, pct(m)])
 			"fuel": out.append("%s%s FUEL NOW" % [sgn, num(m)])
+			_ when FX_TEXT.has(k):
+				out.append(str(FX_TEXT[k]).replace("{s}", sgn).replace("{n}", num(m)).replace("{p}", pct(m)))
 			_:
 				var base: String = k.get_slice("_", 0)
 				var gun: String = k.get_slice("_", 1).to_upper()

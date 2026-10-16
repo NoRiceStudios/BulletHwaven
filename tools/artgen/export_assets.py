@@ -18,6 +18,7 @@ import os
 
 import numpy as np
 
+import fx
 import rig
 import sprites
 import ui
@@ -409,20 +410,21 @@ def strip(cv, size, dirs=VEHICLE_DIRS):
 
 def export_rig(save, v_ang):
     """Rig layers: every strip has 32 directions (frame k = k * 360 / 32 degrees clockwise from north);
-    rows are listed per file. A = buggy footprint (engineering 0-1), B = truck (engineering 2+).
+    rows are listed per file. Footprints (rig.FEET): A = buggy (chassis 1), B = six-wheel truck (chassis 3, the
+    war rig tractor at 4), P = pickup (chassis 2).
     Paint-keyed strips need game/render/paint.gdshader with paint_ramps.png."""
     F = rig.RIG_FRAME
     feet = rig.FEET
     gears = ["wheels", "offroad", "tracks"]
     save(rig.ramps_texture(), "paint_ramps.png")
     save(sheet([strip(rig.gear(f, g), F) for f in feet for g in gears]), "rig_gear.png")  # A w/o/t, B w/o/t
-    bodies = [rig.paint_key(lambda r, t=t: rig.body(r, *rig.body_for_tier(t))) for t in (0, 1, 2)]
-    save(sheet([strip(b, F) for b in bodies]), "rig_body.png")  # tier 0, 1 (A), 2+ (B)
+    bodies = {st: rig.paint_key(lambda r, st=st: rig.body(r, st)) for st in rig.BODY_STYLES}
+    save(sheet([strip(bodies[st], F) for st in rig.BODY_STYLES]), "rig_body.png")  # rows: rig.BODY_STYLES
     rows = []
-    for f, b in ((rig.FOOT_A, bodies[0]), (rig.FOOT_B, bodies[2])):  # shadow silhouettes: foot x gear
+    for f, st in ((rig.FOOT_A, "buggy"), (rig.FOOT_B, "truck"), (rig.FOOT_P, "pickup")):  # shadows: foot x gear
         for g in gears:
             u = rig.gear(f, g)
-            paste(u, b, 0, 0)
+            paste(u, bodies[st], 0, 0)
             rows.append(strip(u, F))
     sh = sheet(rows)
     sh.rgb[:] = 255
@@ -439,6 +441,9 @@ def export_rig(save, v_ang):
     for name, fn in layers.items():  # rows: A L1..3, B L1..3
         save(sheet([strip(fn(f, l), F) for f in feet for l in lv]), name)
     save(sheet([strip(rig.kit(f, c), F) for f in feet for c in rig.KIT_CARDS]), "rig_kit.png")
+    # tech bolt-ons, rows: foot x rig.TECH_KIT (the sidecar is paint keyed)
+    save(sheet([strip(rig.paint_key(lambda r, f=f, n=n: rig.tech_kit(r, f, n)), F) for f in feet for n in rig.TECH_KIT]),
+         "rig_tech.png")
     save(sheet([strip(rig.paint_key(rig.trailer), rig.TRAILER_FRAME)]), "rig_trailer.png")
     for kind in rig.GUN_KINDS:  # rows: level 1..3, frames = aim
         save(sheet([[rig.gun(kind, l, a) for a in v_ang] for l in lv]), f"gun_{kind}.png")
@@ -448,8 +453,25 @@ def export_rig(save, v_ang):
     # flat, painted starter buggy strips for the menu preview
     for player, ramp in PLAYERS.items():
         u = rig.gear(rig.FOOT_A, "wheels")
-        paste(u, rig.apply_paint(bodies[0], ramp), 0, 0)
+        paste(u, rig.apply_paint(bodies["buggy"], ramp), 0, 0)
         save(sheet([strip(u, F)]), f"buggy_{player}.png")
+
+
+# ---------------------------------------------------------------- combat effects (tools/artgen/fx.py)
+
+def export_fx(save, fx_ang):
+    flames = fx.flame_rows()
+    save(sheet(flames), "fx_flame.png")
+    save(glow_sheet(flames, radius=2, gain=1.4, strength=0.22), "fx_flame_glow.png")
+    save(sheet(fx.smoke_rows()), "fx_smoke.png")
+    save(sheet([[fx.oil(s) for s in (3, 8, 13)]]), "fx_oil.png")
+    save(sheet([[fx.burn_mark(s) for s in (2, 5, 9, 14)]]), "decal_burn.png")
+    kill = [[fx.kill_word(True), fx.kill_word(False)]]
+    save(sheet(kill), "fx_kill.png")
+    save(glow_sheet(kill, radius=2, gain=1.5, strength=0.5), "fx_kill_glow.png")
+    save(sheet([[fx.banner(0), fx.banner(1)]]), "fx_banner.png")
+    d_ang = [k * 2 * math.pi / 16 for k in range(16)]
+    save(sheet([[fx.drone(a, ph) for a in d_ang] for ph in (0, 1)]), "rig_drone.png")
 
 
 # ---------------------------------------------------------------- main
@@ -483,12 +505,13 @@ def export(out=OUT):
         save(glow_sheet(rows, **kw), f"{name}_glow.png")
 
     # projectiles and muzzle flash
-    for name, fn, kw in (("tracer", tracer, {"radius": 1, "gain": 2.0, "strength": 0.3}),
-                         ("acid", acid, {"radius": 2, "gain": 2.5, "strength": 0.45}),
-                         ("muzzle", muzzle, {"radius": 2, "gain": 2.5, "strength": 0.5})):
-        rows = [[fn(a) for a in fx_ang]]
+    # tracer rows: plain, fire, shrapnel, AP, shard, saw (fx.TRACER_KINDS + saw); muzzle rows: fx.MUZZLE_KINDS
+    for name, rows, kw in (("tracer", fx.tracer_rows(fx_ang), {"radius": 1, "gain": 2.0, "strength": 0.3}),
+                           ("acid", [[acid(a) for a in fx_ang]], {"radius": 2, "gain": 2.5, "strength": 0.45}),
+                           ("muzzle", fx.muzzle_rows(fx_ang), {"radius": 2, "gain": 2.5, "strength": 0.5})):
         save(sheet(rows), f"{name}.png")
         save(glow_sheet(rows, **kw), f"{name}_glow.png")
+    export_fx(save, fx_ang)
     save(halo_tex(10, GLOW[3], 0.3), "halo_cyan.png")
     save(halo_tex(16, FIRE[4], 0.6), "halo_warm.png")
     save(halo_tex(40, FIRE[3], 0.7, steps=5), "halo_warm_big.png")

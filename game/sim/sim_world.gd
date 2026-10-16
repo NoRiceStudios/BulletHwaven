@@ -34,6 +34,35 @@ const SRC_PLAYER := 5  # a rival's shots
 const SRC_NAMES: PackedStringArray = ["mite", "boulder", "spitter", "acid", "ram", "player"]
 const WEAPON_RAM := 4  # "weapon" of a player kill by ramming (Cards.WEAPON_KINDS holds 0..3)
 
+# Ballistics ammo and weapon heat (tech tree v2.3, section 4.1). Ammo ids, bits and scaling: Ammo.
+const BURN_TICKS := 60  # 2 s
+const BURN_FRACTION := 0.25  # fire ammo: this fraction of the hit as damage over BURN_TICKS
+const BURN_SPREAD_PERIOD := 15  # napalm: a burning enemy ignites its neighbours every 0.5 s
+const BURN_SPREAD_DECAY := 0.85  # burn dps multiplier per jump
+const SHARD_COUNT := 3
+const SHARD_DAMAGE := 0.4  # of the killing hit
+const SHARD_SPEED := 260.0
+const SHARD_TTL := 0.18
+const SCATTER_EVERY := 4  # scatter packing: every 4th shot of a non-shotgun
+const SCATTER_PELLETS := 3
+const SCATTER_DAMAGE := 0.4
+const SCATTER_SPREAD := 0.3
+const JAM_FIRE_TICKS := 120  # hot loads: 4 s of continuous fire ...
+const JAM_PAUSE_TICKS := 24  # ... then 0.8 s of stutter
+const OVERHEAT_FIRE_TICKS := 180  # glowing barrels: 6 s ... 
+const OVERHEAT_PAUSE_TICKS := 30  # ... then 1 s
+const HEAT_COOL := 2  # heat ticks lost per tick without fire intent
+const EMBER_RADIUS := 14.0
+const EMBER_TICKS := 60  # 2 s
+const EMBER_DPS := 20.0
+const EMBER_BURN_DPS := 5.0  # the burn an ember zone starts
+# Ground zones (zone_* arrays). Later tech stages reuse them for oil, smoke and fire.
+const ZONE_EMBER := 0
+const ZONE_OIL := 1
+const ZONE_SMOKE := 2
+const ZONE_FIRE := 3
+const MAX_ZONES := 64
+
 const MAX_ENEMIES := 2500
 const MAX_PROJECTILES := 2000
 const MAX_EVENTS := 1024
@@ -88,6 +117,13 @@ const SPIT_RANGE := 260.0  # only fires at a vehicle within this distance
 const SPIT_SPEED := 170.0  # px/s, slow enough to see coming
 const SPIT_DAMAGE := 8.0  # x enemy_damage_mult(round), reduced by armour like any hit
 const SPIT_INACCURACY := 0.08  # radians, uniform +-
+const SPIT_WARN_TICKS := 30  # radar array: a spitter is flagged this long before it spits
+
+# Armour shedding (scrap armour) and dodge.
+const SHED_HP_FRACTION := 0.15  # a hit of more than this share of max hp tears off a plate
+const PLATE_DAMAGE := 20.0
+const PLATE_SPEED := 300.0
+const PLATE_TTL := 0.5
 
 # Round loop (docs/architecture.md, "Round loop contract").
 const PHASE_COMBAT := 0
@@ -165,6 +201,15 @@ var enemy_kind: PackedByteArray = PackedByteArray()
 var enemy_pos: PackedVector2Array = PackedVector2Array()
 var enemy_vel: PackedVector2Array = PackedVector2Array()  # px/s
 var enemy_hp: PackedFloat32Array = PackedFloat32Array()
+## Burning (fire ammo, napalm, ember zones): ticks left (> 0 = burning), damage per second, owner vehicle id.
+var enemy_burn_ticks: PackedInt32Array = PackedInt32Array()
+var enemy_burn_dps: PackedFloat32Array = PackedFloat32Array()
+var enemy_burn_owner: PackedInt32Array = PackedInt32Array()
+## Alien status effects, packed per enemy: bits 0..7 stun ticks (EMP), 8..15 slow ticks (oil), 16..23 blind
+## ticks (smoke: the alien lost its target). See stun_enemy().
+var enemy_status: PackedInt32Array = PackedInt32Array()
+## Tick of the last ram effect on each enemy (throttle: Mobility.RAM_FX_TICKS). Host-side only.
+var enemy_ram_tick: PackedInt32Array = PackedInt32Array()
 
 var proj_count: int = 0
 var proj_pos: PackedVector2Array = PackedVector2Array()
@@ -176,6 +221,15 @@ var proj_pierce: PackedByteArray = PackedByteArray()  # extra enemies the projec
 var proj_splash: PackedFloat32Array = PackedFloat32Array()  # splash radius on enemy hit, 0 = none
 var proj_last: PackedInt32Array = PackedInt32Array()  # id of the last enemy pierced (not hit twice), -1 = none
 var proj_weapon: PackedByteArray = PackedByteArray()  # weapon kind index of the shooter's gun (kill feed), 255 = alien
+var proj_ammo: PackedByteArray = PackedByteArray()  # Ammo bit mask loaded when fired (0 = plain)
+
+## Ground zones, capped at MAX_ZONES: centre, radius px, ZONE_* kind, ticks left, owner vehicle id.
+var zone_count: int = 0
+var zone_pos: PackedVector2Array = PackedVector2Array()
+var zone_radius: PackedFloat32Array = PackedFloat32Array()
+var zone_kind: PackedByteArray = PackedByteArray()
+var zone_ttl: PackedInt32Array = PackedInt32Array()
+var zone_owner: PackedInt32Array = PackedInt32Array()
 
 var events: Array[Dictionary] = []
 
@@ -189,12 +243,22 @@ var ai_buf: PackedInt32Array = PackedInt32Array()
 var _hash: SpatialHash
 var _spawn_accum: float = 0.0
 var _hit_weapon: int = -1  # weapon kind index of the projectile being resolved (kill feed)
+var _hit_ammo: int = 0  # Ammo mask of the projectile being resolved (shrapnel on kill)
+var _hit_dmg: float = 0.0  # its damage
+var _hit_scale: float = 1.0  # its ammo effect scale
+var _in_splash: bool = false  # inside _splash_damage (scrap storm counts splash kills)
+var _burning: bool = false  # some enemy may be burning (skips the burn loop otherwise)
+var _pending_proj: Array = []  # projectiles to add once the projectile loop is done: [pos, vel, ttl, dmg, owner, weapon, ammo mask]
 var _spitter_gap: int = 0
 var _last_spitter_side: int = -1
 var _query_buf: PackedInt32Array = PackedInt32Array()
 var _splash_buf: PackedInt32Array = PackedInt32Array()
 var _av_pos: PackedVector2Array = PackedVector2Array()  # alive vehicle positions (enemy phase)
 var _av_idx: PackedInt32Array = PackedInt32Array()
+var _ch_pos: PackedVector2Array = PackedVector2Array()  # what aliens chase: vehicles outside smoke, plus decoys
+var _ch_idx: PackedInt32Array = PackedInt32Array()  # vehicle index; a decoy is -1 - vehicle index
+var _jam_pos: PackedVector2Array = PackedVector2Array()  # alive jammer rigs (aliens near them slow down)
+var _jam_r2: float = 0.0
 var _contact: PackedFloat32Array = PackedFloat32Array()  # per vehicle x 3 enemy kinds, damage this tick
 
 
@@ -234,8 +298,8 @@ func get_vehicle_for_peer(peer_id: int) -> SimVehicle:
 	return null
 
 
-## Applies a (pre-validated) command from `peer_id`. Card / tech / ready commands only work in the
-## workshop; set_drive, set_target, set_rules and set_weapon_target work in every phase. Unknown or illegal commands are ignored.
+## Applies a (pre-validated) command from `peer_id`. Card / tech / ready / set_ability / accept_contract / reserve_card / scrap_card
+## commands only work in the workshop, use_ability only in combat; set_drive, set_target, set_rules, set_ammo and set_weapon_target work in every phase. Unknown or illegal commands are ignored.
 func apply_command(peer_id: int, cmd: Dictionary) -> void:
 	var v: SimVehicle = get_vehicle_for_peer(peer_id)
 	if v == null:
@@ -254,24 +318,46 @@ func apply_command(peer_id: int, cmd: Dictionary) -> void:
 			var scope: String = str(cmd.get("scope", ""))
 			if scope == Doctrine.SCOPE_RIG or Doctrine.is_weapon_scope(scope):
 				var parsed: Variant = Doctrine.parse(str(cmd.get("value", "")), scope)
-				if parsed != null:
+				if parsed != null and Doctrine.rules_allowed(v, parsed):
 					Doctrine.set_rules(v, scope, parsed)
+		"set_ammo":  # {"scope": weapon kind, "value": ammo id}; needs the ammo unlocked, any phase
+			Ammo.select(v, str(cmd.get("scope", "")), str(cmd.get("value", "")))
+		"use_ability":  # {"value": ability id}; combat only, casts now if equipped and ready
+			if phase == PHASE_COMBAT and v.alive and not v.eliminated:
+				Abilities.cast(self, v, str(cmd.get("value", "")))
+		"set_ability":  # {"slot": 0..1, "value": ability id}; workshop only, needs the ability unlocked
+			if _can_shop(v):
+				Abilities.set_slot(v, _integral(cmd.get("slot")), str(cmd.get("value", "")))
 		"set_weapon_target":  # {"scope": weapon kind, "value": Doctrine.WEAPON_TARGETS}
 			Doctrine.set_weapon_target(v, str(cmd.get("scope", "")), str(cmd.get("value", "")))
 		"pick_card":
 			if _can_shop(v) and not v.picked:
 				var idx: int = _integral(cmd.get("value"))
 				if idx >= 0 and idx < v.offers.size() and Cards.grant(v, v.offers[idx]):
+					if v.reserved_card == v.offers[idx]:
+						v.reserved_card = ""
 					v.picked = true
 					v.offers = []
 		"reroll":
 			if _can_shop(v) and not v.picked and v.scrap >= v.reroll_cost:
 				v.scrap -= v.reroll_cost
 				v.reroll_cost += 1
-				v.offers = Cards.roll_offers(rng, v, Cards.OFFER_COUNT, round, v.offers)
+				v.offers = Cards.roll_offers(rng, v, maxi(Cards.OFFER_COUNT, v.offers.size()), round, v.offers)
 		"buy_tech":
 			if _can_shop(v):
-				Tech.buy(v, str(cmd.get("value", "")))
+				Tech.buy(v, str(cmd.get("value", "")), round)
+		"respec_tech":  # {"from": owned choice id, "value": unowned choice of the same branch and tier}
+			if _can_shop(v):
+				Tech.respec(v, str(cmd.get("from", "")), str(cmd.get("value", "")), round)
+		"accept_contract":  # {"value": offer index}; workshop only, needs offers (Salvage.accept)
+			if _can_shop(v):
+				Salvage.accept(v, _integral(cmd.get("value")))
+		"reserve_card":  # {"value": offer index}; haggler, workshop only (Salvage.reserve)
+			if _can_shop(v):
+				Salvage.reserve(v, _integral(cmd.get("value")))
+		"scrap_card":  # {"value": card id}; scrap press, workshop only (Salvage.scrap_card)
+			if _can_shop(v):
+				Salvage.scrap_card(v, str(cmd.get("value", "")))
 		"ready":
 			if _can_shop(v):
 				v.ready = true
@@ -325,13 +411,17 @@ static func fuel_drain_for_round(r: int) -> int:
 	return FUEL_DRAIN_BASE + (r - FUEL_DRAIN_START_ROUND) / FUEL_DRAIN_ROUNDS_PER_STEP
 
 
-## Interest cap at the current round: the vehicle's own cap (5 + salvage tech) + 2 per round.
+## Interest cap at the current round: the vehicle's own cap (5 + salvage tech) + 2 per round (hoarder: +10 and 6 per round).
 func interest_cap_for(v: SimVehicle) -> int:
+	if Salvage.is_hoarder(v):
+		return v.interest_cap + Salvage.HOARDER_CAP_BONUS + Salvage.HOARDER_CAP_PER_ROUND * round
 	return v.interest_cap + INTEREST_CAP_PER_ROUND * round
 
 
-## Interest a vehicle would earn now: 10% of held scrap (INTEREST_PER), capped at interest_cap_for().
+## Interest a vehicle would earn now: 10% of held scrap (INTEREST_PER; 12% for the hoarder), capped at interest_cap_for().
 func interest_for(v: SimVehicle) -> int:
+	if Salvage.is_hoarder(v):
+		return mini(v.scrap * Salvage.HOARDER_PCT / 100, interest_cap_for(v))
 	return mini(v.scrap / INTEREST_PER, interest_cap_for(v))
 
 
@@ -445,6 +535,26 @@ static func enemy_max_hp(kind: int, r: int) -> float:
 	return ENEMY_HP[kind] * enemy_hp_mult(r)
 
 
+## True in the 30 ticks before the spitter with stable id `id` spits (every SPIT_PERIOD ticks, staggered by id).
+## Pure in (tick, id), so clients with the radar array flag spitters from the synced tick alone.
+static func spit_warning(t: int, id: int) -> bool:
+	return (t + id * 7) % SPIT_PERIOD >= SPIT_PERIOD - SPIT_WARN_TICKS
+
+
+## Stuns enemy index `j` for `ticks` (EMP): it neither moves nor attacks. Keeps the longer of two stuns.
+func stun_enemy(j: int, ticks: int) -> void:
+	var st: int = enemy_status[j]
+	if (st & 255) < ticks:
+		enemy_status[j] = (st & ~255) | clampi(ticks, 0, 255)
+
+
+## Slows (oil, shift 8) or blinds (smoke, shift 16) enemy index `j`; keeps the longer effect.
+func _status_enemy(j: int, shift: int, ticks: int) -> void:
+	var st: int = enemy_status[j]
+	if ((st >> shift) & 255) < ticks:
+		enemy_status[j] = (st & ~(255 << shift)) | (ticks << shift)
+
+
 func combat_duration(r: int) -> int:
 	if fast_rounds:
 		return FAST_COMBAT_TICKS
@@ -474,11 +584,16 @@ func spawn_enemy(kind: int, pos: Vector2) -> int:
 	enemy_pos.append(pos)
 	enemy_vel.append(Vector2.ZERO)
 	enemy_hp.append(enemy_max_hp(kind, round))
+	enemy_burn_ticks.append(0)
+	enemy_burn_dps.append(0.0)
+	enemy_burn_owner.append(-1)
+	enemy_status.append(0)
+	enemy_ram_tick.append(-1000)
 	enemy_count += 1
 	return id
 
 
-func spawn_projectile(pos: Vector2, vel: Vector2, ttl: float, damage: float, owner: int, pierce: int = 0, splash: float = 0.0, weapon: int = 255) -> void:
+func spawn_projectile(pos: Vector2, vel: Vector2, ttl: float, damage: float, owner: int, pierce: int = 0, splash: float = 0.0, weapon: int = 255, ammo: int = 0) -> void:
 	if proj_count >= MAX_PROJECTILES:
 		return
 	proj_pos.append(pos)
@@ -490,6 +605,7 @@ func spawn_projectile(pos: Vector2, vel: Vector2, ttl: float, damage: float, own
 	proj_splash.append(splash)
 	proj_last.append(-1)
 	proj_weapon.append(clampi(weapon, 0, 255))
+	proj_ammo.append(ammo & 255)
 	proj_count += 1
 
 
@@ -519,6 +635,8 @@ func _step_combat() -> void:
 	_update_enemies()
 	_update_vehicles()
 	_update_projectiles()
+	_update_burn()
+	_update_zones()
 	_compact_enemies()
 	_spawn_tick()
 	_hash.rebuild(enemy_pos, enemy_count)
@@ -600,6 +718,49 @@ func checksum() -> int:
 		vf.append(float(v.tech.size()))
 		for tid in v.tech:
 			vf.append(float(Tech.index_of(tid)))
+			vf.append(float(v.tech_round.get(tid, 0)))
+		vf.append(float(v.tech_dormant.size()))
+		for tid in v.tech_dormant:
+			vf.append(float(Tech.index_of(tid)))
+		vf.append(float(v.respecs))
+		vf.append(float(v.chassis))
+		vf.append(v.momentum)
+		vf.append(float(v.ab_cd[0]))
+		vf.append(float(v.ab_cd[1]))
+		vf.append(float(v.abilities[0].hash()))
+		vf.append(float(v.abilities[1].hash()))
+		vf.append(float(v.nitro_ticks))
+		vf.append(float(v.sputter_ticks))
+		vf.append(float(v.salvo_ticks))
+		vf.append(float(v.smoke_ticks))
+		vf.append(float(v.decoy_ticks))
+		vf.append(v.decoy_pos.x)
+		vf.append(v.decoy_pos.y)
+		vf.append(float(v.rules_off_ticks))
+		vf.append(float(v.nitro_count))
+		vf.append(float(v.boom_cd))
+		vf.append(float(v.jammed_by))
+		vf.append(float(v.shed))
+		vf.append(float(v.mark_id))
+		vf.append(float(v.contract_kind))
+		vf.append(float(v.contract_need))
+		vf.append(float(v.contract_reward))
+		vf.append(v.contract_prog)
+		vf.append(float(v.contract_offers.size()))
+		for co in v.contract_offers:
+			vf.append(float(co.x * 1000000 + co.y * 1000 + co.z))
+		vf.append(float(v.loan_debt))
+		vf.append(float(v.loan_left))
+		vf.append(float(v.reserved_card.hash()))
+		vf.append(float(v.bonus_offers))
+		vf.append(float(v.lucky_round))
+		vf.append(float(v.saws))
+		vf.append(v.raid_acc)
+		vf.append(float(v.barbed_scrap))
+		vf.append(float(v.storm_count))
+		vf.append(v.fort_regen)
+		vf.append(float(v.fort_ticks))
+		vf.append(float(v.clap_cd))
 		for wp in v.weapons:
 			vf.append(float(str(wp["kind"]).hash()))
 			vf.append(float(wp["damage"]))
@@ -612,6 +773,18 @@ func checksum() -> int:
 			vf.append(float(wp.get("pierce", 0)))
 			vf.append(float(wp.get("splash", 0.0)))
 			vf.append(float(wp.get("speed", 0.0)))
+			vf.append(float(wp.get("heat", 0)))
+			vf.append(float(wp.get("jam", 0)))
+			vf.append(float(wp.get("sw", 0)))
+			vf.append(float(wp.get("shots", 0)))
+		var ammo_kinds: Array = v.ammo.keys()
+		ammo_kinds.sort()
+		for ak: String in ammo_kinds:
+			vf.append(float(ak.hash()))
+			for aid: String in v.ammo[ak]:
+				vf.append(float(aid.hash()))
+		for aid2 in v.ammo_known:
+			vf.append(float(aid2.hash()))
 	for part: PackedByteArray in [
 		vf.to_byte_array(),
 		enemy_id.to_byte_array(),
@@ -627,6 +800,16 @@ func checksum() -> int:
 		proj_pierce,
 		proj_splash.to_byte_array(),
 		proj_last.to_byte_array(),
+		proj_ammo,
+		enemy_burn_ticks.to_byte_array(),
+		enemy_burn_dps.to_byte_array(),
+		enemy_burn_owner.to_byte_array(),
+		enemy_status.to_byte_array(),
+		zone_pos.to_byte_array(),
+		zone_radius.to_byte_array(),
+		zone_kind,
+		zone_ttl.to_byte_array(),
+		zone_owner.to_byte_array(),
 	]:
 		if part.size() > 0:  # HashingContext rejects empty updates
 			ctx.update(part)
@@ -638,6 +821,31 @@ func checksum() -> int:
 func rebuild_derived() -> void:
 	enemy_count = enemy_id.size()
 	proj_count = proj_pos.size()
+	var nb: int = enemy_burn_ticks.size()
+	if nb != enemy_count:
+		enemy_burn_ticks.resize(enemy_count)
+		for i in range(nb, enemy_count):
+			enemy_burn_ticks[i] = 0
+	nb = enemy_burn_dps.size()
+	if nb != enemy_count:
+		enemy_burn_dps.resize(enemy_count)
+		for i in range(nb, enemy_count):
+			enemy_burn_dps[i] = 0.0
+	nb = enemy_burn_owner.size()
+	if nb != enemy_count:
+		enemy_burn_owner.resize(enemy_count)
+		for i in range(nb, enemy_count):
+			enemy_burn_owner[i] = -1
+	if proj_ammo.size() != proj_count:
+		proj_ammo.resize(proj_count)
+	if enemy_status.size() != enemy_count:
+		enemy_status.resize(enemy_count)
+	nb = enemy_ram_tick.size()
+	if nb != enemy_count:
+		enemy_ram_tick.resize(enemy_count)
+		for i in range(nb, enemy_count):
+			enemy_ram_tick[i] = -1000
+	zone_count = zone_pos.size()
 	if proj_pierce.size() != proj_count:
 		proj_pierce.resize(proj_count)
 	if proj_splash.size() != proj_count:
@@ -688,6 +896,8 @@ func _respawn(v: SimVehicle) -> void:
 	v.invuln_ticks = INVULN_TICKS
 	v.retaliate_ticks = 0
 	v.target_kind = 0
+	Abilities.clear_effects(v)
+	v.momentum = 0.0
 	v.heading = (ARENA.get_center() - v.pos).angle()
 	_emit("respawn", v.pos, v.id, -1)
 
@@ -742,21 +952,32 @@ func _begin_workshop() -> void:
 		v.retaliate_ticks = 0
 		v.reroll_cost = maxi(1, REROLL_COST_START - v.reroll_discount)
 		v.offers = []
+		Abilities.clear_effects(v)
+		v.momentum = 0.0
+		v.mark_id = -1
+		if v.shed > 0:  # the workshop refits shed scrap plates
+			v.shed = 0
+			Cards.recompute(v, false, false)
 		if v.eliminated:
 			continue
 		if not v.alive:
 			_respawn(v)
 			v.invuln_ticks = 0
+		Salvage.settle(self, v)
 		var interest: int = interest_for(v)
 		v.scrap += interest
 		_note_scrap(v, interest)
 		v.round_stats["interest"] = interest
+		Salvage.repay(self, v)
 		if fuel_drain > 0:
 			var d: int = mini(fuel_drain, maxi(v.fuel - 1, 0))
 			v.fuel -= d
 			v.round_stats["fuel_drained"] = d
 			_emit("drain", v.pos, v.id, d)
-		v.offers = Cards.roll_offers(rng, v, Cards.OFFER_COUNT, round)
+		v.offers = Cards.roll_offers(rng, v, Cards.OFFER_COUNT + v.bonus_offers, round)
+		v.bonus_offers = 0
+		Salvage.apply_reserve(v)
+		Salvage.roll(self, v)
 
 
 ## Workshop -> combat: the next round starts, vehicles are repaired, unused offers are dropped.
@@ -783,8 +1004,24 @@ func _begin_combat() -> void:
 		if v.alive and not v.eliminated:
 			v.hp = v.max_hp
 			v.invuln_ticks = INVULN_TICKS
+		Abilities.reset_round(v)
+		v.ram_fx.clear()
+		v.contract_offers = []
+		v.barbed_scrap = 0
+		v.storm_count = 0
+		v.fort_regen = 0.0
+		v.fort_ticks = 0
+		v.clap_cd = 0
+		v.raid_acc = 0.0
+		if v.alive and not v.eliminated:
+			Salvage.launch_saws(self, v)
+		else:
+			v.saws = 0
 		for w in v.weapons:
-			w["cooldown"] = 0
+			w["cooldown"] = 0.0
+			w["heat"] = 0
+			w["jam"] = 0
+			w["sw"] = 0
 
 
 ## Ends the game when at most one player is left in a multiplayer game (winner = the survivor),
@@ -817,6 +1054,19 @@ func _clear_field() -> void:
 	enemy_pos.resize(0)
 	enemy_vel.resize(0)
 	enemy_hp.resize(0)
+	enemy_burn_ticks.resize(0)
+	enemy_burn_dps.resize(0)
+	enemy_burn_owner.resize(0)
+	enemy_status.resize(0)
+	enemy_ram_tick.resize(0)
+	_burning = false
+	_pending_proj.clear()
+	zone_pos.resize(0)
+	zone_radius.resize(0)
+	zone_kind.resize(0)
+	zone_ttl.resize(0)
+	zone_owner.resize(0)
+	zone_count = 0
 	enemy_count = 0
 	proj_pos.resize(0)
 	proj_vel.resize(0)
@@ -827,6 +1077,7 @@ func _clear_field() -> void:
 	proj_splash.resize(0)
 	proj_last.resize(0)
 	proj_weapon.resize(0)
+	proj_ammo.resize(0)
 	proj_count = 0
 	_hash.rebuild(enemy_pos, 0)
 
@@ -837,14 +1088,25 @@ func _update_enemies() -> void:
 	var n: int = enemy_count
 	if n == 0:
 		return
-	# Snapshot alive vehicles.
+	# Snapshot alive vehicles (contact), and what the aliens chase: vehicles outside smoke and phantom decoys.
 	_av_pos.clear()
 	_av_idx.clear()
+	_ch_pos.clear()
+	_ch_idx.clear()
 	for vi in vehicles.size():
-		if vehicles[vi].alive:
-			_av_pos.append(vehicles[vi].pos)
+		var sv: SimVehicle = vehicles[vi]
+		if sv.alive:
+			_av_pos.append(sv.pos)
 			_av_idx.append(vi)
+			if sv.smoke_ticks <= 0:
+				_ch_pos.append(sv.pos)
+				_ch_idx.append(vi)
+			if sv.decoy_ticks > 0:
+				_ch_pos.append(sv.decoy_pos)
+				_ch_idx.append(-1 - vi)
 	var nv: int = _av_pos.size()
+	var nch: int = _ch_pos.size()
+	var njam: int = _jam_pos.size()
 	_contact.resize(vehicles.size() * 3)
 	_contact.fill(0.0)
 
@@ -866,24 +1128,44 @@ func _update_enemies() -> void:
 		var r: float = ENEMY_RADIUS[kind]
 		var p: Vector2 = enemy_pos[i]
 
-		# Chase the nearest alive vehicle.
+		# Chase the nearest target (not a rig hidden in smoke; a phantom decoy counts). Status effects: a stunned
+		# alien stands still, a blinded one lost its target, oil slows it, so does a jammer field.
+		var st: int = enemy_status[i]
+		var stunned: bool = false
+		var blind: bool = false
+		var slowed: bool = false
+		if st != 0:
+			var s_stun: int = st & 255
+			var s_slow: int = (st >> 8) & 255
+			var s_blind: int = (st >> 16) & 255
+			stunned = s_stun > 0
+			slowed = s_slow > 0
+			blind = s_blind > 0
+			enemy_status[i] = maxi(s_stun - 1, 0) | (maxi(s_slow - 1, 0) << 8) | (maxi(s_blind - 1, 0) << 16)
 		var best_d2: float = INF
 		var bk: int = -1
-		for k in nv:
-			var d2: float = p.distance_squared_to(_av_pos[k])
-			if d2 < best_d2:
-				best_d2 = d2
-				bk = k
+		if not stunned and not blind:
+			for k in nch:
+				var d2: float = p.distance_squared_to(_ch_pos[k])
+				if d2 < best_d2:
+					best_d2 = d2
+					bk = k
 		var desired: Vector2 = Vector2.ZERO
 		if bk >= 0:
-			var dir: Vector2 = _av_pos[bk] - p
+			var dir: Vector2 = _ch_pos[bk] - p
 			var dl: float = dir.length()
 			if dl > 0.001:
 				if kind == SPITTER:
 					desired = _spitter_desire(dir / dl, dl, enemy_id[i])
 				else:
 					desired = dir * (ENEMY_SPEED[kind] / dl)
-		var vel: Vector2 = enemy_vel[i].lerp(desired, 0.25)
+			if slowed:
+				desired *= Mobility.OIL_SLOW
+			for jk in njam:
+				if p.distance_squared_to(_jam_pos[jk]) <= _jam_r2:
+					desired *= Mobility.JAM_SLOW
+					break
+		var vel: Vector2 = Vector2.ZERO if stunned else enemy_vel[i].lerp(desired, 0.25)
 		var np: Vector2 = p + vel * DT
 
 		# Mild separation from neighbours (3x3 cells, capped).
@@ -932,13 +1214,19 @@ func _update_enemies() -> void:
 				vel = Vector2.ZERO
 				var vidx: int = _av_idx[k]
 				var cv: SimVehicle = vehicles[vidx]
-				_contact[vidx * 3 + kind] += _contact_hit(kind, cv.armor, cv.contact_reduction)
+				if not stunned:
+					_contact[vidx * 3 + kind] += _contact_hit(kind, cv.eff_armor, cv.contact_reduction)
 				var ram: float = cv.ram_damage
 				if cv.thorns > 0.0:
 					ram += cv.thorns * ENEMY_CONTACT_DAMAGE[kind] * enemy_damage_mult(round)
 				if ram > 0.0 and not killed:
 					_hit_enemy(i, ram, vidx, true)
 					killed = enemy_hp[i] <= 0.0
+					if cv.ramming:
+						var kb: Vector2 = Mobility.ram_hit(self, cv, i)
+						if kb != Vector2.ZERO:
+							np += kb
+							vel = kb * (0.5 / DT)
 
 		np.x = clampf(np.x, a_min.x, a_max.x)
 		np.y = clampf(np.y, a_min.y, a_max.y)
@@ -946,7 +1234,11 @@ func _update_enemies() -> void:
 		enemy_vel[i] = vel
 
 		if kind == SPITTER and bk >= 0 and enemy_hp[i] > 0.0 and (tick + enemy_id[i] * 7) % SPIT_PERIOD == 0:
-			_spit(np, vehicles[_av_idx[bk]])
+			var ci: int = _ch_idx[bk]
+			if ci >= 0:
+				_spit(np, vehicles[ci].pos, vehicles[ci].vel)
+			else:
+				_spit(np, vehicles[-1 - ci].decoy_pos, Vector2.ZERO)
 
 	for vidx in vehicles.size():
 		var c0: float = _contact[vidx * 3]
@@ -976,12 +1268,13 @@ static func _spitter_desire(u: Vector2, d: float, id: int) -> Vector2:
 	return tang * (spd * 0.4)
 
 
-## A spitter at `from` lobs one acid glob at `target` (leading its movement). Emits a "spit" event.
-func _spit(from: Vector2, target: SimVehicle) -> void:
-	var dist: float = from.distance_to(target.pos)
+## A spitter at `from` lobs one acid glob at a target at `tpos` moving with `tvel` (leading its movement;
+## a rig or a phantom decoy). Emits a "spit" event.
+func _spit(from: Vector2, tpos: Vector2, tvel: Vector2) -> void:
+	var dist: float = from.distance_to(tpos)
 	if dist > SPIT_RANGE or dist < 1.0:
 		return
-	var aim: Vector2 = target.pos + target.vel * (dist / SPIT_SPEED)
+	var aim: Vector2 = tpos + tvel * (dist / SPIT_SPEED)
 	var ang: float = (aim - from).angle() + rng.randf_range(-SPIT_INACCURACY, SPIT_INACCURACY)
 	var dir: Vector2 = Vector2.from_angle(ang)
 	var muzzle: Vector2 = from + dir * 10.0
@@ -1006,11 +1299,16 @@ func _hit_enemy(j: int, dmg: float, killer: int, by_ram: bool = false) -> void:
 	if kv != null:
 		kv.round_stats["dealt"] = float(kv.round_stats["dealt"]) + applied
 		kv.match_stats["dmg_dealt"] = float(kv.match_stats["dmg_dealt"]) + applied
+		if by_ram and kv.contract_kind == Salvage.K_RAM:
+			kv.contract_prog += applied
 	if enemy_hp[j] > 0.0:
 		return
 	var kind: int = enemy_kind[j]
 	_emit("kill", enemy_pos[j], killer, kind)
+	if (_hit_ammo & Ammo.SHRAPNEL_BIT) != 0 and (_hit_ammo & Ammo.SHARD_BIT) == 0:
+		_queue_shards(enemy_pos[j], killer, kind)
 	if kv != null:
+		Abilities.on_kill(kv)
 		kv.scrap_frac += float(ENEMY_SCRAP[kind]) * kv.scrap_mult
 		var whole: int = int(kv.scrap_frac)
 		kv.scrap += whole
@@ -1021,6 +1319,10 @@ func _hit_enemy(j: int, dmg: float, killer: int, by_ram: bool = false) -> void:
 		kv.match_stats["kills"] = int(kv.match_stats["kills"]) + 1
 		if by_ram:
 			kv.match_stats["ram_kills"] = int(kv.match_stats["ram_kills"]) + 1
+		if kv.contract_kind >= 0:
+			Salvage.on_kill(kv, kind)
+		if not kv.tech_fx.is_empty():
+			Fusions.on_kill(self, kv, j, by_ram, _in_splash)
 
 
 ## Books `n` scrap as earned in the round and match stats (the scrap itself is already added).
@@ -1043,6 +1345,11 @@ func _compact_enemies() -> void:
 			enemy_pos[i] = enemy_pos[n]
 			enemy_vel[i] = enemy_vel[n]
 			enemy_hp[i] = enemy_hp[n]
+			enemy_burn_ticks[i] = enemy_burn_ticks[n]
+			enemy_burn_dps[i] = enemy_burn_dps[n]
+			enemy_burn_owner[i] = enemy_burn_owner[n]
+			enemy_status[i] = enemy_status[n]
+			enemy_ram_tick[i] = enemy_ram_tick[n]
 		i -= 1
 	if n != enemy_count:
 		enemy_id.resize(n)
@@ -1050,6 +1357,11 @@ func _compact_enemies() -> void:
 		enemy_pos.resize(n)
 		enemy_vel.resize(n)
 		enemy_hp.resize(n)
+		enemy_burn_ticks.resize(n)
+		enemy_burn_dps.resize(n)
+		enemy_burn_owner.resize(n)
+		enemy_status.resize(n)
+		enemy_ram_tick.resize(n)
 		enemy_count = n
 
 
@@ -1131,6 +1443,7 @@ static func _edge_pos(area: Rect2, side: int, t: float) -> Vector2:
 func _update_vehicles() -> void:
 	var lo := ARENA.position + Vector2(SimVehicle.RADIUS, SimVehicle.RADIUS)
 	var hi := ARENA.end - Vector2(SimVehicle.RADIUS, SimVehicle.RADIUS)
+	Mobility.update_jam(self)
 	for v in vehicles:
 		if not v.alive:
 			continue
@@ -1142,9 +1455,14 @@ func _update_vehicles() -> void:
 			v.retaliate_ticks -= 1
 		if v.regen > 0.0 and v.hp < v.max_hp:
 			v.hp = minf(v.hp + v.regen * DT, v.max_hp)
+		Abilities.tick(self, v)
 		Doctrine.apply_rig(self, v)
 		VehicleAI.update_target(self, v)
+		_update_mark(v)
+		Abilities.auto_cast(self, v)
 		VehicleAI.steer(self, v)
+		Mobility.update(self, v)
+		Fusions.tick(self, v)
 		v.pos += v.vel * DT
 		v.pos.x = clampf(v.pos.x, lo.x, hi.x)
 		v.pos.y = clampf(v.pos.y, lo.y, hi.y)
@@ -1152,6 +1470,18 @@ func _update_vehicles() -> void:
 	for v in vehicles:
 		if v.alive:
 			_fire_weapons(v)
+
+
+## Swarm logic: the marked target is the rig's own target (it jumps on to the next one when that dies).
+func _update_mark(v: SimVehicle) -> void:
+	if float(v.tech_fx.get("swarm_logic", 0.0)) <= 0.0:
+		v.mark_id = -1
+		return
+	if v.target_kind == 1 and v.target_index >= 0 and v.target_index < enemy_count:
+		v.mark_id = v.target_id
+		v.mark_pos = v.target_pos
+	else:
+		v.mark_id = -1
 
 
 func _resolve_vehicle_contacts() -> void:
@@ -1180,8 +1510,12 @@ func _resolve_vehicle_contacts() -> void:
 				continue  # grace period: the vehicles only push each other
 			if va.ram_damage > 0.0:
 				_damage_vehicle(vb, va.ram_damage, va.id, true, SRC_RAM)
+				if va.ramming:
+					Mobility.ram_hit_vehicle(self, va, vb)
 			if vb.ram_damage > 0.0:
 				_damage_vehicle(va, vb.ram_damage, vb.id, true, SRC_RAM)
+				if vb.ramming:
+					Mobility.ram_hit_vehicle(self, vb, va)
 
 
 ## Applies damage to a vehicle (armour first unless `use_armor` is false). Invulnerable vehicles
@@ -1195,8 +1529,15 @@ func _damage_vehicle(v: SimVehicle, dmg: float, attacker: int, use_armor: bool =
 	var by_player: bool = attacker >= 0 and attacker != v.id and attacker < vehicles.size()
 	if src < 0:
 		src = SRC_PLAYER if by_player else SRC_MITE
-	if use_armor and v.armor > 0.0:
-		dmg = maxf(dmg - v.armor, dmg * ARMOR_MIN_FRACTION)
+	if src == SRC_ACID or src == SRC_PLAYER:  # dodge: discrete hits only, not the per-tick contact damage
+		var dodge: float = Mobility.dodge_chance(v)
+		if dodge > 0.0 and rng.randf() < dodge:
+			_emit("dodge", v.pos, v.id, 0)
+			return
+	if src == SRC_ACID:
+		dmg *= 1.0 - clampf(float(v.tech_fx.get("blast_resist", 0.0)), 0.0, 0.9)
+	if use_armor and v.eff_armor > 0.0:
+		dmg = maxf(dmg - v.eff_armor, dmg * ARMOR_MIN_FRACTION)
 	if v.protect_ticks > 0:
 		dmg *= PVP_PROTECT_FACTOR
 	var av: SimVehicle = vehicles[attacker] if by_player else null
@@ -1205,15 +1546,29 @@ func _damage_vehicle(v: SimVehicle, dmg: float, attacker: int, use_armor: bool =
 		v.retaliate_ticks = RETALIATE_TICKS
 	var applied: float = minf(dmg, v.hp)
 	v.hp -= dmg
+	if dmg > Mobility.HIT_LOSS_MIN_DAMAGE and v.momentum > 0.0:
+		v.momentum = maxf(v.momentum - Mobility.HIT_LOSS, 0.0)
+	if dmg > SHED_HP_FRACTION * v.max_hp and v.hp > 0.0:
+		_shed_plate(v)
 	_note_taken(v, applied, src, attacker if by_player else -1, split)
 	if av != null:
 		av.round_stats["dealt"] = float(av.round_stats["dealt"]) + applied
 		av.round_stats["dealt_players"] = float(av.round_stats["dealt_players"]) + applied
 		av.match_stats["dmg_dealt"] = float(av.match_stats["dmg_dealt"]) + applied
+		if av.contract_kind >= 0:
+			if src == SRC_PLAYER and av.contract_kind == Salvage.K_LEADER and v.peer_id == leader_peer:
+				av.contract_prog += 1.0
+			elif src == SRC_RAM and av.contract_kind == Salvage.K_RAM:
+				av.contract_prog += applied
+		if not av.tech_fx.is_empty():
+			Salvage.raid(self, av, v, applied)
 	if v.hp > 0.0:
 		return
 	v.hp = 0.0
 	v.alive = false
+	Salvage.on_destroyed(v)
+	Abilities.clear_effects(v)
+	v.momentum = 0.0
 	v.vel = Vector2.ZERO
 	v.target_kind = 0
 	v.ram_damage = 0.0
@@ -1240,8 +1595,24 @@ func _damage_vehicle(v: SimVehicle, dmg: float, attacker: int, use_armor: bool =
 		v.respawn_ticks = 0
 	else:
 		v.respawn_ticks = RESPAWN_TICKS
+	Salvage.on_death(self, v)
 	if by_player:
 		_reward_player_kill(av, v, src, lost)
+
+
+## Scrap armour: a big hit tears off one armour plate until the next workshop; the plate flies off as a
+## projectile (toward the rig's target, else a random way).
+func _shed_plate(v: SimVehicle) -> void:
+	if float(v.tech_fx.get("armor_shed", 0.0)) <= 0.0 or v.armor < 1.0:
+		return
+	v.armor -= 1.0
+	v.eff_armor = maxf(v.eff_armor - 1.0, 0.0)
+	v.shed += 1
+	var dir: Vector2 = Vector2.from_angle(rng.randf() * TAU)
+	if v.target_kind != 0 and v.target_pos.distance_squared_to(v.pos) > 1.0:
+		dir = (v.target_pos - v.pos).normalized()
+	_pending_proj.append([v.pos + dir * MUZZLE_OFFSET, dir * PLATE_SPEED, PLATE_TTL, PLATE_DAMAGE, v.id, 0, 0])
+	_emit("shed", v.pos, v.id, 0)
 
 
 ## Books `hp` of damage taken from `src` / `attacker` in the round stats of `v`. `split` (contact damage
@@ -1288,6 +1659,9 @@ func _reward_player_kill(av: SimVehicle, v: SimVehicle, src: int, fuel_lost: int
 	if src == SRC_RAM:
 		ms["ram_kills"] = int(ms["ram_kills"]) + 1
 	var bounty: int = roundi(float(PVP_KILL_SCRAP * (LEADER_BOUNTY_MULT if is_leader else 1)) * factor)
+	if float(av.tech_fx.get("bounty_office", 0.0)) > 0.0:
+		bounty *= Salvage.BOUNTY_MULT
+	Salvage.loot_baron(self, av, v)
 	av.scrap += bounty
 	_note_scrap(av, bounty)
 	if not av.eliminated:
@@ -1310,15 +1684,39 @@ func _reward_player_kill(av: SimVehicle, v: SimVehicle, src: int, fuel_lost: int
 
 
 func _fire_weapons(v: SimVehicle) -> void:
+	var fx: Dictionary = v.tech_fx
+	var scatter: bool = float(fx.get("scatter", 0.0)) > 0.0
+	var heat_limit: int = 0
+	var heat_pause: int = 0
+	if float(fx.get("overheat", 0.0)) > 0.0:
+		heat_limit = OVERHEAT_FIRE_TICKS
+		heat_pause = OVERHEAT_PAUSE_TICKS
+	elif float(fx.get("jam", 0.0)) > 0.0:
+		heat_limit = JAM_FIRE_TICKS
+		heat_pause = JAM_PAUSE_TICKS
+	var cd_step: float = 1.0 + Abilities.SALVO_RATE if v.salvo_ticks > 0 else 1.0
 	for slot in v.weapons.size():
 		var w: Dictionary = v.weapons[slot]
-		var cd: int = w["cooldown"]
-		if cd > 0:
-			cd -= 1
+		# Fire rate is an accumulator in (fractional) ticks: a shot adds cooldown_ticks, so the
+		# overshoot of one tick carries into the next shot instead of being rounded away. A salvo winds it faster.
+		var cd: float = float(w["cooldown"])
+		if cd > 0.0:
+			cd -= cd_step
 			w["cooldown"] = cd
-		# Per-weapon doctrine: its rules pick a target mode and may hold fire.
+		var jam: int = int(w.get("jam", 0))
+		if jam > 0:
+			jam -= 1
+			w["jam"] = jam
+		var sw: int = int(w.get("sw", 0))
+		if sw > 0:
+			sw -= 1
+			w["sw"] = sw
+		# Per-weapon doctrine: its rules pick a target mode, may hold fire and may load another ammo.
 		var dec: Array = Doctrine.apply_weapon(self, v, w)
-		VehicleAI.update_weapon_target(self, v, w, slot, str(dec[0]))
+		if str(dec[2]) != "":
+			if Ammo.select(v, str(w["kind"]), str(dec[2])):
+				sw = int(w.get("sw", 0))
+		VehicleAI.update_weapon_target(self, v, w, slot, "follow" if v.focus else str(dec[0]))
 		var tk: int = int(w.get("tk", 0))
 		var tpos: Vector2 = w.get("tp", Vector2.ZERO)
 		var tvel: Vector2 = w.get("tv", Vector2.ZERO)
@@ -1331,6 +1729,7 @@ func _fire_weapons(v: SimVehicle) -> void:
 			ti = v.target_index
 			tid = v.target_id
 		if tk == 0:
+			_cool_heat(w)
 			continue
 		var speed: float = float(w.get("speed", PROJECTILE_SPEED))
 		var dist: float = v.pos.distance_to(tpos)
@@ -1338,22 +1737,61 @@ func _fire_weapons(v: SimVehicle) -> void:
 		var to: Vector2 = lead - v.pos
 		var ang: float = to.angle()
 		w["aim"] = ang
-		if bool(dec[1]) or cd > 0 or dist > float(w["range"]) or proj_count >= MAX_PROJECTILES:
+		var intends: bool = not bool(dec[1]) and dist <= float(w["range"])
+		if not intends:
+			_cool_heat(w)
+			continue
+		var kind_name: String = str(w["kind"])
+		var widx: int = Cards.weapon_kind_index(kind_name)
+		# Jam / overheat: continuous fire intent heats the barrel; at the limit it pauses.
+		if heat_limit > 0 and jam <= 0:
+			var heat: int = int(w.get("heat", 0)) + 1
+			if heat >= heat_limit:
+				w["heat"] = 0
+				w["jam"] = heat_pause
+				_emit("overheat" if heat_limit == OVERHEAT_FIRE_TICKS else "jam", v.pos + Vector2.from_angle(ang) * MUZZLE_OFFSET, v.id, widx)
+				continue
+			w["heat"] = heat
+		elif heat_limit <= 0:
+			w["heat"] = 0
+		if cd > 0.0 or jam > 0 or sw > 0 or proj_count >= MAX_PROJECTILES:
 			continue
 		var spread: float = float(w.get("spread", SPREAD))
 		var pellets: int = int(w.get("pellets", 1))
 		var pierce: int = int(w.get("pierce", 0))
 		var splash: float = float(w.get("splash", 0.0))
-		var dmg: float = float(w["damage"])
+		var dmg: float = float(w["damage"]) * Salvage.baron_mult(v)
 		if v.vulture > 0.0 and _is_weak(tk, ti, tid):
 			dmg *= 1.0 + v.vulture
+		var amask: int = Ammo.mask(v, kind_name)
+		if (amask & Ammo.AP_BIT) != 0:
+			pierce += 1
 		var ttl: float = float(w["range"]) / speed + 0.05
 		var muzzle: Vector2 = v.pos + Vector2.from_angle(ang) * MUZZLE_OFFSET
+		var spot: bool = kind_name == "cannon" and tk == 1 and ti >= 0 and ti < enemy_count and enemy_kind[ti] == SPITTER \
+				and enemy_id[ti] == tid and float(fx.get("spotter", 0.0)) > 0.0
 		for p in pellets:
 			var dir: Vector2 = Vector2.from_angle(ang + rng.randf_range(-spread, spread))
-			spawn_projectile(muzzle, dir * speed, ttl, dmg, v.id, pierce, splash, Cards.weapon_kind_index(str(w["kind"])))
-		w["cooldown"] = int(w["cooldown_ticks"])
-		_emit("fire", muzzle, v.id, Cards.weapon_kind_index(str(w["kind"])))
+			if spot:  # spotter: the shell is born on the spitter, so it cannot miss
+				spawn_projectile(enemy_pos[ti], Vector2.from_angle(ang) * speed, ttl, dmg, v.id, pierce, splash, widx, amask)
+			else:
+				spawn_projectile(muzzle, dir * speed, ttl, dmg, v.id, pierce, splash, widx, amask)
+		if scatter and kind_name != "shotgun":
+			var shots: int = int(w.get("shots", 0)) + 1
+			w["shots"] = shots
+			if shots % SCATTER_EVERY == 0:
+				for p in SCATTER_PELLETS:
+					var sdir: Vector2 = Vector2.from_angle(ang + rng.randf_range(-SCATTER_SPREAD, SCATTER_SPREAD))
+					spawn_projectile(muzzle, sdir * speed, ttl, dmg * SCATTER_DAMAGE, v.id, 0, 0.0, widx, amask)
+		w["cooldown"] = cd + float(w["cooldown_ticks"])
+		_emit("fire", muzzle, v.id, widx)
+
+
+## A weapon without fire intent cools down.
+func _cool_heat(w: Dictionary) -> void:
+	var heat: int = int(w.get("heat", 0))
+	if heat > 0:
+		w["heat"] = maxi(heat - HEAT_COOL, 0)
 
 
 ## Vulture: is the target under 30% hp?
@@ -1440,22 +1878,60 @@ func _update_projectiles() -> void:
 				hit_enemy = -1
 
 		var remove: bool = false
+		var amask: int = proj_ammo[i]
+		var ov: SimVehicle = vehicles[owner] if (owner >= 0 and owner < nveh) else null
 		if hit_vehicle >= 0:
 			var hv: SimVehicle = vehicles[hit_vehicle]
 			_emit("hit", p0 + step_v * best_t, owner, -1)
+			if ov != null and (amask & Ammo.AP_BIT) != 0:
+				dmg *= 1.0 + Ammo.AP_BONUS * Ammo.effect_scale(ov, amask)
 			_hit_weapon = proj_weapon[i] if proj_weapon[i] != 255 else -1
 			_damage_vehicle(hv, dmg, owner, true, SRC_ACID if owner < 0 else SRC_PLAYER)
 			_hit_weapon = -1
 			remove = true
 		elif hit_enemy >= 0:
 			var hit_pos: Vector2 = p0 + step_v * best_t
-			_emit("hit", hit_pos, owner, enemy_kind[hit_enemy])
+			var ekind: int = enemy_kind[hit_enemy]
+			_emit("hit", hit_pos, owner, ekind)
+			var ascale: float = 1.0
+			if ov != null:
+				var ofx: Dictionary = ov.tech_fx
+				if amask != 0:
+					ascale = Ammo.effect_scale(ov, amask)
+					if (amask & Ammo.AP_BIT) != 0 and ekind == BOULDER:
+						dmg *= 1.0 + Ammo.AP_BONUS * ascale
+				if enemy_burn_ticks[hit_enemy] > 0 and proj_weapon[i] != 2:  # cannon is index 2
+					var bb: float = float(ofx.get("burn_bonus", 0.0))
+					if bb > 0.0:
+						dmg *= 1.0 + bb
+				if proj_weapon[i] == 2 and ekind == SPITTER:
+					var spf: float = float(ofx.get("spotter", 0.0))
+					if spf > 0.0:
+						dmg *= 1.0 + spf
+				var sw: float = float(ofx.get("swarm_logic", 0.0))
+				if sw > 0.0 and enemy_id[hit_enemy] == ov.mark_id:
+					dmg *= 1.0 + sw
+				var ex: float = float(ofx.get("execute", 0.0))
+				if ex > 0.0 and (amask & Ammo.SHARD_BIT) == 0 and enemy_hp[hit_enemy] > 0.0 \
+						and enemy_hp[hit_enemy] < ex * enemy_max_hp(ekind, round):
+					dmg = maxf(dmg, enemy_hp[hit_enemy])
+					_emit("execute", hit_pos, owner, ekind)
+			_hit_weapon = proj_weapon[i] if proj_weapon[i] != 255 else -1
+			_hit_ammo = amask
+			_hit_dmg = dmg
+			_hit_scale = ascale
 			_hit_enemy(hit_enemy, dmg, owner)
 			if proj_splash[i] > 0.0:
 				_splash_damage(hit_pos, proj_splash[i], dmg * SPLASH_FRACTION, owner, hit_enemy)
+			_hit_ammo = 0
+			_hit_weapon = -1
+			if (amask & Ammo.FIRE_BIT) != 0 and enemy_hp[hit_enemy] > 0.0:
+				_ignite(hit_enemy, dmg * BURN_FRACTION * ascale / (float(BURN_TICKS) * DT), owner)
 			if proj_pierce[i] > 0:
 				proj_pierce[i] -= 1
 				proj_last[i] = enemy_id[hit_enemy]
+				if ov != null and float(ov.tech_fx.get("ember", 0.0)) > 0.0:
+					_add_zone(hit_pos, EMBER_RADIUS, ZONE_EMBER, EMBER_TICKS, owner)
 			else:
 				remove = true
 		elif ttl <= 0.0 or p1.x < a_lo.x or p1.y < a_lo.y or p1.x > a_hi.x or p1.y > a_hi.y:
@@ -1472,6 +1948,7 @@ func _update_projectiles() -> void:
 			proj_splash[i] = proj_splash[n]
 			proj_last[i] = proj_last[n]
 			proj_weapon[i] = proj_weapon[n]
+			proj_ammo[i] = proj_ammo[n]
 		else:
 			proj_pos[i] = p1
 			proj_ttl[i] = ttl
@@ -1486,13 +1963,137 @@ func _update_projectiles() -> void:
 		proj_splash.resize(n)
 		proj_last.resize(n)
 		proj_weapon.resize(n)
+		proj_ammo.resize(n)
 		proj_count = n
+	_flush_pending()
 
 
 ## Damages every living enemy within `radius` of `center` except index `skip`.
 func _splash_damage(center: Vector2, radius: float, dmg: float, owner: int, skip: int) -> void:
 	var cnt: int = _hash.query_circle(center, radius, enemy_pos, _splash_buf, STALE_MARGIN)
+	_in_splash = true
 	for q in cnt:
 		var j: int = _splash_buf[q]
 		if j != skip:
 			_hit_enemy(j, dmg, owner)
+	_in_splash = false
+
+
+# ---------------------------------------------------------------- burn, shards and zones
+
+## Sets an enemy on fire for BURN_TICKS: `dps` damage per second credited to `owner`. A new fire only
+## replaces a weaker running one (the stronger dps and its owner win), but always refreshes the timer.
+func _ignite(j: int, dps: float, owner: int) -> void:
+	if dps <= 0.0 or enemy_hp[j] <= 0.0:
+		return
+	if enemy_burn_ticks[j] <= 0 or dps >= enemy_burn_dps[j]:
+		enemy_burn_dps[j] = dps
+		enemy_burn_owner[j] = owner
+	enemy_burn_ticks[j] = BURN_TICKS
+	_burning = true
+
+
+## Burn damage over time (credited to the igniting vehicle, kills included) and napalm spreading.
+func _update_burn() -> void:
+	if not _burning:
+		return
+	var any: bool = false
+	for i in enemy_count:
+		var bt: int = enemy_burn_ticks[i]
+		if bt <= 0:
+			continue
+		if enemy_hp[i] <= 0.0:
+			enemy_burn_ticks[i] = 0
+			continue
+		enemy_burn_ticks[i] = bt - 1
+		any = true
+		var owner: int = enemy_burn_owner[i]
+		if (tick + enemy_id[i]) % BURN_SPREAD_PERIOD == 0 and owner >= 0 and owner < vehicles.size():
+			var radius: float = float(vehicles[owner].tech_fx.get("napalm", 0.0))
+			if radius > 0.0:
+				var ndps: float = enemy_burn_dps[i] * BURN_SPREAD_DECAY
+				var cnt: int = _hash.query_circle(enemy_pos[i], radius, enemy_pos, _splash_buf, STALE_MARGIN)
+				for q in cnt:
+					var k: int = _splash_buf[q]
+					if k != i and enemy_burn_ticks[k] <= 0:
+						_ignite(k, ndps, owner)
+		_hit_enemy(i, enemy_burn_dps[i] * DT, owner)
+	_burning = any
+	_flush_pending()
+
+
+## Queues SHARD_COUNT shards for a kill (added after the current projectile loop).
+func _queue_shards(pos: Vector2, owner: int, ekind: int) -> void:
+	_emit("shrapnel", pos, owner, ekind)
+	var dmg: float = _hit_dmg * SHARD_DAMAGE * _hit_scale
+	var a0: float = rng.randf() * TAU
+	for k in SHARD_COUNT:
+		var dir: Vector2 = Vector2.from_angle(a0 + TAU * float(k) / float(SHARD_COUNT))
+		_pending_proj.append([pos, dir * SHARD_SPEED, SHARD_TTL, dmg, owner, _hit_weapon, Ammo.SHARD_BIT])
+
+
+func _flush_pending() -> void:
+	if _pending_proj.is_empty():
+		return
+	for e: Array in _pending_proj:
+		spawn_projectile(e[0], e[1], e[2], e[3], e[4], 0, 0.0, maxi(int(e[5]), 0), int(e[6]))
+	_pending_proj.clear()
+
+
+## Adds a ground zone (skipped when full, or when the same kind and owner already covers the spot).
+func _add_zone(pos: Vector2, radius: float, kind: int, ttl: int, owner: int) -> void:
+	if zone_count >= MAX_ZONES:
+		return
+	var r2: float = radius * radius * 0.5
+	for z in zone_count:
+		if zone_kind[z] == kind and zone_owner[z] == owner and zone_pos[z].distance_squared_to(pos) < r2:
+			zone_ttl[z] = maxi(zone_ttl[z], ttl)
+			return
+	zone_pos.append(pos)
+	zone_radius.append(radius)
+	zone_kind.append(kind)
+	zone_ttl.append(ttl)
+	zone_owner.append(owner)
+	zone_count += 1
+
+
+## Ticks the ground zones: embers burn (EMBER_DPS) and ignite what stands in them, oil slows, smoke blinds.
+## Expired zones go.
+func _update_zones() -> void:
+	if zone_count == 0:
+		return
+	var z: int = zone_count - 1
+	while z >= 0:
+		if zone_kind[z] == ZONE_EMBER or zone_kind[z] == ZONE_FIRE:
+			var owner: int = zone_owner[z]
+			var cnt: int = _hash.query_circle(zone_pos[z], zone_radius[z], enemy_pos, _splash_buf, STALE_MARGIN)
+			for q in cnt:
+				var j: int = _splash_buf[q]
+				if enemy_hp[j] > 0.0:
+					_hit_enemy(j, EMBER_DPS * DT, owner)
+					_ignite(j, EMBER_BURN_DPS, owner)
+		elif zone_kind[z] == ZONE_OIL or zone_kind[z] == ZONE_SMOKE:
+			# Oil slows what stands in it for 2 s; smoke makes aliens lose their target for 1 s.
+			var oil: bool = zone_kind[z] == ZONE_OIL
+			var cnt2: int = _hash.query_circle(zone_pos[z], zone_radius[z], enemy_pos, _splash_buf, STALE_MARGIN)
+			for q in cnt2:
+				var j2: int = _splash_buf[q]
+				if oil:
+					_status_enemy(j2, 8, Abilities.OIL_SLOW_TICKS)
+				else:
+					_status_enemy(j2, 16, Abilities.BLIND_TICKS)
+		zone_ttl[z] -= 1
+		if zone_ttl[z] <= 0:
+			var last: int = zone_count - 1
+			zone_pos[z] = zone_pos[last]
+			zone_radius[z] = zone_radius[last]
+			zone_kind[z] = zone_kind[last]
+			zone_ttl[z] = zone_ttl[last]
+			zone_owner[z] = zone_owner[last]
+			zone_pos.resize(last)
+			zone_radius.resize(last)
+			zone_kind.resize(last)
+			zone_ttl.resize(last)
+			zone_owner.resize(last)
+			zone_count = last
+		z -= 1

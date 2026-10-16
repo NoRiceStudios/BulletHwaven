@@ -19,6 +19,8 @@ const COND_LABELS := {
 	"hp": "OWN HP", "swarm": "ALIENS NEAR", "rivals": "RIVALS NEAR", "t_dist": "TGT DISTANCE", "t_hp": "TGT HP",
 	"t_player": "TGT IS RIVAL", "t_boulder": "TGT IS BOULDER", "t_spitter": "TGT IS SPITTER", "pvp": "PVP ON",
 	"has_target": "HAS TARGET",
+	"boulders": "BOULDERS NEAR", "fuel": "OWN FUEL", "rival_weaker": "RIVAL WEAKER", "ability_ready": "ABILITY READY",
+	"t_leader": "TGT IS LEADER",
 }
 const COND_HELP := {
 	"hp": "YOUR RIG'S HP IN PERCENT OF ITS MAXIMUM.",
@@ -31,6 +33,11 @@ const COND_HELP := {
 	"t_spitter": "THE TARGET IS A SPITTER.",
 	"pvp": "PLAYERS CAN HURT EACH OTHER (FROM ROUND 4).",
 	"has_target": "THERE IS SOMETHING TO SHOOT AT.",
+	"boulders": "BOULDERS WITHIN 220 PX OF THE RIG (RANGEFINDER).",
+	"fuel": "YOUR FUEL RESERVE (RADAR ARRAY).",
+	"rival_weaker": "A RIVAL RIG NEAR YOU HAS A LOWER HP SHARE THAN YOU (RADAR ARRAY, PVP ONLY).",
+	"ability_ready": "AN EQUIPPED ABILITY IS OFF COOLDOWN (TARGETING COMPUTER).",
+	"t_leader": "THE TARGET IS THE MARKED BOUNTY LEADER (HUNTER-KILLER LOGIC).",
 }
 const ACTION_LABELS := {
 	"drive:circle": "CIRCLE", "drive:kite": "KITE", "drive:charge": "CHARGE", "drive:flee": "FLEE",
@@ -38,6 +45,9 @@ const ACTION_LABELS := {
 	"target:nearest": "TGT NEAREST", "target:strongest": "TGT STRONGEST", "target:weakest": "TGT WEAKEST",
 	"target:players_first": "TGT RIVALS", "target:boulders": "TGT BOULDERS", "target:spitters": "TGT SPITTERS",
 	"target:follow": "FOLLOW RIG", "fire:hold": "HOLD FIRE", "fire:free": "FIRE AT WILL",
+	"ammo:fire": "LOAD FIRE", "ammo:shrapnel": "LOAD SHRAPNEL", "ammo:ap": "LOAD AP",
+	"fire:focus": "FOCUS FIRE", "ability:nitro": "USE NITRO", "ability:emp": "USE EMP", "ability:smoke": "USE SMOKE",
+	"ability:salvo": "USE SALVO",
 }
 const ACTION_HELP := {
 	"drive:circle": "ORBIT THE TARGET WITH GUNS OUT.",
@@ -54,13 +64,27 @@ const ACTION_HELP := {
 	"target:follow": "SHOOT WHAT THE RIG IS AIMING AT.",
 	"fire:hold": "THIS GUN DOES NOT SHOOT.",
 	"fire:free": "THIS GUN SHOOTS (OVERRIDES A LOWER HOLD FIRE).",
+	"ammo:fire": "LOAD INCENDIARY ROUNDS: HITS BURN FOR 2 S.",
+	"ammo:shrapnel": "LOAD SHRAPNEL: KILLS BURST INTO 3 SHARDS.",
+	"ammo:ap": "LOAD ARMOUR PIERCING: +1 PIERCE, MORE DAMAGE VS BOULDERS AND RIVALS.",
+	"fire:focus": "EVERY GUN SHOOTS THE RIG'S TARGET (FIRE CONTROL RELAY).",
+	"ability:nitro": "FIRE THE NITRO NOW (NEEDS 50 MOMENTUM). A RULE FOR IT REPLACES ITS AUTO-CAST.",
+	"ability:emp": "FIRE THE EMP NOW. A RULE FOR IT REPLACES ITS AUTO-CAST.",
+	"ability:smoke": "FIRE THE SMOKE SCREEN NOW. A RULE FOR IT REPLACES ITS AUTO-CAST.",
+	"ability:salvo": "FIRE THE SALVO NOW. A RULE FOR IT REPLACES ITS AUTO-CAST.",
 }
+const LOCKED_HELP := "LOCKED: UNLOCK IT IN THE TECH TREE (ELECTRONICS, PROPULSION)."
 ## Quick-add rules per scope: [label, text form].
 const TEMPLATES_RIG: Array = [
 	["RETREAT BELOW 30% HP", "hp<30|drive:flee"],
 	["KITE WHEN SWARMED", "swarm>20|drive:kite"],
 	["HUNT WOUNDED RIVALS", "t_player=1&t_hp<40|drive:charge"],
 	["RIVALS FIRST IN PVP", "pvp=1&rivals>0|target:players_first"],
+	["FOCUS FIRE ON BOULDERS", "t_boulder=1|fire:focus"],
+	["NITRO WHEN CHASED", "swarm>10|ability:nitro"],
+	["EMP IN A SWARM", "swarm>8|ability:emp"],
+	["SMOKE BELOW 50% HP", "hp<50|ability:smoke"],
+	["SALVO VS BOULDERS", "boulders>2|ability:salvo"],
 ]
 const TEMPLATES_WEAPON: Array = [
 	["SAVE AMMO ON BOULDERS", "t_boulder=1|fire:hold"],
@@ -242,7 +266,7 @@ func activate(action: String, arg: Variant) -> void:
 	var v: SimVehicle = _local()
 	if v == null:
 		return
-	if action != "menu_pick":
+	if action != "menu_pick" and action != "menu_locked":
 		_menu = {}
 	match action:
 		"close":
@@ -286,11 +310,13 @@ func activate(action: String, arg: Variant) -> void:
 			_work.remove_at(int(arg))
 			_commit()
 		"add_rule":
-			_add_rule("hp<30|drive:flee" if scope == Doctrine.SCOPE_RIG else "t_boulder=1|fire:hold")
+			_add_rule(("hp<30|drive:charge" if Mobility.is_juggernaut(v) else "hp<30|drive:flee") if scope == Doctrine.SCOPE_RIG else "t_boulder=1|fire:hold")
 		"template":
 			_add_rule(str(arg))
 		"menu_pick":
 			_pick(arg)
+		"menu_locked":
+			_say("LOCKED: UNLOCK IT IN THE TECH TREE.")
 
 
 func _add_rule(text: String) -> void:
@@ -307,14 +333,18 @@ func _add_rule(text: String) -> void:
 
 func _open_menu(kind: String, ri: int, ci: int) -> void:
 	var opts: Array = []
+	var me: SimVehicle = _local()
 	if kind == "action":
+		var open_ones: PackedStringArray = Doctrine.actions_for(scope, me)
 		for a in Doctrine.actions_for(scope):
-			opts.append([a, ACTION_LABELS[a], ACTION_HELP[a]])
+			var ok: bool = open_ones.has(a)
+			opts.append([a, ACTION_LABELS[a], ACTION_HELP[a] if ok else LOCKED_HELP, not ok])
 	else:
 		for id in Doctrine.COND_IDS:
-			opts.append([id, COND_LABELS[id], COND_HELP[id]])
+			var ok2: bool = Doctrine.cond_unlocked(me, id)
+			opts.append([id, COND_LABELS[id], COND_HELP[id] if ok2 else LOCKED_HELP, not ok2])
 		if kind == "cond":
-			opts.append(["", "REMOVE CONDITION", "DROP THIS CONDITION FROM THE RULE."])
+			opts.append(["", "REMOVE CONDITION", "DROP THIS CONDITION FROM THE RULE.", false])
 	var anchor: Rect2 = _clicked
 	var h: float = float(opts.size()) * 9.0 + 6.0
 	var y: float = anchor.end.y + 2.0
@@ -342,7 +372,7 @@ func _pick(value: Variant) -> void:
 			elif str(value) != str(conds[ci][0]):
 				conds[ci] = Doctrine.default_cond(str(value))
 		"add_cond":
-			if conds.size() < Doctrine.MAX_CONDS:
+			if conds.size() < Doctrine.max_conds(_local()):
 				conds.append(Doctrine.default_cond(str(value)))
 	_commit()
 
@@ -458,6 +488,7 @@ func _draw_base_weapon(v: SimVehicle, pos: Vector2) -> void:
 func _draw_rules(v: SimVehicle, scr: Rect2) -> void:
 	var x0: float = scr.position.x + 8.0
 	var slots: int = Doctrine.slots(v)
+	var active: int = Doctrine.active_slots(v)
 	var rows_y: float = _rows_y()
 	var y: float = rows_y - 14.0
 	UiFont.draw(self, "RULES  %d/%d SLOTS" % [mini(_work.size(), slots), slots], Vector2(x0, y), Gfx.CRT_HI)
@@ -474,11 +505,14 @@ func _draw_rules(v: SimVehicle, scr: Rect2) -> void:
 		var ry: float = rows_y + ROW_H * float(i)
 		var row := Rect2(x0 - 4, ry - 5, scr.size.x - 8, ROW_H - 4)
 		var locked: bool = i >= slots
-		var lit: bool = combat and not locked and (live >> i) & 1 == 1
+		var off: String = ""  # a jammer field or an EMP switched this slot off
+		if not locked and i >= active:
+			off = _off_text(v)
+		var lit: bool = combat and not locked and off == "" and (live >> i) & 1 == 1
 		if lit:
 			draw_rect(row, Color(Gfx.CRT_TEXT, 0.14))
 		UiKit.outline_rect(self, row, Gfx.CRT_DIM if not lit else Gfx.CRT_TEXT)
-		_draw_rule(i, _work[i], Vector2(x0, ry + 1), row, locked, lit)
+		_draw_rule(i, _work[i], Vector2(x0, ry + 1), row, locked, lit, off)
 	var ay: float = rows_y + ROW_H * float(_work.size())
 	if _work.size() < slots:
 		_chip("+ ADD RULE", Vector2(x0, ay), false, "add_rule", null)
@@ -488,13 +522,27 @@ func _draw_rules(v: SimVehicle, scr: Rect2) -> void:
 		UiFont.draw(self, "NO RULES: THIS %s ALWAYS USES ITS BASE SETTING." % ("RIG" if scope == Doctrine.SCOPE_RIG else "GUN"), Vector2(x0 + 60, ay), Gfx.CRT_DIM)
 
 
-func _draw_rule(i: int, rule: Dictionary, pos: Vector2, row: Rect2, locked: bool, lit: bool) -> void:
-	var col: Color = Gfx.CRT_DIM if locked else Gfx.CRT_TEXT
+## Why a rule slot is switched off: "JAMMED BY <NAME>" in a rival's jammer field, "EMP" after a rival's pulse.
+func _off_text(v: SimVehicle) -> String:
+	if v.rules_off_ticks > 0:
+		return "EMP: RULES OFFLINE"
+	if v.jammed_by >= 0 and v.jammed_by < world.vehicles.size():
+		return "JAMMED BY " + world.vehicles[v.jammed_by].player_name
+	return ""
+
+
+func _draw_rule(i: int, rule: Dictionary, pos: Vector2, row: Rect2, locked: bool, lit: bool, off: String = "") -> void:
+	var col: Color = Gfx.CRT_DIM if locked or off != "" else Gfx.CRT_TEXT
 	var x: float = UiFont.draw(self, "%d" % (i + 1), pos, Gfx.CRT_HI if lit else col) + 3.0
 	_lamp(Vector2(x, pos.y + 1), lit, false)
 	x += 9.0
 	if locked:
 		UiFont.draw(self, "LOCKED: THIS RIG HAS ONLY %d SLOTS - BUILD ELECTRONICS TECH TO RUN IT" % Doctrine.slots(_local()), Vector2(x, pos.y), Gfx.CRT_DIM)
+		_chip("X", Vector2(row.end.x - 12, pos.y), false, "delete", i)
+		return
+	if off != "":
+		UiFont.draw(self, off + ": THIS RULE DOES NOT RUN", Vector2(x, pos.y), Gfx.UI_BAD)
+		UiFont.draw_small(self, sentence(rule, scope), Vector2(pos.x + 12, pos.y + 11), Gfx.CRT_DIM)
 		_chip("X", Vector2(row.end.x - 12, pos.y), false, "delete", i)
 		return
 	var conds: Array = rule["if"]
@@ -504,7 +552,7 @@ func _draw_rule(i: int, rule: Dictionary, pos: Vector2, row: Rect2, locked: bool
 		if ci > 0:
 			x = UiFont.draw(self, "AND", Vector2(x, pos.y), Gfx.CRT_DIM) + 5.0
 		x = _draw_cond(i, ci, conds[ci], Vector2(x, pos.y)) + 6.0
-	if conds.size() < Doctrine.MAX_CONDS:
+	if conds.size() < Doctrine.max_conds(_local()):
 		x = _chip("+ IF" if conds.is_empty() else "+ AND", Vector2(x, pos.y), false, "add_cond", i) + 6.0
 	x = maxf(x, row.position.x + 404.0)
 	x = UiFont.draw(self, "THEN", Vector2(x, pos.y), Gfx.CRT_DIM) + 5.0
@@ -531,7 +579,11 @@ static func sentence(rule: Dictionary, p_scope: String) -> String:
 			act = {"circle": "CIRCLES THE TARGET", "kite": "KITES AT RANGE", "charge": "CHARGES IN", "flee": "FLEES",
 				"hold": "HOLDS POSITION"}.get(v, v)
 		"fire":
-			act = "HOLDS FIRE" if v == "hold" else "FIRES AT WILL"
+			act = {"hold": "HOLDS FIRE", "focus": "FOCUSES ALL GUNS ON ONE TARGET"}.get(v, "FIRES AT WILL")
+		"ammo":
+			act = "LOADS " + {"fire": "INCENDIARY ROUNDS", "shrapnel": "SHRAPNEL", "ap": "ARMOUR PIERCING"}.get(v, v)
+		"ability":
+			act = "USES " + v.to_upper()
 		_:
 			act = "FOLLOWS THE RIG'S TARGET" if v == "follow" else "TARGETS " + {"nearest": "THE NEAREST ALIEN",
 				"strongest": "THE TOUGHEST ALIEN", "weakest": "THE WEAKEST ALIEN", "players_first": "RIVAL RIGS FIRST",
@@ -567,6 +619,16 @@ static func _cond_phrase(c: Array) -> String:
 			return "PVP IS %s" % ["ON" if yes else "OFF"]
 		"has_target":
 			return "THERE IS %sTARGET" % ["A " if yes else "NO "]
+		"boulders":
+			return "%s THAN %d BOULDERS ARE NEAR" % ["FEWER" if lt else "MORE", n]
+		"fuel":
+			return "OWN FUEL IS %s %d" % ["BELOW" if lt else "ABOVE", n]
+		"rival_weaker":
+			return "A NEARBY RIVAL IS %sWEAKER THAN YOU" % ["" if yes else "NOT "]
+		"ability_ready":
+			return "AN ABILITY IS %sREADY" % ["" if yes else "NOT "]
+		"t_leader":
+			return "THE TARGET IS %sTHE LEADER" % ["" if yes else "NOT "]
 	return id
 
 
@@ -590,6 +652,12 @@ func _draw_footer(v: SimVehicle, scr: Rect2) -> void:
 	UiFont.draw(self, "QUICK ADD", Vector2(x0, y), Gfx.CRT_DIM)
 	var x: float = x0 + 50.0
 	for t: Array in (TEMPLATES_RIG if scope == Doctrine.SCOPE_RIG else TEMPLATES_WEAPON):
+		var parsed: Variant = Doctrine.parse(str(t[1]), scope)
+		if parsed == null or not Doctrine.rules_allowed(v, parsed):
+			continue  # needs tech this rig does not have
+		var tw: float = UiFont.width(str(t[0])) + 12.0
+		if x + tw > scr.end.x - 8.0:
+			break
 		x = _chip(str(t[0]), Vector2(x, y), false, "template", t[1]) + 7.0
 	y += 13.0
 	var help: String = _help_text()
@@ -606,7 +674,7 @@ func _draw_footer(v: SimVehicle, scr: Rect2) -> void:
 func _help_text() -> String:
 	if not _menu.is_empty():
 		for k in (_menu["options"] as Array).size():
-			if _is_hover("menu_pick", (_menu["options"][k] as Array)[0]):
+			if _is_hover("menu_pick", (_menu["options"][k] as Array)[0]) or _is_hover("menu_locked", (_menu["options"][k] as Array)[0]):
 				return str(_menu["options"][k][2])
 	if _hover.is_empty():
 		return "CLICK A CONDITION OR ACTION TO CHANGE IT. < > FLIPS THE TEST, - + CHANGES THE NUMBER, UP / DN REORDERS: HIGHER RULES WIN."
@@ -650,11 +718,13 @@ func _draw_menu() -> void:
 			cur = _work[ri]["if"][int(_menu["ci"])][0]
 	for o: Array in _menu["options"]:
 		var orow := Rect2(r.position.x + 2, y - 1, r.size.x - 4, 8)
+		var locked: bool = o.size() > 3 and bool(o[3])
 		var hov: bool = _is_hover("menu_pick", o[0])
-		if hov or o[0] == cur:
+		if not locked and (hov or o[0] == cur):
 			draw_rect(orow, Gfx.CRT_TEXT if hov else Color(Gfx.CRT_TEXT, 0.25))
-		UiFont.draw(self, o[1], Vector2(r.position.x + 5, y), Gfx.CRT_BG if hov else (Gfx.UI_BAD if o[0] == "" else Gfx.CRT_TEXT))
-		_hits.append([orow, "menu_pick", o[0]])
+		var tcol: Color = Gfx.CRT_DIM if locked else (Gfx.CRT_BG if hov else (Gfx.UI_BAD if o[0] == "" else Gfx.CRT_TEXT))
+		UiFont.draw(self, o[1], Vector2(r.position.x + 5, y), tcol)
+		_hits.append([orow, "menu_locked" if locked else "menu_pick", o[0]])
 		y += 9.0
 
 

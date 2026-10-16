@@ -261,20 +261,38 @@ static func recompute(v: SimVehicle, rebuild_weapons: bool = true, adjust_hp: bo
 		var fx: Dictionary = d["fx"]
 		for k: String in fx:
 			st[k] = float(st.get(k, 0.0)) + float(fx[k]) * float(lvl)
+	var tech_fx := {}
+	var chassis: int = 1
+	var eng_penalty: float = 0.0  ## negative speed of engineering nodes, scaled below
 	for id in v.tech:
-		var td: Dictionary = Tech.def(id)
-		if td.is_empty():
+		if not Tech.active(v, id):
 			continue
+		var td: Dictionary = Tech.def(id)
 		var tfx: Dictionary = td["fx"]
 		for k: String in tfx:
-			st[k] = float(st.get(k, 0.0)) + float(tfx[k])
+			var a: float = float(tfx[k])
+			tech_fx[k] = float(tech_fx.get(k, 0.0)) + a
+			if k == "chassis":
+				chassis = maxi(chassis, int(a))
+			elif k == "speed" and a < 0.0 and td["branch"] == "engineering":
+				eng_penalty += a
+			else:
+				st[k] = float(st.get(k, 0.0)) + a
+	if float(tech_fx.get("no_speed_penalty", 0.0)) > 0.0:
+		eng_penalty = 0.0
+	elif float(tech_fx.get("speed_penalty_half", 0.0)) > 0.0:
+		eng_penalty *= 0.5
+	st["speed"] = float(st["speed"]) + eng_penalty
+	v.tech_fx = tech_fx
+	v.chassis = chassis
 
 	var old_max: float = v.max_hp
-	v.max_hp = maxf(SimVehicle.MAX_HP + float(st["hp"]), 1.0)
+	v.max_hp = maxf((SimVehicle.MAX_HP + float(st["hp"])) * (1.0 + float(st.get("hp_pct", 0.0))), 1.0)
 	if adjust_hp and v.alive and v.max_hp > old_max:
 		v.hp = minf(v.hp + (v.max_hp - old_max), v.max_hp)
 	v.hp = minf(v.hp, v.max_hp)
-	v.armor = float(st["armor"])
+	v.armor = maxf(float(st["armor"]) - float(v.shed), 0.0)  # scrap armour: plates shed this round stay off
+	v.eff_armor = v.armor
 	v.speed = maxf(1.0 + float(st["speed"]), 0.3)
 	v.turn_rate = maxf(1.0 + float(st["turn"]), 0.3)
 	v.scrap_mult = maxf(1.0 + float(st["scrap"]), 0.0)
@@ -288,6 +306,7 @@ static func recompute(v: SimVehicle, rebuild_weapons: bool = true, adjust_hp: bo
 	v.interest_cap = BASE_INTEREST_CAP + int(st["interest"])
 	v.reroll_discount = int(st.get("reroll", 0.0))
 	v.card_luck = maxf(float(st.get("luck", 0.0)), 0.0)
+	Abilities.sync(v)
 	if rebuild_weapons:
 		_rebuild_weapons(v, st)
 
@@ -314,13 +333,18 @@ static func _rebuild_weapons(v: SimVehicle, st: Dictionary) -> void:
 			"kind": id,
 			"damage": float((b["damage"] as Array)[li]) * dmg_mult,
 			"range": float((b["range"] as Array)[li]) * range_mult,
-			"cooldown_ticks": maxi(1, roundi(float((b["cooldown"] as Array)[li]) / rate_mult)),
-			"cooldown": int(prev.get("cooldown", 0)),
+			"cooldown_ticks": maxf(1.0, float((b["cooldown"] as Array)[li]) / rate_mult),
+			"cooldown": float(prev.get("cooldown", 0.0)),
 			"aim": float(prev.get("aim", 0.0)),
 			"pellets": int((b["pellets"] as Array)[li]) + int(st.get("pellets_" + id, 0.0)),
 			"spread": float(b["spread"]),
 			"pierce": int((b["pierce"] as Array)[li]) + int(st.get("pierce", 0.0)),
 			"splash": base_splash + float(st.get("splash_" + id, 0.0)),
 			"speed": float(b["speed"]),
+			"heat": int(prev.get("heat", 0)),
+			"jam": int(prev.get("jam", 0)),
+			"sw": int(prev.get("sw", 0)),
+			"shots": int(prev.get("shots", 0)),
 		})
 	v.weapons = fresh
+	Ammo.sync(v)

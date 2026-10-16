@@ -207,6 +207,8 @@ static func _check_command(c: Variant) -> String:
 		return "pick_card needs a numeric value 0..2"
 	if t == "buy_tech" and not Tech.has(str(d.get("value", ""))):
 		return "buy_tech needs a known tech id, got '%s'" % str(d.get("value", ""))
+	if t == "respec_tech" and NetSession.validate_command(d).is_empty():
+		return "respec_tech needs known tech ids in \"from\" (owned choice) and \"value\" (unowned choice of the same branch and stage)"
 	if t == "set_drive" and not str(d.get("value", "")) in ["circle", "kite", "charge"]:
 		return "set_drive value must be circle|kite|charge"
 	if t == "set_target" and not str(d.get("value", "")) in Doctrine.RIG_TARGETS:
@@ -636,15 +638,17 @@ func _tech_list(me: SimVehicle) -> Array:
 		var d: Dictionary = Tech.def(id)
 		var status: String
 		if me.tech.has(id):
-			status = "owned"
+			status = "owned" if Tech.active(me, id) else "owned but inactive (needs %s)" % Tech.missing(me, id)
 		elif Tech.blocked_by(me, id) != "":
-			status = "excluded (took %s)" % Tech.blocked_by(me, id)
+			status = "excluded (took %s; respec_tech swaps)" % Tech.blocked_by(me, id)
 		elif Tech.missing(me, id) != "":
 			status = "locked (needs %s)" % Tech.missing(me, id)
 		else:
-			status = "affordable" if me.scrap >= Tech.cost(id) else "need %d more scrap" % (Tech.cost(id) - me.scrap)
+			status = "affordable" if me.scrap >= Tech.price(me, id) else "need %d more scrap" % (Tech.price(me, id) - me.scrap)
+			if me.tech_dormant.has(id):
+				status += " (dormant fusion, half price)"
 		out.append({"id": id, "name": d["name"], "branch": d["branch"], "tier": d["tier"], "kind": d["kind"],
-			"cost": Tech.cost(id), "status": status, "effect": _fx_text(d["fx"], false)})
+			"cost": Tech.price(me, id), "status": status, "effect": _fx_text(d["fx"], false)})
 	return out
 
 

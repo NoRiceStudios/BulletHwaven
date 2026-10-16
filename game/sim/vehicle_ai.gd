@@ -27,7 +27,7 @@ static func _target_valid(w: SimWorld, v: SimVehicle) -> bool:
 		return i >= 0 and i < w.enemy_count and w.enemy_id[i] == v.target_id and w.enemy_hp[i] > 0.0
 	if v.target_kind == 2:
 		var t: SimVehicle = w.vehicles[v.target_id]
-		return t.alive and t.invuln_ticks <= 0  # a rival that just respawned / combat start cannot be targeted
+		return t.alive and t.invuln_ticks <= 0 and t.smoke_ticks <= 0  # a rival that just respawned / is in smoke cannot be targeted
 	return false
 
 
@@ -50,7 +50,7 @@ static func _acquire(w: SimWorld, v: SimVehicle) -> void:
 	if v.retaliate_ticks > 0 and mode != "players_first" and w.pvp_enabled():
 		# Return fire: shoot back at the player that hurt us, if it is in range.
 		var attacker: SimVehicle = w.vehicles[v.retaliate_id]
-		if attacker.alive and attacker.invuln_ticks <= 0 and v.pos.distance_squared_to(attacker.pos) <= rng_range * rng_range:
+		if attacker.alive and attacker.invuln_ticks <= 0 and attacker.smoke_ticks <= 0 and v.pos.distance_squared_to(attacker.pos) <= rng_range * rng_range:
 			v.target_kind = 2
 			v.target_index = attacker.id
 			v.target_id = attacker.id
@@ -77,7 +77,7 @@ static func find_target(w: SimWorld, v: SimVehicle, mode: String, reach: float) 
 		var best_d2: float = r * r
 		var best_score: int = -1
 		for o in w.vehicles:
-			if o.id == v.id or not o.alive or o.invuln_ticks > 0:
+			if o.id == v.id or not o.alive or o.invuln_ticks > 0 or o.smoke_ticks > 0:
 				continue
 			var d2: float = v.pos.distance_squared_to(o.pos)
 			if d2 > r * r:
@@ -141,7 +141,7 @@ static func is_valid(w: SimWorld, kind: int, index: int, id: int) -> bool:
 		return index >= 0 and index < w.enemy_count and w.enemy_id[index] == id and w.enemy_hp[index] > 0.0
 	if kind == 2:
 		var t: SimVehicle = w.vehicles[id]
-		return t.alive and t.invuln_ticks <= 0 and w.pvp_enabled()
+		return t.alive and t.invuln_ticks <= 0 and t.smoke_ticks <= 0 and w.pvp_enabled()
 	return false
 
 
@@ -211,6 +211,7 @@ static func steer(w: SimWorld, v: SimVehicle) -> void:
 	var desired: Vector2 = Vector2.ZERO
 	var speed: float = SPEED_CIRCLE
 	v.ram_damage = 0.0
+	v.ramming = false
 	if v.target_kind != 0:
 		var to_t: Vector2 = v.target_pos - v.pos
 		var d: float = to_t.length()
@@ -222,7 +223,8 @@ static func steer(w: SimWorld, v: SimVehicle) -> void:
 		if drive == "charge" and ram_ok:
 			desired = u
 			speed = SPEED_CHARGE
-			v.ram_damage = CHARGE_RAM_DAMAGE * v.ram_mult
+			v.ram_damage = CHARGE_RAM_DAMAGE * (v.ram_mult + Mobility.ram_bonus(v))
+			v.ramming = true
 		elif drive == "flee":
 			# Break away from the target, veering sideways so the rig does not run into a wall.
 			desired = -u + tang * 0.5
@@ -258,7 +260,10 @@ static func steer(w: SimWorld, v: SimVehicle) -> void:
 	var max_turn: float = TURN_RATE * v.turn_rate * SimWorld.DT
 	v.heading = wrapf(v.heading + clampf(diff, -max_turn, max_turn), -PI, PI)
 	var slow: float = 1.0 - 0.35 * minf(absf(diff) / 0.6, 1.0)
-	v.vel = Vector2.from_angle(v.heading) * speed * v.speed * slow
+	speed *= v.speed * Abilities.speed_mult(v)
+	v.drive_speed = speed
+	v.turn_diff = absf(diff)
+	v.vel = Vector2.from_angle(v.heading) * speed * slow
 
 
 ## 0 in the open field, pointing inward (magnitude up to ~1 per axis) near walls.

@@ -26,6 +26,7 @@ const PROFILE_PATH := "user://profile.cfg"
 const PORT := 24680
 const DRIVE_KEYS := {KEY_1: "circle", KEY_2: "kite", KEY_3: "charge"}
 const TARGET_KEYS := {KEY_Q: "nearest", KEY_W: "strongest", KEY_E: "players_first"}
+const ABILITY_KEYS := {KEY_F: 0, KEY_G: 1}  ## cast the ability in slot 0 / 1 by hand
 const DEMO_TICKS := 30 * 120  ## the menu's attract battle restarts after this many ticks
 
 @onready var _view: WorldView = $Stage/World/WorldView
@@ -394,6 +395,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		_session.call("send_command", {"type": "set_drive", "value": DRIVE_KEYS[key]})
 	elif TARGET_KEYS.has(key):
 		_session.call("send_command", {"type": "set_target", "value": TARGET_KEYS[key]})
+	elif ABILITY_KEYS.has(key):
+		var me: SimVehicle = w.get_vehicle_for_peer(int(_session.call("local_peer_id")))
+		if me != null and me.abilities[ABILITY_KEYS[key]] != "":
+			_session.call("send_command", {"type": "use_ability", "value": me.abilities[ABILITY_KEYS[key]]})
 
 
 # ---------------------------------------------------------------- profile
@@ -470,6 +475,7 @@ func _run_shot(args: Dictionary) -> void:
 		return
 	var sd: int = int(args.get("seed", "1"))
 	var ticks: int = int(args.get("ticks", "300"))
+	TechGuide.persist = false  # screenshots never read or write the player's tech prefs (beginner view on)
 	var world: SimWorld = Scenarios.build(scenario, sd)
 	if out_path == "" or world == null:
 		push_error("main: bad --shot/--scenario (scenarios: %s)" % ", ".join(Scenarios.NAMES))
@@ -501,6 +507,8 @@ func _run_shot(args: Dictionary) -> void:
 		_view.rules.open(str(ui["rules"]))
 	if ui.has("workshop_tab"):
 		_view.workshop.activate("tab", str(ui["workshop_tab"]))
+	for wa: Array in ui.get("workshop_actions", []):  # e.g. ["tpl", "fortress"], ["beginner", false], ["tech", id]
+		_view.workshop.activate(str(wa[0]), wa[1])
 	for i in 4:
 		await get_tree().process_frame
 	if args.has("click"):
