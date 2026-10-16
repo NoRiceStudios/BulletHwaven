@@ -331,13 +331,18 @@ static func _rebuild_weapons(v: SimVehicle, st: Dictionary) -> void:
 			"kind": id,
 			"damage": float((b["damage"] as Array)[li]) * dmg_mult,
 			"range": float((b["range"] as Array)[li]) * range_mult,
-			"cooldown_ticks": maxi(1, roundi(float((b["cooldown"] as Array)[li]) / rate_mult)),
-			"cooldown": int(prev.get("cooldown", 0)),
+			"cooldown_ticks": maxf(1.0, float((b["cooldown"] as Array)[li]) / rate_mult),
+			"cooldown": float(prev.get("cooldown", 0.0)),
 			"aim": float(prev.get("aim", 0.0)),
 			"pellets": int((b["pellets"] as Array)[li]) + int(st.get("pellets_" + id, 0.0)),
 			"spread": float(b["spread"]),
 			"pierce": int((b["pierce"] as Array)[li]) + int(st.get("pierce", 0.0)),
 			"splash": base_splash + float(st.get("splash_" + id, 0.0)),
 			"speed": float(b["speed"]),
+			"heat": int(prev.get("heat", 0)),
+			"jam": int(prev.get("jam", 0)),
+			"sw": int(prev.get("sw", 0)),
+			"shots": int(prev.get("shots", 0)),
 		})
 	v.weapons = fresh
+	Ammo.sync(v)

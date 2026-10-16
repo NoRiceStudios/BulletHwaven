@@ -29,6 +29,7 @@ const ACTIONS: PackedStringArray = [
 	"drive:circle", "drive:kite", "drive:charge", "drive:flee", "drive:hold",
 	"target:nearest", "target:strongest", "target:weakest", "target:players_first", "target:boulders",
 	"target:spitters", "target:follow", "fire:hold", "fire:free",
+	"ammo:fire", "ammo:shrapnel", "ammo:ap",
 ]
 
 ## Condition metadata: numeric ones take "<" / ">" and a value in [min, max] (UI step `step`);
@@ -61,16 +62,30 @@ static func is_weapon_scope(scope: String) -> bool:
 	return Cards.WEAPONS.has(scope)
 
 
-## Actions a rule may use in `scope` ("rig" or a weapon kind).
-static func actions_for(scope: String) -> PackedStringArray:
+## Actions a rule may use in `scope` ("rig" or a weapon kind). With a vehicle `v` the `ammo:<id>`
+## actions are limited to the ammo it has unlocked (editor); without one they are all listed
+## (parsing, snapshots: the sim checks the unlock, see rules_allowed()).
+static func actions_for(scope: String, v: SimVehicle = null) -> PackedStringArray:
 	var out := PackedStringArray()
 	for a in ACTIONS:
 		if scope == SCOPE_RIG:
 			if a.begins_with("drive:") or (a.begins_with("target:") and a != "target:follow"):
 				out.append(a)
+		elif a.begins_with("ammo:"):
+			if v == null or Ammo.is_unlocked(v, action_value(a)):
+				out.append(a)
 		elif a.begins_with("target:") or a.begins_with("fire:"):
 			out.append(a)
 	return out
+
+
+## False if a parsed rule list uses an `ammo:<id>` action whose ammo `v` has not unlocked.
+static func rules_allowed(v: SimVehicle, rules: Array) -> bool:
+	for r: Dictionary in rules:
+		var a: String = r["do"]
+		if action_group(a) == "ammo" and not Ammo.is_unlocked(v, action_value(a)):
+			return false
+	return true
 
 
 static func action_group(action: String) -> String:
@@ -223,12 +238,14 @@ static func apply_rig(w: SimWorld, v: SimVehicle) -> void:
 	v.rule_live = live
 
 
-## Runs a weapon's rules. Returns [target mode, hold fire?] and stores the match mask in wp["live"].
+## Runs a weapon's rules. Returns [target mode, hold fire?, wanted ammo id or ""] and stores the match
+## mask in wp["live"]. An `ammo:<id>` action only counts while that ammo is unlocked.
 ## Target conditions look at the weapon's own target if it has one, else at the rig's.
 static func apply_weapon(w: SimWorld, v: SimVehicle, wp: Dictionary) -> Array:
 	var d: Dictionary = weapon_doc(v, str(wp["kind"]))
 	var mode: String = d["target"]
 	var hold: bool = false
+	var ammo: String = ""
 	var rules: Array = d["rules"]
 	var live: int = 0
 	if not rules.is_empty():
@@ -243,6 +260,7 @@ static func apply_weapon(w: SimWorld, v: SimVehicle, wp: Dictionary) -> Array:
 			tp = v.target_pos
 		var got_target: bool = false
 		var got_fire: bool = false
+		var got_ammo: bool = false
 		var ctx := {}
 		var n: int = mini(rules.size(), slots(v))
 		for i in n:
@@ -257,8 +275,11 @@ static func apply_weapon(w: SimWorld, v: SimVehicle, wp: Dictionary) -> Array:
 			elif action_group(a) == "fire" and not got_fire:
 				hold = action_value(a) == "hold"
 				got_fire = true
+			elif action_group(a) == "ammo" and not got_ammo and Ammo.is_unlocked(v, action_value(a)):
+				ammo = action_value(a)
+				got_ammo = true
 	wp["live"] = live
-	return [mode, hold]
+	return [mode, hold, ammo]
 
 
 static func _holds(w: SimWorld, v: SimVehicle, conds: Array, tk: int, ti: int, tid: int, tp: Vector2, ctx: Dictionary) -> bool:

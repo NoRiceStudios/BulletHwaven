@@ -77,6 +77,7 @@ var _veh_trail: Dictionary = {}  # vehicle id -> [position, wheel positions...] 
 var _veh_steps: Dictionary = {}  # vehicle id -> int, track stamps so far (dust cadence)
 var _enemy_disp: Dictionary = {}  # enemy id -> Vector3(x, y, frame)
 var _acid_pos: PackedVector2Array = PackedVector2Array()
+var _burn_pos: PackedVector2Array = PackedVector2Array()  ## burning enemies this frame (warm flickering halo)
 var _last_tick: int = -1
 var _tick_age: float = 0.0
 
@@ -354,6 +355,8 @@ func _update_enemies(lead: float, k: float) -> void:
 	for layer in _enemy_layers:
 		layer.begin(n)
 	var disp: Dictionary = {}
+	_burn_pos.clear()
+	var burn_n: int = world.enemy_burn_ticks.size()
 	for i in n:
 		var id: int = world.enemy_id[i]
 		var vel: Vector2 = world.enemy_vel[i]
@@ -370,6 +373,8 @@ func _update_enemies(lead: float, k: float) -> void:
 		if vel.length_squared() > 4.0:
 			frame = Gfx.frame_for_angle(vel.angle(), Gfx.ENEMY_DIRS)
 		disp[id] = Vector3(p.x, p.y, frame)
+		if i < burn_n and world.enemy_burn_ticks[i] > 0:
+			_burn_pos.append(Gfx.snap(p))
 		var kind: int = world.enemy_kind[i]
 		if kind < _enemy_layers.size():
 			_enemy_layers[kind].add(p, frame, id % 2)
@@ -400,6 +405,17 @@ func _draw_halos() -> void:
 	var s := Vector2(Gfx.TEX_HALO_CYAN.get_size())
 	for p in _acid_pos:
 		_halos.draw_texture_rect(Gfx.TEX_HALO_CYAN, Rect2(p - s / 2.0, s), false, Color(1, 1, 1, 0.6))
+	# Burning enemies: a warm halo that flickers (tick-hash, no randomness); ember zones: a dim warm glow.
+	var ws := Vector2(Gfx.TEX_HALO_WARM.get_size())
+	for bi in _burn_pos.size():
+		var bp: Vector2 = _burn_pos[bi]
+		var fl: float = 0.45 + 0.2 * float((world.tick + bi * 5) % 4)
+		_halos.draw_texture_rect(Gfx.TEX_HALO_WARM, Rect2(bp - ws / 2.0, ws), false, Color(1, 1, 1, fl))
+	for zi in mini(world.zone_count, world.zone_pos.size()):
+		var zr: float = world.zone_radius[zi] * 2.0
+		var zk := Vector2(zr, zr)
+		var za: float = clampf(float(world.zone_ttl[zi]) / 30.0, 0.0, 1.0) * 0.35
+		_halos.draw_texture_rect(Gfx.TEX_HALO_WARM_BIG, Rect2(Gfx.snap(world.zone_pos[zi]) - zk / 2.0, zk), false, Color(1, 1, 1, za))
 
 
 # ---------------------------------------------------------------- events

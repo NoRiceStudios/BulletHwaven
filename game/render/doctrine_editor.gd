@@ -38,6 +38,7 @@ const ACTION_LABELS := {
 	"target:nearest": "TGT NEAREST", "target:strongest": "TGT STRONGEST", "target:weakest": "TGT WEAKEST",
 	"target:players_first": "TGT RIVALS", "target:boulders": "TGT BOULDERS", "target:spitters": "TGT SPITTERS",
 	"target:follow": "FOLLOW RIG", "fire:hold": "HOLD FIRE", "fire:free": "FIRE AT WILL",
+	"ammo:fire": "LOAD FIRE", "ammo:shrapnel": "LOAD SHRAPNEL", "ammo:ap": "LOAD AP",
 }
 const ACTION_HELP := {
 	"drive:circle": "ORBIT THE TARGET WITH GUNS OUT.",
@@ -54,6 +55,9 @@ const ACTION_HELP := {
 	"target:follow": "SHOOT WHAT THE RIG IS AIMING AT.",
 	"fire:hold": "THIS GUN DOES NOT SHOOT.",
 	"fire:free": "THIS GUN SHOOTS (OVERRIDES A LOWER HOLD FIRE).",
+	"ammo:fire": "LOAD INCENDIARY ROUNDS: HITS BURN FOR 2 S.",
+	"ammo:shrapnel": "LOAD SHRAPNEL: KILLS BURST INTO 3 SHARDS.",
+	"ammo:ap": "LOAD ARMOUR PIERCING: +1 PIERCE, MORE DAMAGE VS BOULDERS AND RIVALS.",
 }
 ## Quick-add rules per scope: [label, text form].
 const TEMPLATES_RIG: Array = [
@@ -308,7 +312,7 @@ func _add_rule(text: String) -> void:
 func _open_menu(kind: String, ri: int, ci: int) -> void:
 	var opts: Array = []
 	if kind == "action":
-		for a in Doctrine.actions_for(scope):
+		for a in Doctrine.actions_for(scope, _local()):
 			opts.append([a, ACTION_LABELS[a], ACTION_HELP[a]])
 	else:
 		for id in Doctrine.COND_IDS:
@@ -532,6 +536,8 @@ static func sentence(rule: Dictionary, p_scope: String) -> String:
 				"hold": "HOLDS POSITION"}.get(v, v)
 		"fire":
 			act = "HOLDS FIRE" if v == "hold" else "FIRES AT WILL"
+		"ammo":
+			act = "LOADS " + {"fire": "INCENDIARY ROUNDS", "shrapnel": "SHRAPNEL", "ap": "ARMOUR PIERCING"}.get(v, v)
 		_:
 			act = "FOLLOWS THE RIG'S TARGET" if v == "follow" else "TARGETS " + {"nearest": "THE NEAREST ALIEN",
 				"strongest": "THE TOUGHEST ALIEN", "weakest": "THE WEAKEST ALIEN", "players_first": "RIVAL RIGS FIRST",

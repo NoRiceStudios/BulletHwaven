@@ -3,9 +3,10 @@ extends RefCounted
 ## Compact binary world snapshot (host -> clients). See docs/architecture.md ("Net contract").
 ##
 ## Layout (little endian):
-##   header   37 B  version, flags, tick, next_enemy_id, counts, enemy id base,
-##                   phase, round, phase_ticks_left, winner_peer, leader_peer, pvp_grace_ticks, fuel_drain
-##   vehicles variable (about 160 B each: doctrine strings, weapons, doctrine rules, fuel / flags,
+##   header   38 B  version, flags, tick, next_enemy_id, counts, enemy id base,
+##                   phase, round, phase_ticks_left, winner_peer, leader_peer, pvp_grace_ticks, fuel_drain, zone count
+##   zones    u8 count, per zone 9 B: x, y u16 (1/16 px, offset), radius u8 (px), kind u8, ttl u16, owner i8
+##   vehicles variable (about 160 B each: doctrine strings, weapons (with heat, jam, switch pause, loaded ammo), doctrine rules, fuel / flags,
 ##                   offers, cards, tech (+ purchase rounds, dormant fusions, respecs), player name and colour index). Rules are binary: u8 count,
 ##                   per rule u8 action (Doctrine.ACTIONS index), u8 conditions, per condition
 ##                   u8 id (Doctrine.COND_IDS), u8 op (Doctrine.OPS), u16 value
@@ -15,32 +16,35 @@ extends RefCounted
 ##   enemies  8 B each  id offset u16, x u16, y u16 (1/16 px), packed u16:
 ##                      kind 2 bits | hp 4 bits (1..15 of max) | speed 3 bits (0..7 of kind speed) | heading 7 bits
 ##   projs   13 B each  x u16, y u16 (1/16 px, offset), vx i16, vy i16 (px/s), owner i8, ttl u8 (1/100 s), damage u8 (1/4)
+##   burning ceil(enemies / 8) B (only with FLAG_BURNING): bit i set = enemy i burns (burn dps and owner are host-side)
 ##
 ## Positions are quantized to 1/16 px (max error POS_ERROR). Enemy velocity is quantized to
 ## 1/7 of the kind's speed and 128 headings; enemy hp to 1/15 of the kind's max hp (for the
 ## current round, SimWorld.enemy_max_hp). Card and tech ids are table indices (Cards.DEFS / Tech.DEFS).
 ## Projectile pierce / splash are not sent: the client world is passive.
 
-const VERSION := 8  # 8: tech v2.3 (dormant fusions, respecs, purchase rounds); 7: doctrine rules (rig + per weapon); 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
+const VERSION := 9  # 9: ammo / heat per weapon, ground zones, burning bitset, float cooldowns; 8: tech v2.3 (dormant fusions, respecs, purchase rounds); 7: doctrine rules (rig + per weapon); 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
 const FLAG_WIDE_IDS := 1  ## enemy ids spread over more than 65535: ids are sent as u32 deltas from 0
 const FLAG_STATS := 2  ## vehicles carry round_stats and match_stats (sent outside combat only)
+const FLAG_BURNING := 4  ## a burning bitset follows the projectiles (only sent while something burns)
 const EVENT_EXTRA_BIT := 0x80
 const EVENT_EXTRAS := {"kill": ["victim", "weapon"], "vehicle_destroyed": ["cause", "killer"]}
 const MAX_DEATHS := 16
 const MAX_ROUND_PLAYERS := 16
 
+const CD_SCALE := 16.0  ## weapon cooldown / cooldown_ticks travel in 1/16 ticks (u16)
 const POS_SCALE := 16.0  ## u16 / 16 covers 4096 px: the arena plus POS_ORIGIN must stay below that
 const POS_ORIGIN := 64.0  ## added to projectile/event coordinates (they may leave the arena slightly)
 const POS_ERROR := 1.0 / 32.0
 
-const HEADER_BYTES := 37
+const HEADER_BYTES := 38  # includes the zone count; the zone entries follow it
 const ENEMY_BYTES := 8
 const WIDE_ENEMY_BYTES := 10
 const PROJ_BYTES := 13
 const EVENT_BYTES := 7
 
 const MAX_VEHICLES := 64  ## vehicle ids travel as u8 / i8 owners, keep well below 127
-const EVENT_TYPES: PackedStringArray = ["fire", "hit", "kill", "vehicle_destroyed", "retreat", "respawn", "spit", "pvp_on", "bounty", "drain"]
+const EVENT_TYPES: PackedStringArray = ["fire", "hit", "kill", "vehicle_destroyed", "retreat", "respawn", "spit", "pvp_on", "bounty", "drain", "shrapnel", "jam", "overheat", "execute"]
 const MAX_ROUND := 65535
 const SPEED_STEPS := 7
 const HEADING_STEPS := 128
@@ -76,6 +80,13 @@ static func encode(world: SimWorld, p_events: Array[Dictionary] = []) -> PackedB
 		flags |= FLAG_STATS
 	if wide:
 		id_min = 0
+	var any_burn: bool = false
+	for bi in mini(n_enemy, world.enemy_burn_ticks.size()):
+		if world.enemy_burn_ticks[bi] > 0:
+			any_burn = true
+			break
+	if any_burn:
+		flags |= FLAG_BURNING
 
 	var sp := StreamPeerBuffer.new()
 	sp.put_u8(VERSION)
@@ -94,6 +105,16 @@ static func encode(world: SimWorld, p_events: Array[Dictionary] = []) -> PackedB
 	sp.put_32(world.leader_peer)
 	sp.put_u16(clampi(world.pvp_grace_ticks, 0, 65535))
 	sp.put_u8(clampi(world.fuel_drain, 0, 255))
+
+	var n_zone: int = mini(world.zone_count, mini(world.zone_pos.size(), SimWorld.MAX_ZONES))
+	sp.put_u8(n_zone)
+	for zi in n_zone:
+		sp.put_u16(_q_off(world.zone_pos[zi].x))
+		sp.put_u16(_q_off(world.zone_pos[zi].y))
+		sp.put_u8(clampi(roundi(world.zone_radius[zi]), 0, 255))
+		sp.put_u8(world.zone_kind[zi])
+		sp.put_u16(clampi(world.zone_ttl[zi], 0, 65535))
+		sp.put_8(clampi(world.zone_owner[zi], -1, 127))
 
 	for vi in n_veh:
 		_put_vehicle(sp, world.vehicles[vi], with_stats)
@@ -118,7 +139,8 @@ static func encode(world: SimWorld, p_events: Array[Dictionary] = []) -> PackedB
 
 	var estride: int = WIDE_ENEMY_BYTES if wide else ENEMY_BYTES
 	var head_size: int = out.size()
-	out.resize(head_size + n_enemy * estride + n_proj * PROJ_BYTES)
+	var burn_bytes: int = (n_enemy + 7) / 8 if any_burn else 0
+	out.resize(head_size + n_enemy * estride + n_proj * PROJ_BYTES + burn_bytes)
 	var o: int = head_size
 	for i in n_enemy:
 		var kind: int = world.enemy_kind[i]
@@ -152,6 +174,11 @@ static func encode(world: SimWorld, p_events: Array[Dictionary] = []) -> PackedB
 		out.encode_u8(o + 9, clampi(roundi(world.proj_ttl[i] * TTL_SCALE), 0, 255))
 		out.encode_u8(o + 10, clampi(roundi(world.proj_damage[i] * DAMAGE_SCALE), 0, 255))
 		o += PROJ_BYTES
+	for i in burn_bytes:  # resize() zero-fills
+		out[o + i] = 0
+	for i in mini(n_enemy, world.enemy_burn_ticks.size()) if any_burn else 0:
+		if world.enemy_burn_ticks[i] > 0:
+			out[o + (i >> 3)] |= 1 << (i & 7)
 	return out
 
 
@@ -180,6 +207,23 @@ static func apply(world: SimWorld, bytes: PackedByteArray) -> bool:
 	if not r.ok or n_veh > MAX_VEHICLES or phase > SimWorld.PHASE_GAME_OVER or round_n < 1:
 		return false
 	var wide: bool = (flags & FLAG_WIDE_IDS) != 0
+
+	var n_zone: int = r.u8()
+	var z_pos := PackedVector2Array()
+	var z_radius := PackedFloat32Array()
+	var z_kind := PackedByteArray()
+	var z_ttl := PackedInt32Array()
+	var z_owner := PackedInt32Array()
+	for zi in n_zone:
+		var zx: float = float(r.u16()) / POS_SCALE - POS_ORIGIN
+		var zy: float = float(r.u16()) / POS_SCALE - POS_ORIGIN
+		z_pos.append(Vector2(zx, zy))
+		z_radius.append(float(r.u8()))
+		z_kind.append(r.u8())
+		z_ttl.append(r.u16())
+		z_owner.append(r.s8())
+	if not r.ok or n_zone > SimWorld.MAX_ZONES:
+		return false
 
 	var vehicles: Array[SimVehicle] = []
 	for vi in n_veh:
@@ -211,7 +255,8 @@ static func apply(world: SimWorld, bytes: PackedByteArray) -> bool:
 		events.append(ev)
 
 	var estride: int = WIDE_ENEMY_BYTES if wide else ENEMY_BYTES
-	if not r.has(n_enemy * estride + n_proj * PROJ_BYTES):
+	var burn_bytes: int = (n_enemy + 7) / 8 if (flags & FLAG_BURNING) != 0 else 0
+	if not r.has(n_enemy * estride + n_proj * PROJ_BYTES + burn_bytes):
 		return false
 	var data: PackedByteArray = bytes
 	var o: int = r.pos
@@ -276,6 +321,12 @@ static func apply(world: SimWorld, bytes: PackedByteArray) -> bool:
 		p_ttl[i] = float(data.decode_u8(o + 9)) / TTL_SCALE
 		p_dmg[i] = float(data.decode_u8(o + 10)) / DAMAGE_SCALE
 		o += PROJ_BYTES
+	var e_burn := PackedInt32Array()
+	e_burn.resize(n_enemy)
+	if burn_bytes > 0:
+		for i in n_enemy:
+			if (data[o + (i >> 3)] & (1 << (i & 7))) != 0:
+				e_burn[i] = SimWorld.BURN_TICKS  # the client only needs "burning"
 
 	# Commit.
 	world.tick = tick
@@ -294,6 +345,14 @@ static func apply(world: SimWorld, bytes: PackedByteArray) -> bool:
 	world.enemy_pos = e_pos
 	world.enemy_vel = e_vel
 	world.enemy_hp = e_hp
+	world.enemy_burn_ticks = e_burn
+	world.enemy_burn_dps = PackedFloat32Array()
+	world.enemy_burn_owner = PackedInt32Array()
+	world.zone_pos = z_pos
+	world.zone_radius = z_radius
+	world.zone_kind = z_kind
+	world.zone_ttl = z_ttl
+	world.zone_owner = z_owner
 	world.proj_pos = p_pos
 	world.proj_vel = p_vel
 	world.proj_ttl = p_ttl
@@ -361,8 +420,8 @@ static func _put_vehicle(sp: StreamPeerBuffer, v: SimVehicle, with_stats: bool =
 		_put_str(sp, str(w.get("kind", "mg")))
 		sp.put_float(float(w.get("damage", 0.0)))
 		sp.put_float(float(w.get("range", 0.0)))
-		sp.put_u16(int(w.get("cooldown_ticks", 0)))
-		sp.put_u16(int(w.get("cooldown", 0)))
+		sp.put_u16(clampi(roundi(float(w.get("cooldown_ticks", 0.0)) * CD_SCALE), 0, 65535))
+		sp.put_u16(clampi(roundi(float(w.get("cooldown", 0.0)) * CD_SCALE), 0, 65535))
 		sp.put_float(float(w.get("aim", 0.0)))
 		sp.put_u8(clampi(int(w.get("pellets", 1)), 0, 255))
 		sp.put_float(float(w.get("spread", 0.0)))
@@ -370,6 +429,12 @@ static func _put_vehicle(sp: StreamPeerBuffer, v: SimVehicle, with_stats: bool =
 		sp.put_float(float(w.get("splash", 0.0)))
 		sp.put_float(float(w.get("speed", 0.0)))
 		sp.put_u8(clampi(int(w.get("live", 0)), 0, 255))
+		sp.put_u8(clampi(int(w.get("heat", 0)), 0, 255))
+		sp.put_u8(clampi(int(w.get("jam", 0)), 0, 255))
+		sp.put_u8(clampi(int(w.get("sw", 0)), 0, 255))
+		var wammo: Array = v.ammo.get(str(w.get("kind", "")), [])
+		for ai in 2:
+			sp.put_u8(Ammo.IDS.find(str(wammo[ai])) if ai < wammo.size() else 255)
 		wn += 1
 	sp.put_u8(clampi(v.rule_live, 0, 255))
 	_put_rules(sp, v.rules)
@@ -541,6 +606,7 @@ static func _get_vehicle(r: _Reader, with_stats: bool = false) -> SimVehicle:
 		r.fail()
 	v.color_index = pcolor
 	v.weapons.clear()
+	v.ammo = {}
 	v.pos = Vector2(r.f32(), r.f32())
 	v.vel = Vector2(r.f32(), r.f32())
 	v.heading = r.f32()
@@ -566,8 +632,8 @@ static func _get_vehicle(r: _Reader, with_stats: bool = false) -> SimVehicle:
 		var kind: String = r.string()
 		var dmg: float = r.f32()
 		var rng: float = r.f32()
-		var cdt: int = r.u16()
-		var cd: int = r.u16()
+		var cdt: float = float(r.u16()) / CD_SCALE
+		var cd: float = float(r.u16()) / CD_SCALE
 		var aim: float = r.f32()
 		var pellets: int = r.u8()
 		var spread: float = r.f32()
@@ -575,12 +641,21 @@ static func _get_vehicle(r: _Reader, with_stats: bool = false) -> SimVehicle:
 		var splash: float = r.f32()
 		var wspeed: float = r.f32()
 		var wlive: int = r.u8()
+		var wheat: int = r.u8()
+		var wjam: int = r.u8()
+		var wsw: int = r.u8()
+		var wammo: Array[String] = []
+		for ai in 2:
+			var aix: int = r.u8()
+			if aix < Ammo.IDS.size():
+				wammo.append(Ammo.IDS[aix])
 		if not r.ok:
 			return v
+		v.ammo[kind] = wammo
 		v.weapons.append({
 			"kind": kind, "damage": dmg, "range": rng, "cooldown_ticks": cdt, "cooldown": cd, "aim": aim,
 			"pellets": pellets, "spread": spread, "pierce": pierce, "splash": splash, "speed": wspeed,
-			"live": wlive,
+			"live": wlive, "heat": wheat, "jam": wjam, "sw": wsw, "shots": 0,
 		})
 	v.rule_live = r.u8()
 	v.rules = _get_rules(r, Doctrine.SCOPE_RIG)
@@ -676,6 +751,7 @@ static func _commit_vehicles(world: SimWorld, fresh: Array[SimVehicle]) -> void:
 			dst.weapon_doctrine = src.weapon_doctrine
 			dst.rule_live = src.rule_live
 			dst.weapons = src.weapons
+			dst.ammo = src.ammo
 			dst.target_kind = src.target_kind
 			dst.target_id = src.target_id
 			dst.target_pos = src.target_pos

@@ -34,6 +34,35 @@ const SRC_PLAYER := 5  # a rival's shots
 const SRC_NAMES: PackedStringArray = ["mite", "boulder", "spitter", "acid", "ram", "player"]
 const WEAPON_RAM := 4  # "weapon" of a player kill by ramming (Cards.WEAPON_KINDS holds 0..3)
 
+# Ballistics ammo and weapon heat (tech tree v2.3, section 4.1). Ammo ids, bits and scaling: Ammo.
+const BURN_TICKS := 60  # 2 s
+const BURN_FRACTION := 0.25  # fire ammo: this fraction of the hit as damage over BURN_TICKS
+const BURN_SPREAD_PERIOD := 15  # napalm: a burning enemy ignites its neighbours every 0.5 s
+const BURN_SPREAD_DECAY := 0.85  # burn dps multiplier per jump
+const SHARD_COUNT := 3
+const SHARD_DAMAGE := 0.4  # of the killing hit
+const SHARD_SPEED := 260.0
+const SHARD_TTL := 0.18
+const SCATTER_EVERY := 4  # scatter packing: every 4th shot of a non-shotgun
+const SCATTER_PELLETS := 3
+const SCATTER_DAMAGE := 0.4
+const SCATTER_SPREAD := 0.3
+const JAM_FIRE_TICKS := 120  # hot loads: 4 s of continuous fire ...
+const JAM_PAUSE_TICKS := 24  # ... then 0.8 s of stutter
+const OVERHEAT_FIRE_TICKS := 180  # glowing barrels: 6 s ... 
+const OVERHEAT_PAUSE_TICKS := 30  # ... then 1 s
+const HEAT_COOL := 2  # heat ticks lost per tick without fire intent
+const EMBER_RADIUS := 14.0
+const EMBER_TICKS := 60  # 2 s
+const EMBER_DPS := 20.0
+const EMBER_BURN_DPS := 5.0  # the burn an ember zone starts
+# Ground zones (zone_* arrays). Later tech stages reuse them for oil, smoke and fire.
+const ZONE_EMBER := 0
+const ZONE_OIL := 1
+const ZONE_SMOKE := 2
+const ZONE_FIRE := 3
+const MAX_ZONES := 64
+
 const MAX_ENEMIES := 2500
 const MAX_PROJECTILES := 2000
 const MAX_EVENTS := 1024
@@ -165,6 +194,10 @@ var enemy_kind: PackedByteArray = PackedByteArray()
 var enemy_pos: PackedVector2Array = PackedVector2Array()
 var enemy_vel: PackedVector2Array = PackedVector2Array()  # px/s
 var enemy_hp: PackedFloat32Array = PackedFloat32Array()
+## Burning (fire ammo, napalm, ember zones): ticks left (> 0 = burning), damage per second, owner vehicle id.
+var enemy_burn_ticks: PackedInt32Array = PackedInt32Array()
+var enemy_burn_dps: PackedFloat32Array = PackedFloat32Array()
+var enemy_burn_owner: PackedInt32Array = PackedInt32Array()
 
 var proj_count: int = 0
 var proj_pos: PackedVector2Array = PackedVector2Array()
@@ -176,6 +209,15 @@ var proj_pierce: PackedByteArray = PackedByteArray()  # extra enemies the projec
 var proj_splash: PackedFloat32Array = PackedFloat32Array()  # splash radius on enemy hit, 0 = none
 var proj_last: PackedInt32Array = PackedInt32Array()  # id of the last enemy pierced (not hit twice), -1 = none
 var proj_weapon: PackedByteArray = PackedByteArray()  # weapon kind index of the shooter's gun (kill feed), 255 = alien
+var proj_ammo: PackedByteArray = PackedByteArray()  # Ammo bit mask loaded when fired (0 = plain)
+
+## Ground zones, capped at MAX_ZONES: centre, radius px, ZONE_* kind, ticks left, owner vehicle id.
+var zone_count: int = 0
+var zone_pos: PackedVector2Array = PackedVector2Array()
+var zone_radius: PackedFloat32Array = PackedFloat32Array()
+var zone_kind: PackedByteArray = PackedByteArray()
+var zone_ttl: PackedInt32Array = PackedInt32Array()
+var zone_owner: PackedInt32Array = PackedInt32Array()
 
 var events: Array[Dictionary] = []
 
@@ -189,6 +231,11 @@ var ai_buf: PackedInt32Array = PackedInt32Array()
 var _hash: SpatialHash
 var _spawn_accum: float = 0.0
 var _hit_weapon: int = -1  # weapon kind index of the projectile being resolved (kill feed)
+var _hit_ammo: int = 0  # Ammo mask of the projectile being resolved (shrapnel on kill)
+var _hit_dmg: float = 0.0  # its damage
+var _hit_scale: float = 1.0  # its ammo effect scale
+var _burning: bool = false  # some enemy may be burning (skips the burn loop otherwise)
+var _pending_proj: Array = []  # projectiles to add once the projectile loop is done: [pos, vel, ttl, dmg, owner, weapon]
 var _spitter_gap: int = 0
 var _last_spitter_side: int = -1
 var _query_buf: PackedInt32Array = PackedInt32Array()
@@ -254,8 +301,10 @@ func apply_command(peer_id: int, cmd: Dictionary) -> void:
 			var scope: String = str(cmd.get("scope", ""))
 			if scope == Doctrine.SCOPE_RIG or Doctrine.is_weapon_scope(scope):
 				var parsed: Variant = Doctrine.parse(str(cmd.get("value", "")), scope)
-				if parsed != null:
+				if parsed != null and Doctrine.rules_allowed(v, parsed):
 					Doctrine.set_rules(v, scope, parsed)
+		"set_ammo":  # {"scope": weapon kind, "value": ammo id}; needs the ammo unlocked, any phase
+			Ammo.select(v, str(cmd.get("scope", "")), str(cmd.get("value", "")))
 		"set_weapon_target":  # {"scope": weapon kind, "value": Doctrine.WEAPON_TARGETS}
 			Doctrine.set_weapon_target(v, str(cmd.get("scope", "")), str(cmd.get("value", "")))
 		"pick_card":
@@ -477,11 +526,14 @@ func spawn_enemy(kind: int, pos: Vector2) -> int:
 	enemy_pos.append(pos)
 	enemy_vel.append(Vector2.ZERO)
 	enemy_hp.append(enemy_max_hp(kind, round))
+	enemy_burn_ticks.append(0)
+	enemy_burn_dps.append(0.0)
+	enemy_burn_owner.append(-1)
 	enemy_count += 1
 	return id
 
 
-func spawn_projectile(pos: Vector2, vel: Vector2, ttl: float, damage: float, owner: int, pierce: int = 0, splash: float = 0.0, weapon: int = 255) -> void:
+func spawn_projectile(pos: Vector2, vel: Vector2, ttl: float, damage: float, owner: int, pierce: int = 0, splash: float = 0.0, weapon: int = 255, ammo: int = 0) -> void:
 	if proj_count >= MAX_PROJECTILES:
 		return
 	proj_pos.append(pos)
@@ -493,6 +545,7 @@ func spawn_projectile(pos: Vector2, vel: Vector2, ttl: float, damage: float, own
 	proj_splash.append(splash)
 	proj_last.append(-1)
 	proj_weapon.append(clampi(weapon, 0, 255))
+	proj_ammo.append(ammo & 255)
 	proj_count += 1
 
 
@@ -522,6 +575,8 @@ func _step_combat() -> void:
 	_update_enemies()
 	_update_vehicles()
 	_update_projectiles()
+	_update_burn()
+	_update_zones()
 	_compact_enemies()
 	_spawn_tick()
 	_hash.rebuild(enemy_pos, enemy_count)
@@ -621,6 +676,18 @@ func checksum() -> int:
 			vf.append(float(wp.get("pierce", 0)))
 			vf.append(float(wp.get("splash", 0.0)))
 			vf.append(float(wp.get("speed", 0.0)))
+			vf.append(float(wp.get("heat", 0)))
+			vf.append(float(wp.get("jam", 0)))
+			vf.append(float(wp.get("sw", 0)))
+			vf.append(float(wp.get("shots", 0)))
+		var ammo_kinds: Array = v.ammo.keys()
+		ammo_kinds.sort()
+		for ak: String in ammo_kinds:
+			vf.append(float(ak.hash()))
+			for aid: String in v.ammo[ak]:
+				vf.append(float(aid.hash()))
+		for aid2 in v.ammo_known:
+			vf.append(float(aid2.hash()))
 	for part: PackedByteArray in [
 		vf.to_byte_array(),
 		enemy_id.to_byte_array(),
@@ -636,6 +703,15 @@ func checksum() -> int:
 		proj_pierce,
 		proj_splash.to_byte_array(),
 		proj_last.to_byte_array(),
+		proj_ammo,
+		enemy_burn_ticks.to_byte_array(),
+		enemy_burn_dps.to_byte_array(),
+		enemy_burn_owner.to_byte_array(),
+		zone_pos.to_byte_array(),
+		zone_radius.to_byte_array(),
+		zone_kind,
+		zone_ttl.to_byte_array(),
+		zone_owner.to_byte_array(),
 	]:
 		if part.size() > 0:  # HashingContext rejects empty updates
 			ctx.update(part)
@@ -647,6 +723,24 @@ func checksum() -> int:
 func rebuild_derived() -> void:
 	enemy_count = enemy_id.size()
 	proj_count = proj_pos.size()
+	var nb: int = enemy_burn_ticks.size()
+	if nb != enemy_count:
+		enemy_burn_ticks.resize(enemy_count)
+		for i in range(nb, enemy_count):
+			enemy_burn_ticks[i] = 0
+	nb = enemy_burn_dps.size()
+	if nb != enemy_count:
+		enemy_burn_dps.resize(enemy_count)
+		for i in range(nb, enemy_count):
+			enemy_burn_dps[i] = 0.0
+	nb = enemy_burn_owner.size()
+	if nb != enemy_count:
+		enemy_burn_owner.resize(enemy_count)
+		for i in range(nb, enemy_count):
+			enemy_burn_owner[i] = -1
+	if proj_ammo.size() != proj_count:
+		proj_ammo.resize(proj_count)
+	zone_count = zone_pos.size()
 	if proj_pierce.size() != proj_count:
 		proj_pierce.resize(proj_count)
 	if proj_splash.size() != proj_count:
@@ -793,7 +887,10 @@ func _begin_combat() -> void:
 			v.hp = v.max_hp
 			v.invuln_ticks = INVULN_TICKS
 		for w in v.weapons:
-			w["cooldown"] = 0
+			w["cooldown"] = 0.0
+			w["heat"] = 0
+			w["jam"] = 0
+			w["sw"] = 0
 
 
 ## Ends the game when at most one player is left in a multiplayer game (winner = the survivor),
@@ -826,6 +923,17 @@ func _clear_field() -> void:
 	enemy_pos.resize(0)
 	enemy_vel.resize(0)
 	enemy_hp.resize(0)
+	enemy_burn_ticks.resize(0)
+	enemy_burn_dps.resize(0)
+	enemy_burn_owner.resize(0)
+	_burning = false
+	_pending_proj.clear()
+	zone_pos.resize(0)
+	zone_radius.resize(0)
+	zone_kind.resize(0)
+	zone_ttl.resize(0)
+	zone_owner.resize(0)
+	zone_count = 0
 	enemy_count = 0
 	proj_pos.resize(0)
 	proj_vel.resize(0)
@@ -836,6 +944,7 @@ func _clear_field() -> void:
 	proj_splash.resize(0)
 	proj_last.resize(0)
 	proj_weapon.resize(0)
+	proj_ammo.resize(0)
 	proj_count = 0
 	_hash.rebuild(enemy_pos, 0)
 
@@ -1019,6 +1128,8 @@ func _hit_enemy(j: int, dmg: float, killer: int, by_ram: bool = false) -> void:
 		return
 	var kind: int = enemy_kind[j]
 	_emit("kill", enemy_pos[j], killer, kind)
+	if (_hit_ammo & Ammo.SHRAPNEL_BIT) != 0 and (_hit_ammo & Ammo.SHARD_BIT) == 0:
+		_queue_shards(enemy_pos[j], killer, kind)
 	if kv != null:
 		kv.scrap_frac += float(ENEMY_SCRAP[kind]) * kv.scrap_mult
 		var whole: int = int(kv.scrap_frac)
@@ -1052,6 +1163,9 @@ func _compact_enemies() -> void:
 			enemy_pos[i] = enemy_pos[n]
 			enemy_vel[i] = enemy_vel[n]
 			enemy_hp[i] = enemy_hp[n]
+			enemy_burn_ticks[i] = enemy_burn_ticks[n]
+			enemy_burn_dps[i] = enemy_burn_dps[n]
+			enemy_burn_owner[i] = enemy_burn_owner[n]
 		i -= 1
 	if n != enemy_count:
 		enemy_id.resize(n)
@@ -1059,6 +1173,9 @@ func _compact_enemies() -> void:
 		enemy_pos.resize(n)
 		enemy_vel.resize(n)
 		enemy_hp.resize(n)
+		enemy_burn_ticks.resize(n)
+		enemy_burn_dps.resize(n)
+		enemy_burn_owner.resize(n)
 		enemy_count = n
 
 
@@ -1319,14 +1436,37 @@ func _reward_player_kill(av: SimVehicle, v: SimVehicle, src: int, fuel_lost: int
 
 
 func _fire_weapons(v: SimVehicle) -> void:
+	var fx: Dictionary = v.tech_fx
+	var scatter: bool = float(fx.get("scatter", 0.0)) > 0.0
+	var heat_limit: int = 0
+	var heat_pause: int = 0
+	if float(fx.get("overheat", 0.0)) > 0.0:
+		heat_limit = OVERHEAT_FIRE_TICKS
+		heat_pause = OVERHEAT_PAUSE_TICKS
+	elif float(fx.get("jam", 0.0)) > 0.0:
+		heat_limit = JAM_FIRE_TICKS
+		heat_pause = JAM_PAUSE_TICKS
 	for slot in v.weapons.size():
 		var w: Dictionary = v.weapons[slot]
-		var cd: int = w["cooldown"]
-		if cd > 0:
-			cd -= 1
+		# Fire rate is an accumulator in (fractional) ticks: a shot adds cooldown_ticks, so the
+		# overshoot of one tick carries into the next shot instead of being rounded away.
+		var cd: float = float(w["cooldown"])
+		if cd > 0.0:
+			cd -= 1.0
 			w["cooldown"] = cd
-		# Per-weapon doctrine: its rules pick a target mode and may hold fire.
+		var jam: int = int(w.get("jam", 0))
+		if jam > 0:
+			jam -= 1
+			w["jam"] = jam
+		var sw: int = int(w.get("sw", 0))
+		if sw > 0:
+			sw -= 1
+			w["sw"] = sw
+		# Per-weapon doctrine: its rules pick a target mode, may hold fire and may load another ammo.
 		var dec: Array = Doctrine.apply_weapon(self, v, w)
+		if str(dec[2]) != "":
+			if Ammo.select(v, str(w["kind"]), str(dec[2])):
+				sw = int(w.get("sw", 0))
 		VehicleAI.update_weapon_target(self, v, w, slot, str(dec[0]))
 		var tk: int = int(w.get("tk", 0))
 		var tpos: Vector2 = w.get("tp", Vector2.ZERO)
@@ -1340,6 +1480,7 @@ func _fire_weapons(v: SimVehicle) -> void:
 			ti = v.target_index
 			tid = v.target_id
 		if tk == 0:
+			_cool_heat(w)
 			continue
 		var speed: float = float(w.get("speed", PROJECTILE_SPEED))
 		var dist: float = v.pos.distance_to(tpos)
@@ -1347,7 +1488,24 @@ func _fire_weapons(v: SimVehicle) -> void:
 		var to: Vector2 = lead - v.pos
 		var ang: float = to.angle()
 		w["aim"] = ang
-		if bool(dec[1]) or cd > 0 or dist > float(w["range"]) or proj_count >= MAX_PROJECTILES:
+		var intends: bool = not bool(dec[1]) and dist <= float(w["range"])
+		if not intends:
+			_cool_heat(w)
+			continue
+		var kind_name: String = str(w["kind"])
+		var widx: int = Cards.weapon_kind_index(kind_name)
+		# Jam / overheat: continuous fire intent heats the barrel; at the limit it pauses.
+		if heat_limit > 0 and jam <= 0:
+			var heat: int = int(w.get("heat", 0)) + 1
+			if heat >= heat_limit:
+				w["heat"] = 0
+				w["jam"] = heat_pause
+				_emit("overheat" if heat_limit == OVERHEAT_FIRE_TICKS else "jam", v.pos + Vector2.from_angle(ang) * MUZZLE_OFFSET, v.id, widx)
+				continue
+			w["heat"] = heat
+		elif heat_limit <= 0:
+			w["heat"] = 0
+		if cd > 0.0 or jam > 0 or sw > 0 or proj_count >= MAX_PROJECTILES:
 			continue
 		var spread: float = float(w.get("spread", SPREAD))
 		var pellets: int = int(w.get("pellets", 1))
@@ -1356,13 +1514,30 @@ func _fire_weapons(v: SimVehicle) -> void:
 		var dmg: float = float(w["damage"])
 		if v.vulture > 0.0 and _is_weak(tk, ti, tid):
 			dmg *= 1.0 + v.vulture
+		var amask: int = Ammo.mask(v, kind_name)
+		if (amask & Ammo.AP_BIT) != 0:
+			pierce += 1
 		var ttl: float = float(w["range"]) / speed + 0.05
 		var muzzle: Vector2 = v.pos + Vector2.from_angle(ang) * MUZZLE_OFFSET
 		for p in pellets:
 			var dir: Vector2 = Vector2.from_angle(ang + rng.randf_range(-spread, spread))
-			spawn_projectile(muzzle, dir * speed, ttl, dmg, v.id, pierce, splash, Cards.weapon_kind_index(str(w["kind"])))
-		w["cooldown"] = int(w["cooldown_ticks"])
-		_emit("fire", muzzle, v.id, Cards.weapon_kind_index(str(w["kind"])))
+			spawn_projectile(muzzle, dir * speed, ttl, dmg, v.id, pierce, splash, widx, amask)
+		if scatter and kind_name != "shotgun":
+			var shots: int = int(w.get("shots", 0)) + 1
+			w["shots"] = shots
+			if shots % SCATTER_EVERY == 0:
+				for p in SCATTER_PELLETS:
+					var sdir: Vector2 = Vector2.from_angle(ang + rng.randf_range(-SCATTER_SPREAD, SCATTER_SPREAD))
+					spawn_projectile(muzzle, sdir * speed, ttl, dmg * SCATTER_DAMAGE, v.id, 0, 0.0, widx, amask)
+		w["cooldown"] = cd + float(w["cooldown_ticks"])
+		_emit("fire", muzzle, v.id, widx)
+
+
+## A weapon without fire intent cools down.
+func _cool_heat(w: Dictionary) -> void:
+	var heat: int = int(w.get("heat", 0))
+	if heat > 0:
+		w["heat"] = maxi(heat - HEAT_COOL, 0)
 
 
 ## Vulture: is the target under 30% hp?
@@ -1449,22 +1624,53 @@ func _update_projectiles() -> void:
 				hit_enemy = -1
 
 		var remove: bool = false
+		var amask: int = proj_ammo[i]
+		var ov: SimVehicle = vehicles[owner] if (owner >= 0 and owner < nveh) else null
 		if hit_vehicle >= 0:
 			var hv: SimVehicle = vehicles[hit_vehicle]
 			_emit("hit", p0 + step_v * best_t, owner, -1)
+			if ov != null and (amask & Ammo.AP_BIT) != 0:
+				dmg *= 1.0 + Ammo.AP_BONUS * Ammo.effect_scale(ov, amask)
 			_hit_weapon = proj_weapon[i] if proj_weapon[i] != 255 else -1
 			_damage_vehicle(hv, dmg, owner, true, SRC_ACID if owner < 0 else SRC_PLAYER)
 			_hit_weapon = -1
 			remove = true
 		elif hit_enemy >= 0:
 			var hit_pos: Vector2 = p0 + step_v * best_t
-			_emit("hit", hit_pos, owner, enemy_kind[hit_enemy])
+			var ekind: int = enemy_kind[hit_enemy]
+			_emit("hit", hit_pos, owner, ekind)
+			var ascale: float = 1.0
+			if ov != null:
+				var ofx: Dictionary = ov.tech_fx
+				if amask != 0:
+					ascale = Ammo.effect_scale(ov, amask)
+					if (amask & Ammo.AP_BIT) != 0 and ekind == BOULDER:
+						dmg *= 1.0 + Ammo.AP_BONUS * ascale
+				if enemy_burn_ticks[hit_enemy] > 0 and proj_weapon[i] != 2:  # cannon is index 2
+					var bb: float = float(ofx.get("burn_bonus", 0.0))
+					if bb > 0.0:
+						dmg *= 1.0 + bb
+				var ex: float = float(ofx.get("execute", 0.0))
+				if ex > 0.0 and (amask & Ammo.SHARD_BIT) == 0 and enemy_hp[hit_enemy] > 0.0 \
+						and enemy_hp[hit_enemy] < ex * enemy_max_hp(ekind, round):
+					dmg = maxf(dmg, enemy_hp[hit_enemy])
+					_emit("execute", hit_pos, owner, ekind)
+			_hit_weapon = proj_weapon[i] if proj_weapon[i] != 255 else -1
+			_hit_ammo = amask
+			_hit_dmg = dmg
+			_hit_scale = ascale
 			_hit_enemy(hit_enemy, dmg, owner)
 			if proj_splash[i] > 0.0:
 				_splash_damage(hit_pos, proj_splash[i], dmg * SPLASH_FRACTION, owner, hit_enemy)
+			_hit_ammo = 0
+			_hit_weapon = -1
+			if (amask & Ammo.FIRE_BIT) != 0 and enemy_hp[hit_enemy] > 0.0:
+				_ignite(hit_enemy, dmg * BURN_FRACTION * ascale / (float(BURN_TICKS) * DT), owner)
 			if proj_pierce[i] > 0:
 				proj_pierce[i] -= 1
 				proj_last[i] = enemy_id[hit_enemy]
+				if ov != null and float(ov.tech_fx.get("ember", 0.0)) > 0.0:
+					_add_zone(hit_pos, EMBER_RADIUS, ZONE_EMBER, EMBER_TICKS, owner)
 			else:
 				remove = true
 		elif ttl <= 0.0 or p1.x < a_lo.x or p1.y < a_lo.y or p1.x > a_hi.x or p1.y > a_hi.y:
@@ -1481,6 +1687,7 @@ func _update_projectiles() -> void:
 			proj_splash[i] = proj_splash[n]
 			proj_last[i] = proj_last[n]
 			proj_weapon[i] = proj_weapon[n]
+			proj_ammo[i] = proj_ammo[n]
 		else:
 			proj_pos[i] = p1
 			proj_ttl[i] = ttl
@@ -1495,7 +1702,9 @@ func _update_projectiles() -> void:
 		proj_splash.resize(n)
 		proj_last.resize(n)
 		proj_weapon.resize(n)
+		proj_ammo.resize(n)
 		proj_count = n
+	_flush_pending()
 
 
 ## Damages every living enemy within `radius` of `center` except index `skip`.
@@ -1505,3 +1714,112 @@ func _splash_damage(center: Vector2, radius: float, dmg: float, owner: int, skip
 		var j: int = _splash_buf[q]
 		if j != skip:
 			_hit_enemy(j, dmg, owner)
+
+
+# ---------------------------------------------------------------- burn, shards and zones
+
+## Sets an enemy on fire for BURN_TICKS: `dps` damage per second credited to `owner`. A new fire only
+## replaces a weaker running one (the stronger dps and its owner win), but always refreshes the timer.
+func _ignite(j: int, dps: float, owner: int) -> void:
+	if dps <= 0.0 or enemy_hp[j] <= 0.0:
+		return
+	if enemy_burn_ticks[j] <= 0 or dps >= enemy_burn_dps[j]:
+		enemy_burn_dps[j] = dps
+		enemy_burn_owner[j] = owner
+	enemy_burn_ticks[j] = BURN_TICKS
+	_burning = true
+
+
+## Burn damage over time (credited to the igniting vehicle, kills included) and napalm spreading.
+func _update_burn() -> void:
+	if not _burning:
+		return
+	var any: bool = false
+	for i in enemy_count:
+		var bt: int = enemy_burn_ticks[i]
+		if bt <= 0:
+			continue
+		if enemy_hp[i] <= 0.0:
+			enemy_burn_ticks[i] = 0
+			continue
+		enemy_burn_ticks[i] = bt - 1
+		any = true
+		var owner: int = enemy_burn_owner[i]
+		if (tick + enemy_id[i]) % BURN_SPREAD_PERIOD == 0 and owner >= 0 and owner < vehicles.size():
+			var radius: float = float(vehicles[owner].tech_fx.get("napalm", 0.0))
+			if radius > 0.0:
+				var ndps: float = enemy_burn_dps[i] * BURN_SPREAD_DECAY
+				var cnt: int = _hash.query_circle(enemy_pos[i], radius, enemy_pos, _splash_buf, STALE_MARGIN)
+				for q in cnt:
+					var k: int = _splash_buf[q]
+					if k != i and enemy_burn_ticks[k] <= 0:
+						_ignite(k, ndps, owner)
+		_hit_enemy(i, enemy_burn_dps[i] * DT, owner)
+	_burning = any
+	_flush_pending()
+
+
+## Queues SHARD_COUNT shards for a kill (added after the current projectile loop).
+func _queue_shards(pos: Vector2, owner: int, ekind: int) -> void:
+	_emit("shrapnel", pos, owner, ekind)
+	var dmg: float = _hit_dmg * SHARD_DAMAGE * _hit_scale
+	var a0: float = rng.randf() * TAU
+	for k in SHARD_COUNT:
+		var dir: Vector2 = Vector2.from_angle(a0 + TAU * float(k) / float(SHARD_COUNT))
+		_pending_proj.append([pos, dir * SHARD_SPEED, SHARD_TTL, dmg, owner, _hit_weapon])
+
+
+func _flush_pending() -> void:
+	if _pending_proj.is_empty():
+		return
+	for e: Array in _pending_proj:
+		spawn_projectile(e[0], e[1], e[2], e[3], e[4], 0, 0.0, maxi(int(e[5]), 0), Ammo.SHARD_BIT)
+	_pending_proj.clear()
+
+
+## Adds a ground zone (skipped when full, or when the same kind and owner already covers the spot).
+func _add_zone(pos: Vector2, radius: float, kind: int, ttl: int, owner: int) -> void:
+	if zone_count >= MAX_ZONES:
+		return
+	var r2: float = radius * radius * 0.5
+	for z in zone_count:
+		if zone_kind[z] == kind and zone_owner[z] == owner and zone_pos[z].distance_squared_to(pos) < r2:
+			zone_ttl[z] = maxi(zone_ttl[z], ttl)
+			return
+	zone_pos.append(pos)
+	zone_radius.append(radius)
+	zone_kind.append(kind)
+	zone_ttl.append(ttl)
+	zone_owner.append(owner)
+	zone_count += 1
+
+
+## Ticks the ground zones: embers burn (EMBER_DPS) and ignite what stands in them. Expired zones go.
+func _update_zones() -> void:
+	if zone_count == 0:
+		return
+	var z: int = zone_count - 1
+	while z >= 0:
+		if zone_kind[z] == ZONE_EMBER or zone_kind[z] == ZONE_FIRE:
+			var owner: int = zone_owner[z]
+			var cnt: int = _hash.query_circle(zone_pos[z], zone_radius[z], enemy_pos, _splash_buf, STALE_MARGIN)
+			for q in cnt:
+				var j: int = _splash_buf[q]
+				if enemy_hp[j] > 0.0:
+					_hit_enemy(j, EMBER_DPS * DT, owner)
+					_ignite(j, EMBER_BURN_DPS, owner)
+		zone_ttl[z] -= 1
+		if zone_ttl[z] <= 0:
+			var last: int = zone_count - 1
+			zone_pos[z] = zone_pos[last]
+			zone_radius[z] = zone_radius[last]
+			zone_kind[z] = zone_kind[last]
+			zone_ttl[z] = zone_ttl[last]
+			zone_owner[z] = zone_owner[last]
+			zone_pos.resize(last)
+			zone_radius.resize(last)
+			zone_kind.resize(last)
+			zone_ttl.resize(last)
+			zone_owner.resize(last)
+			zone_count = last
+		z -= 1

@@ -28,11 +28,17 @@ var doctrine: Dictionary = {"drive": "circle", "target": "nearest"}
 ## across card changes; rules beyond Doctrine.slots() are stored but not run.
 var rules: Array = []
 var weapon_doctrine: Dictionary = {}
-## Each: {"kind", "damage", "range", "cooldown_ticks", "cooldown", "aim", "pellets", "spread",
-## "pierce", "splash", "speed"} (see Cards.WEAPONS), plus host-side scratch from the weapon's own
+## Each: {"kind", "damage", "range", "cooldown_ticks" (float, ticks per shot), "cooldown" (float ticks left,
+## in (-1, 0] it carries the fractional rest into the next shot), "aim", "pellets", "spread",
+## "pierce", "splash", "speed", "heat", "jam", "sw", "shots"} (see Cards.WEAPONS), plus host-side scratch from the weapon's own
 ## doctrine (VehicleAI.update_weapon_target: "tk", "ti", "tid", "tp", "tv", "tmode") and "live", the
 ## mask of its matching rules (synced). Rebuilt from the weapon cards by Cards.recompute().
 var weapons: Array[Dictionary] = []
+
+## Loaded ammo per weapon kind (Ammo): kind -> Array of ammo ids (index 0 = primary, 2 entries with mixed
+## belts). Per-weapon heat / jam / switch state lives in the weapon dicts ("heat", "jam", "sw", "shots").
+var ammo: Dictionary = {}
+var ammo_known: Array[String] = []  ## host-side: ammo types unlocked at the last Ammo.sync (decides what auto-loads)
 
 # Round loop state (docs/architecture.md, "Round loop contract").
 var fuel: int = 100
