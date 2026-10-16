@@ -7,8 +7,8 @@ extends RefCounted
 ## - "workshop"     (about 400 ticks): the workshop after round 3, red with scrap, cards and tech,
 ##                  magenta already picked and ready.
 ## - "tech_tree"    (about 400 ticks): the same workshop later in a match: red owns 16 tech nodes
-##                  (both ballistics forks taken, a fusion) and 640 scrap. Open the full tree with
-##                  --click=560,146 (the TECH TREE button), then --hover a node.
+##                  (both ballistics forks taken, a fusion) and 640 scrap, with the TECH view
+##                  open; --hover a node.
 ## - "gameover"     (about 300 ticks): solo, the last fuel burns in round 2, YOUR CONVOY IS LOST.
 ## - "gameover_mp"  (about 200 ticks): magenta runs dry, red is the last rig standing.
 ## - "eliminated"   (about 220 ticks): three rigs; red runs dry and spectates (ELIMINATED).
@@ -176,6 +176,8 @@ static func ui_state(name: String) -> Dictionary:
 				"info": "HOSTING ON PORT 24680 - FRIENDS FIND YOU UNDER JOIN LAN GAME"}
 		"pause":
 			return {"screen": "pause", "solo": false}
+		"tech_tree":
+			return {"workshop_tab": "tech"}
 		"rules":
 			return {"rules": "rig"}
 		"rules_weapon":

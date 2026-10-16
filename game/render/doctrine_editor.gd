@@ -1,9 +1,10 @@
 class_name DoctrineEditor
 extends Control
-## Rule editor (design doc section 6, layer 2): a full-screen amber CRT over the game where the
-## player programs IF-THEN rules for the rig and for every weapon on its own. Opens with P (any
-## phase of a match) or the PROGRAM chip on the workshop's nav-comp; P / Esc / CLOSE close it.
-## The game keeps running behind it.
+## Rule editor (design doc section 6, layer 2): an amber CRT where the player programs IF-THEN
+## rules for the rig and for every weapon on its own. In combat P opens it as a full-screen overlay
+## (P / Esc / CLOSE close it; the game keeps running behind it). In the workshop it is the RULES
+## view: WorkshopUi embeds it into its body (open_embedded) under the top bar, owns the clicks and
+## forwards them here, and P / Esc switch the workshop view instead.
 ##
 ## Immediate-mode like WorkshopUi: _draw() records hit rects, clicks go through activate(). The
 ## open tab's rules are a local working copy (so quick clicks never fight snapshot lag); every edit
@@ -12,7 +13,6 @@ extends Control
 
 const PANEL := Rect2(18, 10, 604, 340)
 const ROW_H := 27.0
-const ROWS_Y := 112.0
 const MENU_W := 118.0
 
 const COND_LABELS := {
@@ -86,6 +86,9 @@ var _menu: Dictionary = {}  # open dropdown: {"rect", "kind", "ri", "ci", "optio
 var _toast: String = ""
 var _toast_left: float = 0.0
 var _blink: float = 0.0
+var _embed: Rect2 = Rect2()  ## the workshop body while embedded (zero size = overlay)
+## The workshop whose RULES view this editor is (set by WorldView).
+var workshop: WorkshopUi = null
 
 
 func _ready() -> void:
@@ -106,9 +109,36 @@ func open(p_scope: String = Doctrine.SCOPE_RIG) -> void:
 	_select(p_scope)
 
 
+## Opens (or moves) the editor into `r`, the workshop body; the workshop forwards the clicks.
+func open_embedded(r: Rect2) -> void:
+	if _local() == null:
+		return
+	if not is_open:
+		open(Doctrine.SCOPE_RIG)
+	_embed = r
+	_menu = {}
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+
+func embedded() -> bool:
+	return _embed.size.x > 0.0
+
+
 func close() -> void:
 	is_open = false
 	_menu = {}
+	_embed = Rect2()
+	mouse_filter = Control.MOUSE_FILTER_STOP
+
+
+## The CRT housing: the workshop body when embedded, else the overlay panel.
+func _panel() -> Rect2:
+	return _embed if embedded() else PANEL
+
+
+## Top of the first rule row (the embedded view has no title line).
+func _rows_y() -> float:
+	return _panel().position.y + (92.0 if embedded() else 102.0)
 
 
 func toggle() -> void:
@@ -180,14 +210,20 @@ func _unhandled_input(event: InputEvent) -> void:
 	if layer != null and not layer.visible:
 		return  # behind the menus (attract mode, main menu)
 	var key: Key = (event as InputEventKey).keycode
+	var camp: bool = workshop != null and workshop.visible
 	if key == KEY_P and world != null and _local() != null and world.phase != SimWorld.PHASE_GAME_OVER:
-		toggle()
+		if camp:
+			workshop.activate("tab", "parts" if workshop.tab() == "rules" else "rules")
+		else:
+			toggle()
 		get_viewport().set_input_as_handled()
 	elif is_open and key == KEY_ESCAPE:
-		if _menu.is_empty():
-			close()
-		else:
+		if not _menu.is_empty():
 			_menu = {}
+		elif camp and embedded():
+			workshop.activate("tab", "parts")
+		else:
+			close()
 		get_viewport().set_input_as_handled()
 
 
@@ -282,9 +318,9 @@ func _open_menu(kind: String, ri: int, ci: int) -> void:
 	var anchor: Rect2 = _clicked
 	var h: float = float(opts.size()) * 9.0 + 6.0
 	var y: float = anchor.end.y + 2.0
-	if y + h > PANEL.end.y - 4.0:
+	if y + h > _panel().end.y - 4.0:
 		y = anchor.position.y - h - 2.0
-	var x: float = minf(anchor.position.x, PANEL.end.x - MENU_W - 6.0)
+	var x: float = minf(anchor.position.x, _panel().end.x - MENU_W - 6.0)
 	_menu = {"rect": Rect2(x, y, MENU_W, h), "kind": kind, "ri": ri, "ci": ci, "options": opts}
 
 
@@ -334,17 +370,20 @@ func _draw() -> void:
 	_hover = _hit_at(_pointer())
 	_hits.clear()
 	var vs: Vector2 = get_viewport_rect().size
-	draw_rect(Rect2(Vector2.ZERO, vs), Color(0.04, 0.02, 0.02, 0.6))
-	UiKit.steel(self, PANEL)
-	var scr := Rect2(PANEL.position + Vector2(6, 6), PANEL.size - Vector2(12, 20))
+	var panel: Rect2 = _panel()
+	if not embedded():
+		draw_rect(Rect2(Vector2.ZERO, vs), Color(0.04, 0.02, 0.02, 0.6))
+	UiKit.steel(self, panel)
+	var scr := Rect2(panel.position + Vector2(6, 6), panel.size - Vector2(12, 20))
 	draw_rect(scr, Gfx.CRT_BG)
 	var x0: float = scr.position.x + 8.0
 	var y: float = scr.position.y + 6.0
-	var px: float = UiFont.draw_big(self, "DOCTRINE.SYS - RULE EDITOR", Vector2(x0, y - 1), Gfx.CRT_HI)
-	if fmod(_blink, 1.0) < 0.5:
-		draw_rect(Rect2(px + 2, y - 1, 4, 7), Gfx.CRT_TEXT)
-	_chip("CLOSE  (P)", Vector2(scr.end.x - 8 - UiFont.width("CLOSE  (P)"), y), false, "close", null)
-	y += 10.0
+	if not embedded():
+		var px: float = UiFont.draw_big(self, "DOCTRINE.SYS - RULE EDITOR", Vector2(x0, y - 1), Gfx.CRT_HI)
+		if fmod(_blink, 1.0) < 0.5:
+			draw_rect(Rect2(px + 2, y - 1, 4, 7), Gfx.CRT_TEXT)
+		_chip("CLOSE  (P)", Vector2(scr.end.x - 8 - UiFont.width("CLOSE  (P)"), y), false, "close", null)
+		y += 10.0
 	UiFont.draw_small(self, "RULES RUN TOP TO BOTTOM: THE FIRST MATCHING RULE OF EACH KIND WINS. NOTHING MATCHES: BASE SETTING.", Vector2(x0, y), Gfx.CRT_DIM)
 	y += 14.0
 	_draw_tabs(v, Vector2(x0, y), scr)
@@ -359,8 +398,8 @@ func _draw() -> void:
 	for sy in range(int(scr.position.y) + 1, int(scr.end.y), 2):
 		draw_rect(Rect2(scr.position.x, sy, scr.size.x, 1), Color(0, 0, 0, 0.18))
 	draw_rect(Rect2(scr.position.x + 2, scr.position.y + 1, scr.size.x - 4, 1), Color(1, 0.8, 0.5, 0.08))
-	UiFont.draw_small(self, "COLONY NAV-COMP  -  BEHAVIOUR PROGRAMMING", Vector2(PANEL.position.x + 8, PANEL.end.y - 11), Gfx.STEEL[4], Gfx.STEEL[0])
-	draw_rect(Rect2(PANEL.end.x - 12, PANEL.end.y - 10, 3, 3), Gfx.CRT_TEXT)
+	UiFont.draw_small(self, "COLONY NAV-COMP  -  DOCTRINE.SYS  -  BEHAVIOUR PROGRAMMING", Vector2(panel.position.x + 8, panel.end.y - 11), Gfx.STEEL[4], Gfx.STEEL[0])
+	draw_rect(Rect2(panel.end.x - 12, panel.end.y - 10, 3, 3), Gfx.CRT_TEXT)
 	if not _menu.is_empty():
 		_draw_menu()
 
@@ -419,7 +458,8 @@ func _draw_base_weapon(v: SimVehicle, pos: Vector2) -> void:
 func _draw_rules(v: SimVehicle, scr: Rect2) -> void:
 	var x0: float = scr.position.x + 8.0
 	var slots: int = Doctrine.slots(v)
-	var y: float = ROWS_Y - 14.0
+	var rows_y: float = _rows_y()
+	var y: float = rows_y - 14.0
 	UiFont.draw(self, "RULES  %d/%d SLOTS" % [mini(_work.size(), slots), slots], Vector2(x0, y), Gfx.CRT_HI)
 	var note := "+1 SLOT PER ELECTRONICS TIER" if slots < Doctrine.MAX_SLOTS else "ALL SLOTS UNLOCKED"
 	UiFont.draw(self, note, Vector2(scr.end.x - 8 - UiFont.width(note), y), Gfx.CRT_DIM)
@@ -431,7 +471,7 @@ func _draw_rules(v: SimVehicle, scr: Rect2) -> void:
 				live = int(w.get("live", 0))
 	var combat: bool = world.phase == SimWorld.PHASE_COMBAT
 	for i in _work.size():
-		var ry: float = ROWS_Y + ROW_H * float(i)
+		var ry: float = rows_y + ROW_H * float(i)
 		var row := Rect2(x0 - 4, ry - 5, scr.size.x - 8, ROW_H - 4)
 		var locked: bool = i >= slots
 		var lit: bool = combat and not locked and (live >> i) & 1 == 1
@@ -439,7 +479,7 @@ func _draw_rules(v: SimVehicle, scr: Rect2) -> void:
 			draw_rect(row, Color(Gfx.CRT_TEXT, 0.14))
 		UiKit.outline_rect(self, row, Gfx.CRT_DIM if not lit else Gfx.CRT_TEXT)
 		_draw_rule(i, _work[i], Vector2(x0, ry + 1), row, locked, lit)
-	var ay: float = ROWS_Y + ROW_H * float(_work.size())
+	var ay: float = rows_y + ROW_H * float(_work.size())
 	if _work.size() < slots:
 		_chip("+ ADD RULE", Vector2(x0, ay), false, "add_rule", null)
 	elif _work.size() < Doctrine.MAX_SLOTS:
@@ -544,7 +584,8 @@ func _draw_cond(ri: int, ci: int, c: Array, pos: Vector2) -> float:
 
 func _draw_footer(v: SimVehicle, scr: Rect2) -> void:
 	var x0: float = scr.position.x + 8.0
-	var y: float = scr.end.y - 46.0
+	var foot: float = 42.0 if embedded() else 46.0
+	var y: float = scr.end.y - foot
 	draw_rect(Rect2(scr.position.x + 4, y - 5, scr.size.x - 8, 1), Gfx.CRT_DIM)
 	UiFont.draw(self, "QUICK ADD", Vector2(x0, y), Gfx.CRT_DIM)
 	var x: float = x0 + 50.0
@@ -559,7 +600,7 @@ func _draw_footer(v: SimVehicle, scr: Rect2) -> void:
 		y += 8.0
 	if world.phase == SimWorld.PHASE_COMBAT:
 		var s := "LIVE: A LIT LAMP MEANS THE RULE MATCHES RIGHT NOW"
-		UiFont.draw(self, s, Vector2(scr.end.x - 8 - UiFont.width(s), scr.end.y - 46.0), Gfx.CRT_DIM)
+		UiFont.draw(self, s, Vector2(scr.end.x - 8 - UiFont.width(s), scr.end.y - foot), Gfx.CRT_DIM)
 
 
 func _help_text() -> String:

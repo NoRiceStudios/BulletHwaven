@@ -1,7 +1,7 @@
 class_name Hud
 extends Control
-## Combat HUD in the mock-up style (riveted plates, 3x5 font, stencil headings): round, phase
-## timer, hp and fuel, scrap; the hive; doctrine; round-start / workshop-start banners; the
+## Combat HUD (layout from the UI revamp, see the constants below): round, clock and hive top centre;
+## doctrine, hp, fuel, scrap and kills in one dock at the bottom centre; round-start / workshop-start banners; the
 ## respawn countdown (with what wrecked you) and the ELIMINATED state. Information UI from playtest
 ## round 1 (#2, #5): a kill feed of player kills under the hive plate, off-screen rival arrows at the
 ## screen edge, the PvP grace countdown, a fuel-drain warning before camp, and spectator mode once
@@ -83,18 +83,18 @@ func _draw() -> void:
 			_dim(vs, view.local_screen_pos() if view else vs / 2.0)
 		elif me != null and me.alive and me.hp / me.max_hp < LOW_HP:
 			_low_hp(vs, me.hp / me.max_hp)
-		_draw_status(v)
-		_draw_hive(vs)
-		_draw_doctrine(v, vs)
+		_draw_rival_tags()  # under the panels
+		_draw_top(vs)
+		_draw_dock(v, vs)
 		var watching: bool = spec and not elim_recent
+		if world.vehicles.size() > 1:
+			_draw_standings(v)
 		if watching:
 			_draw_spectating(vs, v)
-			_draw_standings(v)
 		elif me != null and not me.eliminated:
-			_draw_drain_warning(me)
+			_draw_drain_warning(me, vs)
 		_draw_feed(vs)
 		_draw_grace(vs, watching)
-		_draw_rival_tags()
 		if v != null and (watching or not (me != null and me.eliminated)):
 			_draw_rival_arrows(vs, v)
 		if me != null and me.eliminated and not watching:
@@ -138,76 +138,111 @@ func _last_wreck(v: SimVehicle) -> Dictionary:
 
 
 # ---------------------------------------------------------------- combat panels
+# Layout (UI revamp): the round, clock and hive top centre; everything about the watched rig in
+# one dock at the bottom centre, close to where the eye is; standings top left (multiplayer:
+# fuel decides the match); the kill feed top right; the minimap bottom right.
 
-func _draw_status(v: SimVehicle) -> void:
-	var r := Rect2(6, 6, 158, 53)
+const TOP_W := 136.0
+const DOCK_W := 322.0
+const DOCK_H := 28.0
+
+
+func _top_rect(vs: Vector2) -> Rect2:
+	return Rect2(floorf(vs.x / 2.0 - TOP_W / 2.0), 4, TOP_W, 29)
+
+
+func _dock_rect(vs: Vector2) -> Rect2:
+	return Rect2(floorf(vs.x / 2.0 - DOCK_W / 2.0), vs.y - DOCK_H - 4.0, DOCK_W, DOCK_H)
+
+
+## Top centre: round and hive on the left, the clock big on the right.
+func _draw_top(vs: Vector2) -> void:
+	var r: Rect2 = _top_rect(vs)
 	_panels.append(r)
-	UiKit.plate(self, r)
+	UiKit.panel(self, r)
 	var x0: float = r.position.x + 7.0
-	var xr: float = r.end.x - 7.0
-	UiFont.draw_big(self, "ROUND %d" % world.round, Vector2(x0, 11), Gfx.UI_TEXT, Gfx.OUTLINE)
-	var t: String = UiKit.clock(world.phase_ticks_left)
-	UiFont.draw_big(self, t, Vector2(xr - UiFont.width_big(t), 11), Gfx.FIRE[4], Gfx.OUTLINE)
-	UiFont.draw_small(self, "HP", Vector2(x0, 23), Gfx.UI_DIM, Gfx.UI_SHADOW)
-	UiFont.draw_small(self, "FUEL", Vector2(x0, 32), Gfx.UI_DIM, Gfx.UI_SHADOW)
-	var bx: float = x0 + 20.0
-	var hp_frac: float = 0.0
-	var fuel: int = 0
-	if v != null:
-		hp_frac = clampf(v.hp / v.max_hp, 0.0, 1.0) if v.alive else 0.0
-		fuel = maxi(v.fuel, 0)
-	var hp_txt: String = "%d/%d" % [ceili(maxf(v.hp, 0.0)) if v.alive else 0, roundi(v.max_hp)] if v else "0"
-	var low: bool = v != null and v.alive and hp_frac < LOW_HP
-	var hp_col: Color = Gfx.UI_BAD if low else Gfx.UI_TEXT
-	var num_w: float = 42.0  # right column for the numbers, so both bars line up
-	UiKit.bar(self, Rect2(bx, 23, xr - num_w - bx, 6), hp_frac, UiKit.bar_color(v.color_index) if v else Gfx.UI_DIM)
-	UiFont.draw(self, hp_txt, Vector2(xr - UiFont.width(hp_txt), 23), hp_col, Gfx.UI_SHADOW)
-	var fuel_col: Color = Gfx.FIRE[3] if fuel > 40 else Gfx.UI_BAD
-	UiKit.bar(self, Rect2(bx, 32, xr - num_w - bx, 6), float(fuel) / float(SimWorld.START_FUEL), fuel_col)
-	var ft := str(fuel)
-	UiFont.draw(self, ft, Vector2(xr - UiFont.width(ft), 32), fuel_col, Gfx.UI_SHADOW)
-	draw_rect(Rect2(x0 - 1, 42, xr - x0 + 2, 1), Color(Gfx.OUTLINE, 0.8))
-	var sx: float = UiFont.draw_small(self, "SCRAP ", Vector2(x0, 46), Gfx.UI_DIM, Gfx.UI_SHADOW)
-	UiFont.draw(self, str(v.scrap if v else 0), Vector2(sx, 46), Gfx.FIRE[4], Gfx.UI_SHADOW)
-	var k := str(v.kills if v else 0)
-	var kx: float = xr - UiFont.width(k)
-	UiFont.draw(self, k, Vector2(kx, 46), Gfx.UI_TEXT, Gfx.UI_SHADOW)
-	UiFont.draw_small(self, "KILLS ", Vector2(kx - UiFont.width_small("KILLS "), 46), Gfx.UI_DIM, Gfx.UI_SHADOW)
-
-
-func _draw_hive(vs: Vector2) -> void:
-	var l1 := "HIVE: %d ALIVE" % world.enemy_count
+	UiFont.draw_big(self, "ROUND %d" % world.round, Vector2(x0, r.position.y + 6), Gfx.UI_TEXT, Gfx.OUTLINE)
+	var hx: float = UiFont.draw_small(self, "HIVE %d" % world.enemy_count, Vector2(x0, r.position.y + 19), Gfx.GLOW[3], Gfx.UI_SHADOW)
 	var boost: float = SimWorld.enemy_hp_mult(world.round) - 1.0
-	var l2 := ("HIVE HP +%s" % UiKit.pct(boost)) if boost > 0.001 else "HIVE HP BASE"
-	var pw: float = maxf(UiFont.width(l1), UiFont.width(l2)) + 16.0
-	UiKit.plate(self, Rect2(vs.x - pw - 6, 6, pw, 28))
-	_panels.append(Rect2(vs.x - pw - 6, 6, pw, 28))
-	UiFont.draw(self, l1, Vector2(vs.x - pw + 2, 12), Gfx.GLOW[3], Gfx.UI_SHADOW)
-	UiFont.draw(self, l2, Vector2(vs.x - pw + 2, 22), Gfx.UI_DIM, Gfx.UI_SHADOW)
+	UiFont.draw_small(self, ("  HP +%s" % UiKit.pct(boost)) if boost > 0.001 else "  HP BASE", Vector2(hx, r.position.y + 19), Gfx.UI_DIM, Gfx.UI_SHADOW)
+	var t: String = UiKit.clock(world.phase_ticks_left)
+	var low: bool = world.phase_ticks_left < 10 * SimWorld.TICK_RATE
+	UiFont.draw_big(self, t, Vector2(r.end.x - 7 - UiFont.width_big(t, 2), r.position.y + 7), Gfx.UI_TEXT if low else Gfx.FIRE[4], Gfx.OUTLINE, 2)
 
 
-func _draw_doctrine(v: SimVehicle, vs: Vector2) -> void:
+## Bottom centre: doctrine | hp and fuel | scrap and kills of the watched rig.
+func _draw_dock(v: SimVehicle, vs: Vector2) -> void:
+	var r: Rect2 = _dock_rect(vs)
+	_panels.append(r)
+	UiKit.panel(self, r)
 	if v == null:
 		return
-	var drive: String = str(v.doctrine["drive"]).to_upper()
-	var target: String = str(v.doctrine["target"]).replace("_", " ").to_upper()
-	var live := PackedStringArray()
-	for i in Doctrine.MAX_SLOTS:
+	var y1: float = r.position.y + 6.0
+	var y2: float = r.position.y + 17.0
+	# doctrine: what the rig is doing, and which rules fire right now
+	var dx: float = r.position.x + 7.0
+	var lx: float = dx + 30.0
+	UiFont.draw_small(self, "DRIVE", Vector2(dx, y1 + 1), Gfx.UI_DIM)
+	var drive: String = _effective(v, "drive")
+	UiFont.draw(self, drive.to_upper(), Vector2(lx, y1), Gfx.CRT_HI if drive != str(v.doctrine["drive"]) else Gfx.CRT_TEXT, Gfx.UI_SHADOW)
+	UiFont.draw_small(self, "TARGET", Vector2(dx, y2 + 1), Gfx.UI_DIM)
+	var tgt: String = _effective(v, "target")
+	UiFont.draw(self, str(WorkshopUi.TARGET_LABELS.get(tgt, tgt.to_upper())), Vector2(lx, y2),
+		Gfx.CRT_HI if tgt != str(v.doctrine["target"]) else Gfx.CRT_TEXT, Gfx.UI_SHADOW)
+	_rule_lamps(v, Vector2(r.position.x + 91.0, y1 + 1.0))
+	UiFont.draw_small(self, "P RULES", Vector2(r.position.x + 91.0, y2 + 1), Gfx.UI_DIM)
+	var s1: float = r.position.x + 122.0
+	draw_rect(Rect2(s1, r.position.y + 4, 1, r.size.y - 8), Color(UiKit.PANEL_EDGE, 0.8))
+	# hp and fuel
+	var bx: float = s1 + 24.0
+	var num_x: float = r.position.x + 252.0
+	var hp_frac: float = clampf(v.hp / v.max_hp, 0.0, 1.0) if v.alive else 0.0
+	var low: bool = v.alive and hp_frac < LOW_HP
+	UiFont.draw_small(self, "HP", Vector2(s1 + 6, y1 + 1), Gfx.UI_DIM)
+	var hp_col: Color = UiKit.bar_color(v.color_index)
+	if low and (world.tick / 6) % 2 == 0:
+		hp_col = Gfx.UI_BAD
+	UiKit.bar(self, Rect2(bx, y1 - 1, num_x - bx - 4, 8), hp_frac, hp_col)
+	var hp_txt: String = str(ceili(maxf(v.hp, 0.0)) if v.alive else 0)
+	UiFont.draw(self, hp_txt, Vector2(num_x, y1), Gfx.UI_BAD if low else Gfx.UI_TEXT, Gfx.UI_SHADOW)
+	var fuel: int = maxi(v.fuel, 0)
+	var fuel_col: Color = Gfx.FIRE[3] if fuel > 40 else Gfx.UI_BAD
+	UiFont.draw_small(self, "FUEL", Vector2(s1 + 6, y2 + 1), Gfx.UI_DIM)
+	UiKit.bar(self, Rect2(bx, y2 + 1, num_x - bx - 4, 5), float(fuel) / float(SimWorld.START_FUEL), fuel_col)
+	UiFont.draw(self, str(fuel), Vector2(num_x, y2), fuel_col, Gfx.UI_SHADOW)
+	var s2: float = r.position.x + 272.0
+	draw_rect(Rect2(s2, r.position.y + 4, 1, r.size.y - 8), Color(UiKit.PANEL_EDGE, 0.8))
+	# scrap and kills, numbers right-aligned
+	var xr: float = r.end.x - 7.0
+	UiFont.draw_small(self, "SCRAP", Vector2(s2 + 6, y1 + 1), Gfx.UI_DIM)
+	var st := str(v.scrap)
+	UiFont.draw(self, st, Vector2(xr - UiFont.width(st), y1), Gfx.FIRE[4], Gfx.UI_SHADOW)
+	UiFont.draw_small(self, "KILLS", Vector2(s2 + 6, y2 + 1), Gfx.UI_DIM)
+	var kt := str(v.kills)
+	UiFont.draw(self, kt, Vector2(xr - UiFont.width(kt), y2), Gfx.UI_TEXT, Gfx.UI_SHADOW)
+
+
+## What the rig does right now in action group `group` ("drive" / "target"): the first lit rule of
+## that group, else the base doctrine. Built from the synced rules and lamps, so clients agree.
+static func _effective(v: SimVehicle, group: String) -> String:
+	var slots: int = Doctrine.slots(v)
+	for i in mini(v.rules.size(), slots):
 		if (v.rule_live >> i) & 1 == 1:
-			live.append(str(i + 1))
-	var rules: String = " ".join(live) if not live.is_empty() else "-"
-	var dw: float = UiFont.width_small("DRIVE ") + UiFont.width(drive) + UiFont.width_small("    TARGET ") + UiFont.width(target) \
-		+ UiFont.width_small("    RULE ") + UiFont.width(rules) + UiFont.width_small("    P: PROGRAM") + 16.0
-	var r := Rect2(6, vs.y - 23, dw, 17)
-	UiKit.plate(self, r)
-	_panels.append(r)
-	var x: float = UiFont.draw_small(self, "DRIVE ", Vector2(14, vs.y - 17), Gfx.UI_DIM, Gfx.UI_SHADOW)
-	x = UiFont.draw(self, drive, Vector2(x, vs.y - 17), Gfx.CRT_TEXT, Gfx.UI_SHADOW)
-	x = UiFont.draw_small(self, "    TARGET ", Vector2(x, vs.y - 17), Gfx.UI_DIM, Gfx.UI_SHADOW)
-	x = UiFont.draw(self, target, Vector2(x, vs.y - 17), Gfx.CRT_TEXT, Gfx.UI_SHADOW)
-	x = UiFont.draw_small(self, "    RULE ", Vector2(x, vs.y - 17), Gfx.UI_DIM, Gfx.UI_SHADOW)
-	x = UiFont.draw(self, rules, Vector2(x, vs.y - 17), Gfx.CRT_HI if not live.is_empty() else Gfx.UI_DIM, Gfx.UI_SHADOW)
-	UiFont.draw_small(self, "    P: PROGRAM", Vector2(x, vs.y - 17), Gfx.UI_DIM, Gfx.UI_SHADOW)
+			var a: String = str(v.rules[i]["do"])
+			if Doctrine.action_group(a) == group:
+				return Doctrine.action_value(a)
+	return str(v.doctrine[group])
+
+
+## One lamp per rule slot: lit while the rule matches, dim when set, dark when empty.
+func _rule_lamps(v: SimVehicle, pos: Vector2) -> void:
+	var slots: int = Doctrine.slots(v)
+	for i in slots:
+		var p := Vector2(pos.x + i * 6.0, pos.y)
+		var lit: bool = (v.rule_live >> i) & 1 == 1
+		var used: bool = i < v.rules.size()
+		draw_rect(Rect2(p - Vector2.ONE, Vector2(6, 6)), Gfx.OUTLINE)
+		draw_rect(Rect2(p, Vector2(4, 4)), Gfx.CRT_HI if lit else (Gfx.CRT_DIM if used else Gfx.UI_PLATE_DARK))
 
 
 # ---------------------------------------------------------------- overlays
@@ -221,7 +256,7 @@ func _dim(vs: Vector2, center: Vector2) -> void:
 func _draw_respawn(v: SimVehicle, vs: Vector2) -> void:
 	var cx: float = floorf(vs.x / 2.0)
 	var r := Rect2(cx - 84, 92, 168, 57)
-	UiKit.plate(self, r)
+	UiKit.panel(self, r)
 	UiKit.center_big(self, "RIG DESTROYED", cx, r.position.y + 6, Gfx.FIRE[4], Gfx.OUTLINE)
 	_wreck_cause(v, cx, r.position.y + 17)
 	var secs: float = float(maxi(v.respawn_ticks, 0)) / float(SimWorld.TICK_RATE)
@@ -258,7 +293,7 @@ func _draw_eliminated(vs: Vector2) -> void:
 	var me: SimVehicle = world.get_vehicle_for_peer(local_peer)
 	var cause: bool = me != null and not _last_wreck(me).is_empty()
 	var r := Rect2(cx - 92, 92, 184, 54 if cause else 44)
-	UiKit.plate(self, r)
+	UiKit.panel(self, r)
 	UiKit.hazard_frame(self, r.grow(-3.0), 2.0)
 	UiKit.center_big(self, "ELIMINATED", cx, r.position.y + 9, Gfx.UI_BAD, Gfx.OUTLINE, 2)
 	UiKit.center_text(self, "OUT OF FUEL - WATCHING THE OTHERS", cx, r.position.y + 30, Gfx.UI_TEXT, Gfx.UI_SHADOW)
@@ -274,7 +309,7 @@ func _draw_feed(vs: Vector2) -> void:
 	if view == null:
 		return
 	var me: SimVehicle = view.focus_vehicle()
-	var y: float = 38.0
+	var y: float = 6.0
 	var shown: int = 0
 	for i in range(view.kill_log.size() - 1, -1, -1):
 		var e: Dictionary = view.kill_log[i]
@@ -389,8 +424,8 @@ func _draw_grace(vs: Vector2, below: bool) -> void:
 	var cx: float = floorf(vs.x / 2.0)
 	var secs: int = ceili(float(world.pvp_grace_ticks) / float(SimWorld.TICK_RATE))
 	var title := "PVP IN %d" % secs
-	var r := Rect2(cx - 60, 40.0 if below else 6.0, 120, 27)
-	UiKit.plate(self, r)
+	var r := Rect2(cx - 60, 66.0 if below else 37.0, 120, 27)
+	UiKit.panel(self, r)
 	UiKit.hazard_frame(self, r.grow(-2.0), 2.0)
 	var hot: bool = secs <= 3 and (world.tick / 5) % 2 == 0
 	UiKit.center_big(self, title, cx, r.position.y + 6, Gfx.UI_BAD if hot else Gfx.FIRE[4], Gfx.OUTLINE)
@@ -399,14 +434,15 @@ func _draw_grace(vs: Vector2, below: bool) -> void:
 
 
 ## Late rounds of a multiplayer game: a tape under the status plate before camp drains fuel.
-func _draw_drain_warning(v: SimVehicle) -> void:
+func _draw_drain_warning(v: SimVehicle, vs: Vector2) -> void:
 	if world.vehicles.size() < 2 or v.eliminated:
 		return
 	var drain: int = SimWorld.fuel_drain_for_round(world.round)
 	if drain <= 0 or world.phase_ticks_left > DRAIN_WARN_TICKS:
 		return
 	var text := "CAMP DRAINS %d FUEL - KILLS REFUEL" % drain
-	var r := Rect2(6, 63, UiFont.width(text) + 10.0, 10)
+	var w: float = UiFont.width(text) + 10.0
+	var r := Rect2(floorf(vs.x / 2.0 - w / 2.0), _dock_rect(vs).position.y - 14.0, w, 10)
 	UiKit.tape(self, r, Color("#f0b090"))
 	UiFont.draw(self, text, Vector2(r.position.x + 5, r.position.y + 2), Gfx.INK)
 	_panels.append(r)
@@ -421,8 +457,8 @@ func _draw_spectating(vs: Vector2, v: SimVehicle) -> void:
 	var cx: float = floorf(vs.x / 2.0)
 	var nm: String = UiKit.player_name(v)
 	var w: float = maxf(UiFont.width_big(nm) + UiFont.width("SPECTATING") + 30.0, 150.0)
-	var r := Rect2(cx - floorf(w / 2.0), 6, w, 27)
-	UiKit.plate(self, r)
+	var r := Rect2(cx - floorf(w / 2.0), 37, w, 27)
+	UiKit.panel(self, r)
 	var x0: float = cx - floorf((UiFont.width("SPECTATING") + 6.0 + UiFont.width_big(nm)) / 2.0)
 	var x: float = UiFont.draw(self, "SPECTATING", Vector2(x0, r.position.y + 7), Gfx.UI_DIM, Gfx.UI_SHADOW) + 6.0
 	UiKit.paint_big(self, nm, Vector2(x, r.position.y + 6), v.color_index)
@@ -432,14 +468,14 @@ func _draw_spectating(vs: Vector2, v: SimVehicle) -> void:
 	_panels.append(r)
 
 
-## Live standings under the status plate while spectating (fuel, kills; the watched rig marked).
+## Live standings top left in every multiplayer combat (fuel decides the match, then kills); the
+## watched / local rig is marked.
 func _draw_standings(watched: SimVehicle) -> void:
 	var rows: Array[SimVehicle] = UiKit.standings(world)
-	var r := Rect2(6, 63, 158, 18 + rows.size() * 10)
-	UiKit.plate(self, r)
+	var r := Rect2(6, 6, 140, 18 + rows.size() * 10)
+	UiKit.panel(self, r)
 	_panels.append(r)
-	UiFont.draw(self, "STANDINGS", r.position + Vector2(6, 5), Gfx.UI_DIM, Gfx.UI_SHADOW)
-	UiFont.draw(self, "FUEL  KILLS", Vector2(r.end.x - 6 - UiFont.width("FUEL  KILLS"), r.position.y + 5), Gfx.UI_DIM, Gfx.UI_SHADOW)
+	UiKit.section(self, "STANDINGS", r.position + Vector2(6, 5), r.size.x - 12, "FUEL   KILLS")
 	var y: float = r.position.y + 16.0
 	for i in rows.size():
 		var o: SimVehicle = rows[i]

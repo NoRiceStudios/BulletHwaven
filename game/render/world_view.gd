@@ -10,8 +10,8 @@ const SNAP_DIST := 48.0  ## px, farther jumps (respawn, snapshot correction) sna
 const MAX_LEAD := 0.1  ## s, never extrapolate further than this past the last tick
 const TRAIL_STEP := 3.0  ## px of travel between tyre-track stamps
 const SHOT_EFFECT_TICKS := 10  ## screenshot mode: transient effects from the last N ticks
-const WORKSHOP_CAM_LIFT := 56.0  ## px: in the workshop the camped rig sits between the recap and the cards
-const SPECTATE_CAM_LIFT := 46.0  ## the same for the watched rig in the spectator workshop
+const WORKSHOP_CAM_LIFT := 88.0  ## px: in the workshop the camped rig sits between the top bar and the cards
+const SPECTATE_CAM_LIFT := 84.0  ## the same for the watched rig in the spectator workshop (above the standings)
 const CAM_EASE := 4.0  ## 1/s, easing of that lift
 
 var world: SimWorld = null
@@ -171,7 +171,8 @@ func _ready() -> void:
 		if workshop.send_command.is_valid():
 			workshop.send_command.call(cmd)
 	hud_layer.add_child(rules)
-	workshop.open_rules = rules.open
+	workshop.rules = rules
+	rules.workshop = workshop
 
 
 ## Shows `w` from the point of view of `peer` (camera, HUD). Clears all marks of a previous world.
