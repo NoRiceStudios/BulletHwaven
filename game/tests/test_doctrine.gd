@@ -31,7 +31,7 @@ func test_parse_and_encode_roundtrip() -> void:
 		"hp<300|drive:kite",  # out of range
 		"t_player=2|drive:kite",  # flag must be 0 / 1
 		"hp=30|drive:kite",  # numeric needs < or >
-		"hp<30&hp<20&hp<10&hp<5|drive:kite",  # too many conditions
+		"hp<30&hp<20&hp<10&hp<5&hp<1|drive:kite",  # too many conditions
 		"hp<30drive:kite",  # no separator
 		"|drive:kite;|drive:kite;|drive:kite;|drive:kite;|drive:kite;|drive:kite;|drive:kite",  # > MAX_SLOTS
 	]:

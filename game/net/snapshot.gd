@@ -17,16 +17,20 @@ extends RefCounted
 ##                      kind 2 bits | hp 4 bits (1..15 of max) | speed 3 bits (0..7 of kind speed) | heading 7 bits
 ##   projs   13 B each  x u16, y u16 (1/16 px, offset), vx i16, vy i16 (px/s), owner i8, ttl u8 (1/100 s), damage u8 (1/4)
 ##   burning ceil(enemies / 8) B (only with FLAG_BURNING): bit i set = enemy i burns (burn dps and owner are host-side)
+##   stunned ceil(enemies / 8) B (only with FLAG_STUNNED): bit i set = enemy i is EMP-stunned
+##
+## Vehicle extras since version 10 (right after scrap_frac): a flags byte and the groups it names, see _put_extras().
 ##
 ## Positions are quantized to 1/16 px (max error POS_ERROR). Enemy velocity is quantized to
 ## 1/7 of the kind's speed and 128 headings; enemy hp to 1/15 of the kind's max hp (for the
 ## current round, SimWorld.enemy_max_hp). Card and tech ids are table indices (Cards.DEFS / Tech.DEFS).
 ## Projectile pierce / splash are not sent: the client world is passive.
 
-const VERSION := 9  # 9: ammo / heat per weapon, ground zones, burning bitset, float cooldowns; 8: tech v2.3 (dormant fusions, respecs, purchase rounds); 7: doctrine rules (rig + per weapon); 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
+const VERSION := 10  # 10: momentum, abilities (slots, cooldowns, effect timers, decoy), swarm mark, jam flags, stunned bitset; 9: ammo / heat per weapon, ground zones, burning bitset, float cooldowns; 8: tech v2.3 (dormant fusions, respecs, purchase rounds); 7: doctrine rules (rig + per weapon); 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
 const FLAG_WIDE_IDS := 1  ## enemy ids spread over more than 65535: ids are sent as u32 deltas from 0
 const FLAG_STATS := 2  ## vehicles carry round_stats and match_stats (sent outside combat only)
 const FLAG_BURNING := 4  ## a burning bitset follows the projectiles (only sent while something burns)
+const FLAG_STUNNED := 8  ## a stunned bitset follows the burning one (only sent while an EMP holds something)
 const EVENT_EXTRA_BIT := 0x80
 const EVENT_EXTRAS := {"kill": ["victim", "weapon"], "vehicle_destroyed": ["cause", "killer"]}
 const MAX_DEATHS := 16
@@ -44,7 +48,7 @@ const PROJ_BYTES := 13
 const EVENT_BYTES := 7
 
 const MAX_VEHICLES := 64  ## vehicle ids travel as u8 / i8 owners, keep well below 127
-const EVENT_TYPES: PackedStringArray = ["fire", "hit", "kill", "vehicle_destroyed", "retreat", "respawn", "spit", "pvp_on", "bounty", "drain", "shrapnel", "jam", "overheat", "execute"]
+const EVENT_TYPES: PackedStringArray = ["fire", "hit", "kill", "vehicle_destroyed", "retreat", "respawn", "spit", "pvp_on", "bounty", "drain", "shrapnel", "jam", "overheat", "execute", "nitro", "emp", "smoke", "salvo", "dodge", "sparks", "boom", "shed"]
 const MAX_ROUND := 65535
 const SPEED_STEPS := 7
 const HEADING_STEPS := 128
@@ -87,6 +91,13 @@ static func encode(world: SimWorld, p_events: Array[Dictionary] = []) -> PackedB
 			break
 	if any_burn:
 		flags |= FLAG_BURNING
+	var any_stun: bool = false
+	for si in mini(n_enemy, world.enemy_status.size()):
+		if (world.enemy_status[si] & 255) > 0:
+			any_stun = true
+			break
+	if any_stun:
+		flags |= FLAG_STUNNED
 
 	var sp := StreamPeerBuffer.new()
 	sp.put_u8(VERSION)
@@ -140,7 +151,8 @@ static func encode(world: SimWorld, p_events: Array[Dictionary] = []) -> PackedB
 	var estride: int = WIDE_ENEMY_BYTES if wide else ENEMY_BYTES
 	var head_size: int = out.size()
 	var burn_bytes: int = (n_enemy + 7) / 8 if any_burn else 0
-	out.resize(head_size + n_enemy * estride + n_proj * PROJ_BYTES + burn_bytes)
+	var stun_bytes: int = (n_enemy + 7) / 8 if any_stun else 0
+	out.resize(head_size + n_enemy * estride + n_proj * PROJ_BYTES + burn_bytes + stun_bytes)
 	var o: int = head_size
 	for i in n_enemy:
 		var kind: int = world.enemy_kind[i]
@@ -178,6 +190,10 @@ static func encode(world: SimWorld, p_events: Array[Dictionary] = []) -> PackedB
 		out[o + i] = 0
 	for i in mini(n_enemy, world.enemy_burn_ticks.size()) if any_burn else 0:
 		if world.enemy_burn_ticks[i] > 0:
+			out[o + (i >> 3)] |= 1 << (i & 7)
+	o += burn_bytes
+	for i in mini(n_enemy, world.enemy_status.size()) if any_stun else 0:
+		if (world.enemy_status[i] & 255) > 0:
 			out[o + (i >> 3)] |= 1 << (i & 7)
 	return out
 
@@ -256,7 +272,8 @@ static func apply(world: SimWorld, bytes: PackedByteArray) -> bool:
 
 	var estride: int = WIDE_ENEMY_BYTES if wide else ENEMY_BYTES
 	var burn_bytes: int = (n_enemy + 7) / 8 if (flags & FLAG_BURNING) != 0 else 0
-	if not r.has(n_enemy * estride + n_proj * PROJ_BYTES + burn_bytes):
+	var stun_bytes: int = (n_enemy + 7) / 8 if (flags & FLAG_STUNNED) != 0 else 0
+	if not r.has(n_enemy * estride + n_proj * PROJ_BYTES + burn_bytes + stun_bytes):
 		return false
 	var data: PackedByteArray = bytes
 	var o: int = r.pos
@@ -327,6 +344,13 @@ static func apply(world: SimWorld, bytes: PackedByteArray) -> bool:
 		for i in n_enemy:
 			if (data[o + (i >> 3)] & (1 << (i & 7))) != 0:
 				e_burn[i] = SimWorld.BURN_TICKS  # the client only needs "burning"
+	var e_status := PackedInt32Array()
+	e_status.resize(n_enemy)
+	if stun_bytes > 0:
+		var so: int = o + burn_bytes
+		for i in n_enemy:
+			if (data[so + (i >> 3)] & (1 << (i & 7))) != 0:
+				e_status[i] = Abilities.EMP_STUN_TICKS  # the client only needs "stunned"
 
 	# Commit.
 	world.tick = tick
@@ -348,6 +372,8 @@ static func apply(world: SimWorld, bytes: PackedByteArray) -> bool:
 	world.enemy_burn_ticks = e_burn
 	world.enemy_burn_dps = PackedFloat32Array()
 	world.enemy_burn_owner = PackedInt32Array()
+	world.enemy_status = e_status
+	world.enemy_ram_tick = PackedInt32Array()
 	world.zone_pos = z_pos
 	world.zone_radius = z_radius
 	world.zone_kind = z_kind
@@ -453,6 +479,7 @@ static func _put_vehicle(sp: StreamPeerBuffer, v: SimVehicle, with_stats: bool =
 	sp.put_u8((1 if v.eliminated else 0) | (2 if v.ready else 0) | (4 if v.picked else 0))
 	sp.put_u16(clampi(v.reroll_cost, 0, 65535))
 	sp.put_float(v.scrap_frac)
+	_put_extras(sp, v)
 	var offer_ix: Array[int] = []
 	for oid in v.offers:
 		var oi: int = Cards.index_of(oid)
@@ -496,6 +523,87 @@ static func _put_vehicle(sp: StreamPeerBuffer, v: SimVehicle, with_stats: bool =
 	sp.put_u8(clampi(v.invuln_ticks, 0, 255))
 	if with_stats:
 		_put_stats(sp, v)
+
+
+## Momentum, abilities and electronics state (version 10). A flags byte says which groups follow, so a rig
+## without that tech pays one byte: 1 momentum f32; 2 ability slots (u8 index or 255, u16 cooldown) x2; 4 timers
+## (nitro, sputter, salvo, smoke, decoy, rules-off: u8 each; nitro count u8; boom cooldown u16); 8 decoy
+## position 2 x f32; 16 jammed-by s8 and shed plates u8; 32 swarm mark s32 and position 2 x f32.
+static func _put_extras(sp: StreamPeerBuffer, v: SimVehicle) -> void:
+	var ext: int = 0
+	if v.momentum != 0.0:
+		ext |= 1
+	if v.abilities[0] != "" or v.abilities[1] != "" or v.ab_cd[0] != 0 or v.ab_cd[1] != 0:
+		ext |= 2
+	if v.nitro_ticks != 0 or v.sputter_ticks != 0 or v.salvo_ticks != 0 or v.smoke_ticks != 0 or v.decoy_ticks != 0 \
+			or v.rules_off_ticks != 0 or v.nitro_count != 0 or v.boom_cd != 0:
+		ext |= 4
+	if v.decoy_ticks > 0:
+		ext |= 8
+	if v.jammed_by >= 0 or v.shed != 0:
+		ext |= 16
+	if v.mark_id >= 0:
+		ext |= 32
+	sp.put_u8(ext)
+	if (ext & 1) != 0:
+		sp.put_float(v.momentum)
+	if (ext & 2) != 0:
+		for s in Abilities.SLOTS:
+			sp.put_u8(Abilities.IDS.find(v.abilities[s]) if v.abilities[s] != "" else 255)
+			sp.put_u16(clampi(v.ab_cd[s], 0, 65535))
+	if (ext & 4) != 0:
+		sp.put_u8(clampi(v.nitro_ticks, 0, 255))
+		sp.put_u8(clampi(v.sputter_ticks, 0, 255))
+		sp.put_u8(clampi(v.salvo_ticks, 0, 255))
+		sp.put_u8(clampi(v.smoke_ticks, 0, 255))
+		sp.put_u8(clampi(v.decoy_ticks, 0, 255))
+		sp.put_u8(clampi(v.rules_off_ticks, 0, 255))
+		sp.put_u8(v.nitro_count & 255)
+		sp.put_u16(clampi(v.boom_cd, 0, 65535))
+	if (ext & 8) != 0:
+		sp.put_float(v.decoy_pos.x)
+		sp.put_float(v.decoy_pos.y)
+	if (ext & 16) != 0:
+		sp.put_8(clampi(v.jammed_by, -1, 127))
+		sp.put_u8(clampi(v.shed, 0, 255))
+	if (ext & 32) != 0:
+		sp.put_32(v.mark_id)
+		sp.put_float(v.mark_pos.x)
+		sp.put_float(v.mark_pos.y)
+
+
+static func _get_extras(r: _Reader, v: SimVehicle, slot_ids: Array[String], slot_cd: PackedInt32Array) -> void:
+	var ext: int = r.u8()
+	if ext >= 64:
+		r.fail()
+		return
+	if (ext & 1) != 0:
+		v.momentum = r.f32()
+	if (ext & 2) != 0:
+		for s in Abilities.SLOTS:
+			var aix: int = r.u8()
+			if aix < Abilities.IDS.size():
+				slot_ids[s] = Abilities.IDS[aix]
+			elif aix != 255:
+				r.fail()
+			slot_cd[s] = r.u16()
+	if (ext & 4) != 0:
+		v.nitro_ticks = r.u8()
+		v.sputter_ticks = r.u8()
+		v.salvo_ticks = r.u8()
+		v.smoke_ticks = r.u8()
+		v.decoy_ticks = r.u8()
+		v.rules_off_ticks = r.u8()
+		v.nitro_count = r.u8()
+		v.boom_cd = r.u16()
+	if (ext & 8) != 0:
+		v.decoy_pos = Vector2(r.f32(), r.f32())
+	if (ext & 16) != 0:
+		v.jammed_by = r.s8()
+		v.shed = r.u8()
+	if (ext & 32) != 0:
+		v.mark_id = r.s32()
+		v.mark_pos = Vector2(r.f32(), r.f32())
 
 
 ## Round and match stats of one vehicle (see SimWorld.new_round_stats / new_match_stats).
@@ -677,6 +785,9 @@ static func _get_vehicle(r: _Reader, with_stats: bool = false) -> SimVehicle:
 	v.picked = (bits & 4) != 0
 	v.reroll_cost = r.u16()
 	v.scrap_frac = r.f32()
+	var slot_ids: Array[String] = ["", ""]
+	var slot_cd := PackedInt32Array([0, 0])
+	_get_extras(r, v, slot_ids, slot_cd)
 	var offers: Array[String] = []
 	var no: int = r.u8()
 	for i in no:
@@ -725,6 +836,8 @@ static func _get_vehicle(r: _Reader, with_stats: bool = false) -> SimVehicle:
 	if r.ok:
 		# Derived stats follow from cards + tech; weapons and hp are exactly as sent.
 		Cards.recompute(v, false, false)
+		v.abilities = slot_ids  # as sent (recompute would fill free slots by itself)
+		v.ab_cd = slot_cd
 	return v
 
 
@@ -785,6 +898,23 @@ static func _commit_vehicles(world: SimWorld, fresh: Array[SimVehicle]) -> void:
 			dst.invuln_ticks = src.invuln_ticks
 			dst.contact_reduction = src.contact_reduction
 			dst.thorns = src.thorns
+			dst.eff_armor = src.eff_armor
+			dst.momentum = src.momentum
+			dst.abilities = src.abilities
+			dst.ab_cd = src.ab_cd
+			dst.nitro_ticks = src.nitro_ticks
+			dst.sputter_ticks = src.sputter_ticks
+			dst.salvo_ticks = src.salvo_ticks
+			dst.smoke_ticks = src.smoke_ticks
+			dst.decoy_ticks = src.decoy_ticks
+			dst.decoy_pos = src.decoy_pos
+			dst.rules_off_ticks = src.rules_off_ticks
+			dst.nitro_count = src.nitro_count
+			dst.boom_cd = src.boom_cd
+			dst.jammed_by = src.jammed_by
+			dst.shed = src.shed
+			dst.mark_id = src.mark_id
+			dst.mark_pos = src.mark_pos
 			if not src.round_stats.is_empty():
 				dst.round_stats = src.round_stats
 				dst.match_stats = src.match_stats

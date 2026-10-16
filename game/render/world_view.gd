@@ -78,6 +78,10 @@ var _veh_steps: Dictionary = {}  # vehicle id -> int, track stamps so far (dust 
 var _enemy_disp: Dictionary = {}  # enemy id -> Vector3(x, y, frame)
 var _acid_pos: PackedVector2Array = PackedVector2Array()
 var _burn_pos: PackedVector2Array = PackedVector2Array()  ## burning enemies this frame (warm flickering halo)
+var _stun_pos: PackedVector2Array = PackedVector2Array()  ## EMP-stunned enemies this frame
+var _warn_pos: PackedVector2Array = PackedVector2Array()  ## spitters about to spit (radar array of the watched rig)
+var _rings: Array = []  ## expanding rings from events: [pos, radius px, born tick, life ticks, colour]
+var _decoys: Dictionary = {}  ## vehicle id -> RigView, the faint phantom decoy copy
 var _last_tick: int = -1
 var _tick_age: float = 0.0
 
@@ -298,6 +302,7 @@ func _update_vehicles(lead: float, k: float) -> void:
 		rv.setup(v)
 		rv.place(v, Gfx.snap(p), head, world.tick, frozen)
 		rv.set_flash(_protect_flash(v))
+		_update_decoy(v, head)
 		if v.alive:
 			_trail(v.id, p, head, -1.0 if frozen else 0.0)
 	for id in _vehicle_nodes.keys():
@@ -305,6 +310,26 @@ func _update_vehicles(lead: float, k: float) -> void:
 			(_vehicle_nodes[id] as Node).queue_free()
 			_vehicle_nodes.erase(id)
 			_veh_disp.erase(id)
+			if _decoys.has(id):
+				(_decoys[id] as Node).queue_free()
+				_decoys.erase(id)
+
+
+## Phantom drive: a faint copy of the rig stands where the nitro was cast while the decoy lasts.
+func _update_decoy(v: SimVehicle, head: float) -> void:
+	var dv: RigView = _decoys.get(v.id)
+	if v.decoy_ticks <= 0 or not v.alive:
+		if dv != null:
+			dv.visible = false
+		return
+	if dv == null:
+		dv = RigView.new()
+		add_child(dv)
+		_decoys[v.id] = dv
+	dv.visible = true
+	dv.setup(v)
+	dv.place(v, Gfx.snap(v.decoy_pos), head, world.tick, frozen)
+	dv.modulate = Color(1, 1, 1, 0.35)
 
 
 ## Protection shimmer strength for this frame (third-party protection, respawn shields).
@@ -356,7 +381,12 @@ func _update_enemies(lead: float, k: float) -> void:
 		layer.begin(n)
 	var disp: Dictionary = {}
 	_burn_pos.clear()
+	_stun_pos.clear()
+	_warn_pos.clear()
 	var burn_n: int = world.enemy_burn_ticks.size()
+	var stun_n: int = world.enemy_status.size()
+	var fv: SimVehicle = focus_vehicle()
+	var warn: bool = fv != null and float(fv.tech_fx.get("spit_warn", 0.0)) > 0.0
 	for i in n:
 		var id: int = world.enemy_id[i]
 		var vel: Vector2 = world.enemy_vel[i]
@@ -375,6 +405,10 @@ func _update_enemies(lead: float, k: float) -> void:
 		disp[id] = Vector3(p.x, p.y, frame)
 		if i < burn_n and world.enemy_burn_ticks[i] > 0:
 			_burn_pos.append(Gfx.snap(p))
+		if i < stun_n and (world.enemy_status[i] & 255) > 0:
+			_stun_pos.append(Gfx.snap(p))
+		if warn and world.enemy_kind[i] == SimWorld.SPITTER and SimWorld.spit_warning(world.tick, id):
+			_warn_pos.append(Gfx.snap(p))
 		var kind: int = world.enemy_kind[i]
 		if kind < _enemy_layers.size():
 			_enemy_layers[kind].add(p, frame, id % 2)
@@ -412,10 +446,19 @@ func _draw_halos() -> void:
 		var fl: float = 0.45 + 0.2 * float((world.tick + bi * 5) % 4)
 		_halos.draw_texture_rect(Gfx.TEX_HALO_WARM, Rect2(bp - ws / 2.0, ws), false, Color(1, 1, 1, fl))
 	for zi in mini(world.zone_count, world.zone_pos.size()):
+		if world.zone_kind[zi] != SimWorld.ZONE_EMBER and world.zone_kind[zi] != SimWorld.ZONE_FIRE:
+			continue
 		var zr: float = world.zone_radius[zi] * 2.0
 		var zk := Vector2(zr, zr)
 		var za: float = clampf(float(world.zone_ttl[zi]) / 30.0, 0.0, 1.0) * 0.35
 		_halos.draw_texture_rect(Gfx.TEX_HALO_WARM_BIG, Rect2(Gfx.snap(world.zone_pos[zi]) - zk / 2.0, zk), false, Color(1, 1, 1, za))
+	# Stunned aliens: a pale halo; spitters that are about to spit: a warm warning pip over them.
+	for sp in _stun_pos:
+		_halos.draw_texture_rect(Gfx.TEX_HALO_WARM, Rect2(sp - ws / 2.0, ws), false, Color(0.8, 0.8, 0.9, 0.5))
+	for wp in _warn_pos:
+		var blink: bool = (world.tick / 3) % 2 == 0
+		_halos.draw_rect(Rect2(wp + Vector2(-1, -14), Vector2(3, 6)), Gfx.FIRE[4] if blink else Gfx.FIRE[2])
+		_halos.draw_rect(Rect2(wp + Vector2(-1, -7), Vector2(3, 2)), Gfx.FIRE[4] if blink else Gfx.FIRE[2])
 
 
 # ---------------------------------------------------------------- events
@@ -428,6 +471,20 @@ func _consume_events(events: Array, age: float, transient: bool, tick: int = -1,
 		var kind: int = int(e.get("kind", -1))
 		var h: int = Gfx.hash_pos(pos, owner + 7)
 		match str(e.get("type", "")):
+			"emp":
+				_add_ring(pos, Abilities.EMP_RADIUS, tick, 14, Gfx.STEEL[5])
+			"boom":
+				_add_ring(pos, Mobility.BOOM_RADIUS, tick, 10, Gfx.FIRE[4])
+			"sparks":
+				_add_ring(pos, Mobility.SPARKS_RADIUS, tick, 6, Gfx.FIRE[5])
+				if transient:
+					_effects.spawn(EffectsLayer.Kind.SPARKS, pos, float(h % 628) / 100.0, age, h)
+			"nitro":
+				_add_ring(pos, 16.0, tick, 8, Gfx.FIRE[3] if kind == 0 else Gfx.UI_DIM)
+			"smoke", "salvo":
+				_add_ring(pos, 24.0 if str(e.get("type", "")) == "smoke" else 30.0, tick, 10, Gfx.UI_DIM if str(e.get("type", "")) == "smoke" else Gfx.FIRE[5])
+			"dodge":
+				_add_ring(pos, 12.0, tick, 6, Gfx.UI_TEXT)
 			"fire":
 				if transient:
 					_muzzle_flash(owner, pos, kind, age)
@@ -481,6 +538,12 @@ func _log_event(e: Dictionary, tick: int, rnd: int) -> void:
 	log.append(entry)
 	if log.size() > LOG_CAP:
 		log.remove_at(0)
+
+
+## An expanding ring of `radius` px that fades over `life` ticks (EMP, boom, sparks, ability casts).
+func _add_ring(pos: Vector2, radius: float, tick: int, life: int, col: Color) -> void:
+	if _rings.size() < 32:
+		_rings.append([pos, radius, tick if tick >= 0 else world.tick, life, col])
 
 
 func _muzzle_flash(vehicle_id: int, muzzle: Vector2, kind: int, age: float) -> void:
@@ -682,6 +745,10 @@ func _update_camera(k: float) -> void:
 func _draw_ring() -> void:
 	if world == null or attract:
 		return
+	for zi in mini(world.zone_count, world.zone_pos.size()):  # oil puddles on the ground
+		if world.zone_kind[zi] == SimWorld.ZONE_OIL:
+			var fade: float = clampf(float(world.zone_ttl[zi]) / 30.0, 0.0, 1.0)
+			_ring.draw_circle(Gfx.snap(world.zone_pos[zi]), world.zone_radius[zi], Color(0.07, 0.05, 0.05, 0.55 * fade))
 	var v: SimVehicle = focus_vehicle()
 	if v == null or not v.alive:
 		return
@@ -706,6 +773,7 @@ func _draw_ring() -> void:
 func _draw_labels() -> void:
 	if world == null or attract:
 		return
+	_draw_effects_overlay()
 	for v in world.vehicles:
 		if not v.alive:
 			continue
@@ -716,12 +784,58 @@ func _draw_labels() -> void:
 		var top: float = p.y - r - 9.0
 		if protect_ticks(v) > 0:
 			_draw_shield(p, r, v.id)
+		if v.momentum >= Mobility.FULL_MOMENTUM:  # full momentum: sparks fly off the rig
+			for k in 3:
+				var a: float = float((world.tick * 7 + k * 5 + v.id * 3) % 63) / 10.0
+				var sp: Vector2 = Gfx.snap(p + Vector2(cos(a), sin(a)) * (r + 1.0 + float((world.tick + k) % 3)))
+				_labels.draw_rect(Rect2(sp, Vector2.ONE), Gfx.FIRE[5] if k % 2 == 0 else Gfx.FIRE[4])
+		if v.mark_id >= 0:  # swarm logic: a red laser line from the rig to its marked target
+			_draw_laser(p, v.mark_pos)
 		if v.peer_id == world.leader_peer:  # bounty mark (#11)
 			var bob: float = float((world.tick / 10) % 2)
 			var s := Vector2(Gfx.TEX_SKULL.get_size())
 			var sy: float = top - (s.y + 4.0 if v.peer_id != local_peer else 0.0) - bob
 			_labels.draw_texture(Gfx.TEX_SKULL, Vector2(p.x - floorf(s.x / 2.0), sy))
 		# rival name tags and hp bars are drawn by the HUD (crisp text): Hud._draw_rival_tags
+
+
+## Rings from events (EMP, boom, sparks, ability casts) and smoke clouds. Minimal: a real visual pass comes later.
+func _draw_effects_overlay() -> void:
+	var keep: Array = []
+	for rg: Array in _rings:
+		var age: float = float(world.tick - int(rg[2])) / float(rg[3])
+		if age >= 1.0 or age < 0.0:
+			continue
+		keep.append(rg)
+		var col: Color = rg[4]
+		var rad: float = float(rg[1]) * minf(1.0, age * 2.5 + 0.2)
+		var n: int = maxi(int(rad * 1.4), 12)
+		var c: Vector2 = Gfx.snap(rg[0])
+		for i in n:
+			var a: float = TAU * float(i) / float(n)
+			_labels.draw_rect(Rect2(Gfx.snap(c + Vector2(cos(a), sin(a) * 0.85) * rad), Vector2.ONE), Color(col, 0.9 * (1.0 - age)))
+	_rings = keep
+	for zi in mini(world.zone_count, world.zone_pos.size()):
+		if world.zone_kind[zi] != SimWorld.ZONE_SMOKE:
+			continue
+		var zc: Vector2 = Gfx.snap(world.zone_pos[zi])
+		var zr: float = world.zone_radius[zi]
+		var fade: float = clampf(float(world.zone_ttl[zi]) / 30.0, 0.0, 1.0)
+		for k in 14:  # a puffy cloud: a fixed scatter of dim discs (no randomness, from the zone index)
+			var a2: float = float(k) * 2.399963 + float(zi)
+			var rr: float = zr * 0.7 * sqrt(float(k + 1) / 14.0)
+			_labels.draw_circle(Gfx.snap(zc + Vector2(cos(a2), sin(a2)) * rr), zr * 0.35, Color(0.32, 0.29, 0.27, 0.16 * fade))
+
+
+## A thin dashed red line (swarm logic mark); warm, never cyan.
+func _draw_laser(from: Vector2, to: Vector2) -> void:
+	var dist: float = from.distance_to(to)
+	var steps: int = int(dist / 4.0)
+	for i in range(1, steps):
+		if (i + world.tick / 2) % 3 == 0:
+			continue
+		_labels.draw_rect(Rect2(Gfx.snap(from.lerp(to, float(i) / float(steps))), Vector2.ONE), Color(Gfx.UI_BAD, 0.7))
+	_labels.draw_rect(Rect2(Gfx.snap(to) - Vector2.ONE, Vector2(3, 3)), Color(Gfx.UI_BAD, 0.9))
 
 
 ## Protection shimmer: a broken ring of warm-white sparks orbiting the rig (never cyan: cold = alien).

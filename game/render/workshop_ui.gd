@@ -853,7 +853,9 @@ func _scout_target() -> SimVehicle:
 ## branch, doctrine. All from the synced vehicle state (also used by the spectator layout).
 func _draw_dossier(o: SimVehicle, r: Rect2, closable: bool) -> void:
 	var guns: int = Cards.weapon_cards_owned(o)
-	var need: float = 70.0 + 9.0 * guns + 9.0 * maxi(o.cards.size() - guns, 0) + 52.0
+	var me: SimVehicle = world.get_vehicle_for_peer(local_peer)
+	var scout_rules: bool = me != null and me != o and float(me.tech_fx.get("scout_rules", 0.0)) > 0.0 and not o.rules.is_empty()
+	var need: float = 70.0 + 9.0 * guns + 9.0 * maxi(o.cards.size() - guns, 0) + 52.0 + (18.0 if scout_rules else 0.0)
 	r.size.y = minf(r.size.y, need)
 	UiKit.panel(self, r)
 	_hits.append([r, "none", null])
@@ -928,6 +930,11 @@ func _draw_dossier(o: SimVehicle, r: Rect2, closable: bool) -> void:
 	draw_rect(dr.grow(-1.0), Gfx.CRT_BG)
 	var doc := "> %s / %s" % [str(o.doctrine["drive"]).to_upper(), TARGET_LABELS.get(str(o.doctrine["target"]), "?")]
 	UiFont.draw(self, doc, dr.position + Vector2(3, 3), Gfx.CRT_TEXT)
+	if scout_rules:  # radar array: the rival's rules in plain words (first two rules)
+		var ry: float = dr.end.y + 3.0
+		for k in mini(2, o.rules.size()):
+			UiFont.draw_small(self, DoctrineEditor.sentence(o.rules[k], Doctrine.SCOPE_RIG).left(46), Vector2(x0, ry), Gfx.CRT_DIM)
+			ry += 8.0
 
 
 # ---------------------------------------------------------------- spectator workshop (#5)

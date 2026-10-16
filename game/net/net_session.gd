@@ -36,6 +36,7 @@ const MAX_RAW_NAME := 64  ## longer raw names are junk and rejected; shorter one
 const COMMANDS := {
 	"set_drive": ["circle", "kite", "charge"],
 	"set_target": Doctrine.RIG_TARGETS,
+	"use_ability": Abilities.IDS,
 }
 ## Commands without a value (any "value" key is dropped).
 const VALUELESS_COMMANDS: PackedStringArray = ["reroll", "ready"]
@@ -275,7 +276,8 @@ func send_command(cmd: Dictionary) -> void:
 ## Returns a sanitised copy ({"type"} or {"type", "value"}) if `cmd` is an allowed command, else {}.
 ## pick_card takes an integral number 0..2 (an int or a whole float, since JSON / RPC may deliver
 ## either; returned as int); buy_tech takes a known tech id; respec_tech takes two ("from", "value"); reroll and ready take no value;
-## set_rules / set_weapon_target / set_ammo take a "scope" and are re-encoded in canonical form (Doctrine).
+## set_rules / set_weapon_target / set_ammo take a "scope" and are re-encoded in canonical form (Doctrine);
+## use_ability takes an ability id, set_ability a "slot" (0..1) and an ability id.
 static func validate_command(cmd: Variant) -> Dictionary:
 	if typeof(cmd) != TYPE_DICTIONARY:
 		return {}
@@ -324,6 +326,11 @@ static func validate_command(cmd: Variant) -> Dictionary:
 		if not Doctrine.is_weapon_scope(String(ascope)) or not Ammo.is_valid_id(String(v)):
 			return {}
 		return {"type": type_s, "scope": String(ascope), "value": String(v)}
+	if type_s == "set_ability":  # {"slot": 0..SLOTS-1, "value": ability id} (the sim checks it is unlocked)
+		var slot: int = _small_int(d.get("slot"), Abilities.SLOTS)
+		if slot < 0 or typeof(v) != TYPE_STRING or not Abilities.IDS.has(String(v)):
+			return {}
+		return {"type": type_s, "slot": slot, "value": String(v)}
 	if type_s == "respec_tech":  # {"from": owned tech id, "value": tech id to swap to}
 		var from_v: Variant = d.get("from")
 		if typeof(from_v) != TYPE_STRING or typeof(v) != TYPE_STRING:

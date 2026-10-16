@@ -26,6 +26,7 @@ const PROFILE_PATH := "user://profile.cfg"
 const PORT := 24680
 const DRIVE_KEYS := {KEY_1: "circle", KEY_2: "kite", KEY_3: "charge"}
 const TARGET_KEYS := {KEY_Q: "nearest", KEY_W: "strongest", KEY_E: "players_first"}
+const ABILITY_KEYS := {KEY_F: 0, KEY_G: 1}  ## cast the ability in slot 0 / 1 by hand
 const DEMO_TICKS := 30 * 120  ## the menu's attract battle restarts after this many ticks
 
 @onready var _view: WorldView = $Stage/World/WorldView
@@ -394,6 +395,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		_session.call("send_command", {"type": "set_drive", "value": DRIVE_KEYS[key]})
 	elif TARGET_KEYS.has(key):
 		_session.call("send_command", {"type": "set_target", "value": TARGET_KEYS[key]})
+	elif ABILITY_KEYS.has(key):
+		var me: SimVehicle = w.get_vehicle_for_peer(int(_session.call("local_peer_id")))
+		if me != null and me.abilities[ABILITY_KEYS[key]] != "":
+			_session.call("send_command", {"type": "use_ability", "value": me.abilities[ABILITY_KEYS[key]]})
 
 
 # ---------------------------------------------------------------- profile

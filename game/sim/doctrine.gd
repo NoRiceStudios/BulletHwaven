@@ -15,7 +15,8 @@ extends RefCounted
 ## append to them.
 
 const SCOPE_RIG := "rig"
-const MAX_CONDS := 3
+const MAX_CONDS := 4  ## absolute cap per rule; the vehicle's own limit is max_conds()
+const BASE_CONDS := 3  ## conditions per rule before the Targeting Computer
 const BASE_SLOTS := 2  ## rule slots per list without Electronics tech
 const MAX_SLOTS := 6  ## hard cap per list (rules beyond the vehicle's slots are stored, not run)
 const MAX_TEXT := 400  ## longest accepted text form of one list
@@ -23,13 +24,15 @@ const SWARM_RADIUS := 220.0  ## "swarm": aliens within this many px of the rig
 const RIVAL_RADIUS := 380.0  ## "rivals": rival rigs within this many px (only while PvP is on)
 
 ## Index tables for the binary form. Only append.
-const COND_IDS: PackedStringArray = ["hp", "swarm", "rivals", "t_dist", "t_hp", "t_player", "t_boulder", "t_spitter", "pvp", "has_target"]
+const COND_IDS: PackedStringArray = ["hp", "swarm", "rivals", "t_dist", "t_hp", "t_player", "t_boulder", "t_spitter", "pvp", "has_target",
+	"boulders", "fuel", "rival_weaker", "ability_ready", "t_leader"]
 const OPS: PackedStringArray = ["<", ">", "="]
 const ACTIONS: PackedStringArray = [
 	"drive:circle", "drive:kite", "drive:charge", "drive:flee", "drive:hold",
 	"target:nearest", "target:strongest", "target:weakest", "target:players_first", "target:boulders",
 	"target:spitters", "target:follow", "fire:hold", "fire:free",
 	"ammo:fire", "ammo:shrapnel", "ammo:ap",
+	"fire:focus", "ability:nitro", "ability:emp", "ability:smoke", "ability:salvo",
 ]
 
 ## Condition metadata: numeric ones take "<" / ">" and a value in [min, max] (UI step `step`);
@@ -45,6 +48,16 @@ const CONDS := {
 	"t_spitter": {"flag": true, "def": 1},
 	"pvp": {"flag": true, "def": 1},
 	"has_target": {"flag": true, "def": 0},
+	"boulders": {"flag": false, "min": 0, "max": 20, "step": 1, "def": 3, "unit": ""},
+	"fuel": {"flag": false, "min": 0, "max": 100, "step": 10, "def": 30, "unit": ""},
+	"rival_weaker": {"flag": true, "def": 1},
+	"ability_ready": {"flag": true, "def": 1},
+	"t_leader": {"flag": true, "def": 1},
+}
+## Conditions the tech tree unlocks: condition id -> tech fx key (anything else is always available).
+const COND_FX := {
+	"boulders": "cond_boulders", "fuel": "cond_fuel", "rival_weaker": "cond_rival_weaker",
+	"ability_ready": "cond_ability_ready", "t_leader": "cond_t_leader",
 }
 
 const DRIVES: PackedStringArray = ["circle", "kite", "charge", "flee", "hold"]
@@ -58,33 +71,83 @@ static func slots(v: SimVehicle) -> int:
 	return clampi(BASE_SLOTS + roundi(float(v.tech_fx.get("rule_slots", 0.0))), 1, MAX_SLOTS)
 
 
+## Rule slots that actually run: none while EMP'd by a rival, one fewer inside a rival's jammer field.
+static func active_slots(v: SimVehicle) -> int:
+	if v.rules_off_ticks > 0:
+		return 0
+	return maxi(slots(v) - (1 if v.jammed_by >= 0 else 0), 0)
+
+
+## Conditions allowed per rule: 3, 4 with the Targeting Computer (`max_conds` fx).
+static func max_conds(v: SimVehicle) -> int:
+	return clampi(BASE_CONDS + roundi(float(v.tech_fx.get("max_conds", 0.0))), BASE_CONDS, MAX_CONDS)
+
+
 static func is_weapon_scope(scope: String) -> bool:
 	return Cards.WEAPONS.has(scope)
 
 
-## Actions a rule may use in `scope` ("rig" or a weapon kind). With a vehicle `v` the `ammo:<id>`
-## actions are limited to the ammo it has unlocked (editor); without one they are all listed
-## (parsing, snapshots: the sim checks the unlock, see rules_allowed()).
+## Is condition `id` available to `v` (unlocked by its tech)?
+static func cond_unlocked(v: SimVehicle, id: String) -> bool:
+	var key: String = str(COND_FX.get(id, ""))
+	return key == "" or float(v.tech_fx.get(key, 0.0)) > 0.0
+
+
+## Is action `a` available to `v`? ammo needs the ammo, focus the relay, ability:<id> that ability, and a
+## juggernaut cannot back away (no kite / flee).
+static func action_unlocked(v: SimVehicle, a: String) -> bool:
+	match action_group(a):
+		"ammo":
+			return Ammo.is_unlocked(v, action_value(a))
+		"ability":
+			return Abilities.is_unlocked(v, action_value(a))
+		"fire":
+			return a != "fire:focus" or float(v.tech_fx.get("act_focus", 0.0)) > 0.0
+		"drive":
+			return not ((a == "drive:kite" or a == "drive:flee") and Mobility.is_juggernaut(v))
+	return true
+
+
+## Conditions `v` has unlocked, in COND_IDS order (the editor greys the rest).
+static func conds_for(v: SimVehicle) -> PackedStringArray:
+	var out := PackedStringArray()
+	for id in COND_IDS:
+		if cond_unlocked(v, id):
+			out.append(id)
+	return out
+
+
+## Actions a rule may use in `scope` ("rig" or a weapon kind). With a vehicle `v` the list is limited to
+## what it has unlocked (editor); without one everything is listed (parsing, snapshots: the sim checks the
+## unlock, see rules_allowed()). Rig scope: drive, target, `fire:focus`, `ability:<id>`; weapon scope:
+## target, fire hold / free, `ammo:<id>`.
 static func actions_for(scope: String, v: SimVehicle = null) -> PackedStringArray:
 	var out := PackedStringArray()
 	for a in ACTIONS:
+		var grp: String = action_group(a)
+		var ok: bool
 		if scope == SCOPE_RIG:
-			if a.begins_with("drive:") or (a.begins_with("target:") and a != "target:follow"):
-				out.append(a)
-		elif a.begins_with("ammo:"):
-			if v == null or Ammo.is_unlocked(v, action_value(a)):
-				out.append(a)
-		elif a.begins_with("target:") or a.begins_with("fire:"):
+			ok = grp == "drive" or grp == "ability" or a == "fire:focus" or (grp == "target" and a != "target:follow")
+		else:
+			ok = grp == "ammo" or grp == "target" or (grp == "fire" and a != "fire:focus")
+		if ok and (v == null or action_unlocked(v, a)):
 			out.append(a)
 	return out
 
 
-## False if a parsed rule list uses an `ammo:<id>` action whose ammo `v` has not unlocked.
+## False if a parsed rule list uses something `v` has not unlocked (conditions, `ammo:<id>`, `fire:focus`,
+## `ability:<id>`, kite / flee as a juggernaut) or more conditions per rule than it may.
 static func rules_allowed(v: SimVehicle, rules: Array) -> bool:
+	var cmax: int = max_conds(v)
 	for r: Dictionary in rules:
-		var a: String = r["do"]
-		if action_group(a) == "ammo" and not Ammo.is_unlocked(v, action_value(a)):
+		if not action_unlocked(v, r["do"]):
 			return false
+		var conds: Array = r["if"]
+		if conds.size() > cmax:
+			return false
+		for c: Array in conds:
+			if not cond_unlocked(v, c[0]):
+				return false
 	return true
 
 
@@ -212,29 +275,55 @@ static func fingerprint(v: SimVehicle) -> String:
 
 # ---------------------------------------------------------------- evaluation
 
-## Runs the rig's rules: sets v.eff_drive / v.eff_target and v.rule_live (bit i = rule i matched).
+## Runs the rig's rules: sets v.eff_drive / v.eff_target, v.focus, the ability rule masks and v.rule_live
+## (bit i = rule i matched). A rule with an unlocked-no-more item (after a respec) never runs. A juggernaut
+## cannot back away: kite becomes circle and flee becomes charge.
 static func apply_rig(w: SimWorld, v: SimVehicle) -> void:
 	var drive: String = str(v.doctrine.get("drive", "circle"))
 	var target: String = str(v.doctrine.get("target", "nearest"))
 	var live: int = 0
 	var got_drive: bool = false
 	var got_target: bool = false
+	var got_focus: bool = false
+	var focus: bool = float(v.tech_fx.get("swarm_logic", 0.0)) > 0.0
+	var ab_any: int = 0
+	var ab_hit: int = 0
 	var ctx := {}
-	var n: int = mini(v.rules.size(), slots(v))
+	var n: int = mini(v.rules.size(), active_slots(v))
 	for i in n:
 		var r: Dictionary = v.rules[i]
+		var a: String = r["do"]
+		var grp: String = action_group(a)
+		if not action_unlocked(v, a):
+			continue
+		var abit: int = 0
+		if grp == "ability":
+			abit = 1 << Abilities.index_of(action_value(a))
+			ab_any |= abit
 		if not _holds(w, v, r["if"], v.target_kind, v.target_index, v.target_id, v.target_pos, ctx):
 			continue
 		live |= 1 << i
-		var a: String = r["do"]
-		if action_group(a) == "drive" and not got_drive:
+		if grp == "drive" and not got_drive:
 			drive = action_value(a)
 			got_drive = true
-		elif action_group(a) == "target" and not got_target:
+		elif grp == "target" and not got_target:
 			target = action_value(a)
 			got_target = true
+		elif a == "fire:focus" and not got_focus:
+			focus = true
+			got_focus = true
+		elif grp == "ability":
+			ab_hit |= abit
+	if Mobility.is_juggernaut(v):
+		if drive == "kite":
+			drive = "circle"
+		elif drive == "flee":
+			drive = "charge"
 	v.eff_drive = drive
 	v.eff_target = target
+	v.focus = focus
+	v.ab_rule_any = ab_any
+	v.ab_rule_hit = ab_hit
 	v.rule_live = live
 
 
@@ -262,7 +351,7 @@ static func apply_weapon(w: SimWorld, v: SimVehicle, wp: Dictionary) -> Array:
 		var got_fire: bool = false
 		var got_ammo: bool = false
 		var ctx := {}
-		var n: int = mini(rules.size(), slots(v))
+		var n: int = mini(rules.size(), active_slots(v))
 		for i in n:
 			var r: Dictionary = rules[i]
 			if not _holds(w, v, r["if"], tk, ti, tid, tp, ctx):
@@ -307,10 +396,35 @@ static func _value(w: SimWorld, v: SimVehicle, id: String, tk: int, ti: int, tid
 	match id:
 		"hp":
 			return 100.0 * v.hp / maxf(v.max_hp, 1.0)
-		"swarm":
+		"swarm", "boulders":
 			if not ctx.has("swarm"):
-				ctx["swarm"] = w.query_enemies(v.pos, SWARM_RADIUS, w.ai_buf)
-			return float(ctx["swarm"])
+				var near: int = w.query_enemies(v.pos, SWARM_RADIUS, w.ai_buf)
+				var rocks: int = 0
+				for q in near:
+					var e: int = w.ai_buf[q]
+					if w.enemy_kind[e] == SimWorld.BOULDER and w.enemy_hp[e] > 0.0:
+						rocks += 1
+				ctx["swarm"] = near
+				ctx["boulders"] = rocks
+			if id == "boulders" and not cond_unlocked(v, id):
+				return NAN
+			return float(ctx[id])
+		"fuel":
+			return float(v.fuel) if cond_unlocked(v, id) else NAN
+		"rival_weaker":
+			if not cond_unlocked(v, id):
+				return NAN
+			var mine: float = v.hp / maxf(v.max_hp, 1.0)
+			if w.pvp_enabled():
+				for o in w.vehicles:
+					if o.id != v.id and o.alive and o.invuln_ticks <= 0 and o.hp / maxf(o.max_hp, 1.0) < mine \
+							and v.pos.distance_squared_to(o.pos) <= RIVAL_RADIUS * RIVAL_RADIUS:
+						return 1.0
+			return 0.0
+		"ability_ready":
+			if not cond_unlocked(v, id):
+				return NAN
+			return 1.0 if Abilities.any_ready(v) else 0.0
 		"rivals":
 			if not ctx.has("rivals"):
 				var n: int = 0
@@ -338,6 +452,10 @@ static func _value(w: SimWorld, v: SimVehicle, id: String, tk: int, ti: int, tid
 			return 100.0 * t.hp / maxf(t.max_hp, 1.0)
 		"t_player":
 			return 1.0 if tk == 2 else 0.0
+		"t_leader":
+			if not cond_unlocked(v, id):
+				return NAN
+			return 1.0 if tk == 2 and tid >= 0 and tid < w.vehicles.size() and w.vehicles[tid].peer_id == w.leader_peer else 0.0
 		"t_boulder", "t_spitter":
 			if tk != 1 or ti < 0 or ti >= w.enemy_count:
 				return 0.0

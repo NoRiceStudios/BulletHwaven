@@ -291,7 +291,8 @@ static func recompute(v: SimVehicle, rebuild_weapons: bool = true, adjust_hp: bo
 	if adjust_hp and v.alive and v.max_hp > old_max:
 		v.hp = minf(v.hp + (v.max_hp - old_max), v.max_hp)
 	v.hp = minf(v.hp, v.max_hp)
-	v.armor = float(st["armor"])
+	v.armor = maxf(float(st["armor"]) - float(v.shed), 0.0)  # scrap armour: plates shed this round stay off
+	v.eff_armor = v.armor
 	v.speed = maxf(1.0 + float(st["speed"]), 0.3)
 	v.turn_rate = maxf(1.0 + float(st["turn"]), 0.3)
 	v.scrap_mult = maxf(1.0 + float(st["scrap"]), 0.0)
@@ -305,6 +306,7 @@ static func recompute(v: SimVehicle, rebuild_weapons: bool = true, adjust_hp: bo
 	v.interest_cap = BASE_INTEREST_CAP + int(st["interest"])
 	v.reroll_discount = int(st.get("reroll", 0.0))
 	v.card_luck = maxf(float(st.get("luck", 0.0)), 0.0)
+	Abilities.sync(v)
 	if rebuild_weapons:
 		_rebuild_weapons(v, st)
 
