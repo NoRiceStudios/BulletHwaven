@@ -64,6 +64,8 @@ var _scout_pin: int = -1  ## vehicle id whose dossier is pinned next to the conv
 var _hint: Dictionary = {}  ## doctrine hint of the recap, computed once per round (before any click)
 var _hint_key: String = ""
 var _tab: String = "parts"
+## Pending tech swap waiting for confirmation in the TECH view ({"from", "to"}; {} = none).
+var confirm: Dictionary = {}
 
 
 func _ready() -> void:
@@ -80,6 +82,10 @@ func _process(delta: float) -> void:
 	_blink += delta
 	if visible and not was:
 		_scout_pin = -1
+		if use_real_pointer:
+			TechGuide.persist = true
+			if world.round <= 1:
+				TechGuide.note_match(world)  # the first workshop of a match: beginner-view counter
 		# the editor was open as a combat overlay: camp continues in the RULES view
 		if rules != null and rules.is_open and not _local().eliminated:
 			_set_tab("rules")
@@ -133,6 +139,11 @@ func blink() -> float:
 	return _blink
 
 
+## The UI pointer (mouse, or the screenshot override).
+func pointer() -> Vector2:
+	return _pointer()
+
+
 func scrap_pip(p: Vector2) -> void:
 	_scrap_pip(p)
 
@@ -149,6 +160,7 @@ static func body_rect() -> Rect2:
 
 func _set_tab(t: String) -> void:
 	_tab = t
+	confirm = {}
 	if rules == null:
 		return
 	if t == "rules":
@@ -178,13 +190,18 @@ func _unhandled_input(event: InputEvent) -> void:
 		KEY_R:
 			activate("reroll", null)
 		KEY_SPACE, KEY_ENTER:
-			activate("ready", null)
+			if not confirm.is_empty():
+				activate("swap_ok" if key == KEY_ENTER else "swap_cancel", null)
+			else:
+				activate("ready", null)
 		KEY_H:
 			activate("hint", 0)
 		KEY_T:
 			activate("tab", "parts" if _tab == "tech" else "tech")
 		KEY_ESCAPE:
-			if _tab != "parts":
+			if not confirm.is_empty():
+				activate("swap_cancel", null)
+			elif _tab != "parts":
 				activate("tab", "parts")
 			elif _scout_pin >= 0:
 				_scout_pin = -1
@@ -213,11 +230,11 @@ func activate(action: String, arg: Variant) -> void:
 	var v: SimVehicle = _local()
 	if v == null or world.phase != SimWorld.PHASE_WORKSHOP:
 		return
-	if v.eliminated and action in ["pick", "reroll", "tech", "ready", "hint", "tab"]:
+	if v.eliminated and action in ["pick", "reroll", "tech", "ready", "hint", "tab", "ammo", "ability", "swap_ok"]:
 		return  # spectator: read-only
 	match action:
 		"tab":
-			var t: String = str(arg)
+			var t: String = str(arg).get_slice(":", 0)  # "tech:<branch>" from the compact column
 			if t in TABS:
 				_set_tab(t)
 		"tree":  # old name of the TECH view (kept for scenarios and muscle memory)
@@ -269,7 +286,9 @@ func activate(action: String, arg: Variant) -> void:
 			elif Tech.blocked_by(v, id) != "":
 				var swap_from: String = Tech.blocked_by(v, id)
 				if Tech.can_respec(v, swap_from, id, world.round):
-					_send({"type": "respec_tech", "from": swap_from, "value": id})
+					if _tab != "tech":
+						_set_tab("tech")
+					confirm = {"from": swap_from, "to": id}  # TechTreeView.draw_confirm asks first
 				else:
 					_say("CANNOT SWAP %s NOW" % UiKit.tech_name(swap_from))
 			elif Tech.missing(v, id) != "":
@@ -278,6 +297,35 @@ func activate(action: String, arg: Variant) -> void:
 				_say("NEED %d SCRAP" % Tech.price(v, id))
 			else:
 				_send({"type": "buy_tech", "value": id})
+		"swap_ok":  # the confirmed respec
+			if not confirm.is_empty():
+				var f: String = str(confirm["from"])
+				var t2: String = str(confirm["to"])
+				confirm = {}
+				if Tech.can_respec(v, f, t2, world.round):
+					_send({"type": "respec_tech", "from": f, "value": t2})
+					_say("SWAPPED IN %s" % UiKit.tech_name(t2))
+		"swap_cancel":
+			confirm = {}
+		"tpl":  # follow a build template (client-side, this match)
+			TechGuide.set_template(world, str(arg))
+		"beginner":
+			TechGuide.set_beginner(bool(arg))
+		"expand":  # beginner view: open / fold a branch under MORE
+			TechGuide.toggle_opened(str(arg))
+		"ammo":  # [weapon kind, ammo id]
+			var a: Array = arg
+			var cur: Array = v.ammo.get(str(a[0]), [])
+			if not cur.is_empty() and cur[0] == str(a[1]):
+				_say("ALREADY LOADED")
+			else:
+				_send({"type": "set_ammo", "scope": str(a[0]), "value": str(a[1])})
+				_say("%s: %s LOADED" % [UiKit.weapon_short(Cards.weapon_kind_index(str(a[0]))), TechGuide.AMMO_NAMES.get(str(a[1]), "")])
+		"ability":  # [slot, ability id]
+			var b: Array = arg
+			_send({"type": "set_ability", "slot": int(b[0]), "value": str(b[1])})
+		"buy_next":  # the plan's next node, from the compact tech column
+			activate("tech", arg)
 		"accept":  # a contract offer
 			if int(arg) >= 0 and int(arg) < v.contract_offers.size():
 				_send({"type": "accept_contract", "value": int(arg)})
@@ -339,13 +387,17 @@ func _draw() -> void:
 		"tech":
 			draw_rect(Rect2(Vector2.ZERO, vs), Color(0.05, 0.035, 0.03, 0.55))
 			TechTreeView.draw(self, v, body_rect())
-			UiKit.footer(self, "CLICK A NODE  BUILD      T  BACK TO PARTS      SPACE  READY", vs)
+			if not confirm.is_empty():
+				TechTreeView.draw_confirm(self, v, body_rect())
+			UiKit.footer(self, "CLICK  BUILD OR SWAP      HOVER  DETAILS      T  BACK TO PARTS      SPACE  READY", vs)
 		"rules":
 			# the editor draws itself into the body (DoctrineEditor.open_embedded)
 			draw_rect(Rect2(Vector2.ZERO, vs), Color(0.05, 0.035, 0.03, 0.55))
 			UiKit.footer(self, "P  BACK TO PARTS      SPACE  READY", vs)
 		_:
 			_draw_rig_panel(v)
+			_draw_abilities(v)
+			_draw_tech_compact(v)
 			_draw_cards(v, vs)
 			_draw_contracts(v, vs)
 			_draw_recap(v)
@@ -356,6 +408,7 @@ func _draw() -> void:
 			UiKit.footer(self, "1 2 3  PICK      R  REROLL      T  TECH      P  RULES      SPACE  READY", vs)
 	_draw_bar(v, vs)
 	_draw_toast(vs)
+	TechTreeView.draw_gloss(self)
 
 
 func _draw_toast(vs: Vector2) -> void:
@@ -492,10 +545,14 @@ func _draw_rig_panel(v: SimVehicle) -> void:
 	var press: bool = float(v.tech_fx.get("scrap_press", 0.0)) > 0.0
 	UiKit.section(self, "GUNS", Vector2(x0, y), w, "%d/%d SLOTS" % [Cards.weapon_cards_owned(v), v.weapon_slots])
 	y += 10.0
+	var has_ammo: bool = not Ammo.unlocked(v).is_empty()
 	for id: String in v.cards:
 		if Cards.is_weapon(id):
 			_part_row(id, int(v.cards[id]), x0, xr, y, press)
 			y += 10.0
+			if has_ammo and v.ammo.has(id):
+				_ammo_row(v, id, x0 + 10.0, xr, y)
+				y += 10.0
 	for k in maxi(v.weapon_slots - Cards.weapon_cards_owned(v), 0):
 		UiFont.draw(self, "- FREE SLOT", Vector2(x0 + 10, y), Gfx.STEEL[3])
 		y += 10.0
@@ -536,6 +593,33 @@ func _draw_rig_panel(v: SimVehicle) -> void:
 		UiFont.draw(self, ut, ur.position + Vector2(5, 2), Gfx.INK)
 
 
+## Ammo of one gun (tech tree v2.3 section 3): "LOADED: FIRE" (two types with mixed belts) and a chip per
+## other unlocked type; a click loads it (set_ammo, the old one stays as the second type on mixed belts).
+func _ammo_row(v: SimVehicle, kind: String, x0: float, xr: float, y: float) -> void:
+	var loaded: Array = v.ammo.get(kind, [])
+	var names: PackedStringArray = []
+	for a: String in loaded:
+		names.append(str((TechGuide.AMMO_SHORT if loaded.size() > 1 else TechGuide.AMMO_NAMES).get(a, a)))
+	var x: float = UiFont.draw_small(self, "LOADED: ", Vector2(x0, y), Gfx.UI_DIM)
+	UiFont.draw_small(self, " + ".join(names) if not names.is_empty() else "NOTHING", Vector2(x, y), Gfx.FIRE[4])
+	var cx: float = xr
+	var un: Array[String] = Ammo.unlocked(v)
+	for i in range(un.size() - 1, -1, -1):
+		var a2: String = un[i]
+		if loaded.has(a2):
+			continue
+		var label: String = str(TechGuide.AMMO_SHORT.get(a2, a2))
+		var cw: float = UiFont.width_small(label) + 6.0
+		var cr := Rect2(cx - cw, y - 2.0, cw, 9.0)
+		var hov: bool = _is_hover("ammo", [kind, a2])
+		draw_rect(cr, Gfx.OUTLINE)
+		draw_rect(cr.grow(-1.0), Color(0.24, 0.15, 0.08) if hov else Color(0.13, 0.09, 0.07))
+		UiKit.outline_rect(self, cr.grow(-1.0), Gfx.FIRE[3] if hov else UiKit.PANEL_EDGE)
+		UiFont.draw_small(self, label, cr.position + Vector2(3, 2), Gfx.FIRE[5] if hov else Gfx.UI_TEXT)
+		_hits.append([cr, "ammo", [kind, a2]])
+		cx = cr.position.x - 2.0
+
+
 func _part_row(id: String, lvl: int, x0: float, xr: float, y: float, scrappable: bool = false) -> void:
 	draw_rect(Rect2(x0, y - 1, 7, 7), Gfx.OUTLINE)
 	draw_rect(Rect2(x0 + 1, y, 5, 5), UiKit.card_color(id))
@@ -549,6 +633,140 @@ func _part_row(id: String, lvl: int, x0: float, xr: float, y: float, scrappable:
 		draw_rect(br.grow(-1.0), Color(0.22, 0.14, 0.08) if hov else Color(0.14, 0.1, 0.08))
 		UiFont.draw(self, label, br.position + Vector2(3, 1), Gfx.FIRE[5] if hov else Gfx.FIRE[3])
 		_hits.append([br, "scrap", id])
+
+
+# ---------------------------------------------------------------- abilities and compact tech (centre top)
+
+## Ability slots next to YOUR RIG (tech tree v2.3 section 3): two slots cast with F / G; a click on a
+## slot swaps in the next unlocked ability (set_ability). Only shown once an ability is unlocked.
+func _draw_abilities(v: SimVehicle) -> void:
+	var un: Array[String] = Abilities.unlocked(v)
+	if un.is_empty():
+		return
+	var spare: Array[String] = []
+	for a in un:
+		if not v.abilities.has(a):
+			spare.append(a)
+	var r := Rect2(LEFT_X + COL_W + 6.0, BODY_Y, 100.0, 59.0 + (8.0 if not spare.is_empty() else 0.0))
+	UiKit.panel(self, r)
+	_hits.append([r, "none", null])
+	var x0: float = r.position.x + 6.0
+	var w: float = r.size.x - 12.0
+	var y: float = r.position.y + 5.0
+	UiKit.section(self, "ABILITIES", Vector2(x0, y), w, "%d SLOTS" % Abilities.SLOTS)
+	y += 10.0
+	var hov_slot: int = -1
+	for s in Abilities.SLOTS:
+		var cur: String = v.abilities[s] if s < v.abilities.size() else ""
+		var nxt: String = cur
+		if not un.is_empty():
+			var i: int = un.find(cur)
+			nxt = un[(i + 1) % un.size()]
+		var sr := Rect2(x0 - 1, y - 2, w + 2, 12)
+		var hov: bool = _is_hover("ability", [s, nxt])
+		if hov:
+			hov_slot = s
+		draw_rect(sr, Gfx.OUTLINE)
+		draw_rect(sr.grow(-1.0), Color(0.2, 0.14, 0.1) if hov else Color(0.12, 0.09, 0.08))
+		UiKit.outline_rect(self, sr.grow(-1.0), Gfx.FIRE[3] if hov else UiKit.PANEL_EDGE)
+		var kr := Rect2(sr.position.x + 2, sr.position.y + 2, 8, 8)
+		draw_rect(kr, Gfx.STEEL[3])
+		UiFont.draw_small(self, "F" if s == 0 else "G", kr.position + Vector2(2, 1), Gfx.INK)
+		UiFont.draw(self, str(TechGuide.ABILITY_NAMES.get(cur, "- EMPTY")), Vector2(kr.end.x + 4, y), Gfx.UI_TEXT if cur != "" else Gfx.STEEL[3], Gfx.UI_SHADOW)
+		if un.size() > 1 or cur == "":
+			var sw: String = "SWAP" if cur != "" else "FIT"
+			UiFont.draw_small(self, sw, Vector2(sr.end.x - 4 - UiFont.width_small(sw), y), Gfx.FIRE[5] if hov else Gfx.UI_DIM)
+			if nxt != cur or cur == "":
+				_hits.append([sr, "ability", [s, nxt]])
+		y += 13.0
+	if not spare.is_empty():
+		var names: PackedStringArray = []
+		for a in spare:
+			names.append(str(TechGuide.ABILITY_NAMES.get(a, a)))
+		UiFont.draw_small(self, "SPARE: " + ", ".join(names), Vector2(x0, y), Gfx.UI_DIM)
+		y += 8.0
+	var tip: String = "CASTS ITSELF, OR BY F / G"
+	if hov_slot >= 0 and v.abilities[hov_slot] != "":
+		tip = str(TechGuide.ABILITY_AUTO.get(v.abilities[hov_slot], tip))
+	for ln in UiFont.wrap_small(tip, int(w)).slice(0, 2):
+		UiFont.draw_small(self, ln, Vector2(x0, y), Gfx.BRASS[3])
+		y += 7.0
+
+
+## Compact tech column (design doc 5b): stage pips per branch, the build plan's next node as a buy
+## button, and a FUSION READY tag. Clicking a branch row opens the TECH view.
+func _draw_tech_compact(v: SimVehicle) -> void:
+	var tpl: Dictionary = TechGuide.template_for(world, v)
+	var nxt: String = TechGuide.next_on_path(v, tpl)
+	var ready_f: Array[String] = TechTreeView.fusions_ready(v)
+	var h: float = 15.0 + 5.0 * 9.0 + 32.0 + (13.0 if not ready_f.is_empty() else 0.0)
+	var r := Rect2(RIGHT_X - 6.0 - 102.0, BODY_Y, 102.0, h)
+	UiKit.panel(self, r)
+	_hits.append([r, "none", null])
+	var x0: float = r.position.x + 6.0
+	var w: float = r.size.x - 12.0
+	var y: float = r.position.y + 5.0
+	UiKit.section(self, "TECH", Vector2(x0, y), w, "%d/%d  T" % [v.tech.size(), Tech.count()])
+	y += 10.0
+	var nb: String = str(Tech.def(nxt).get("branch", "")) if nxt != "" else ""
+	for b in Tech.BRANCHES:
+		var rr := Rect2(x0 - 2, y - 2, w + 4, 9)
+		var hov: bool = _is_hover("tab", "tech:" + b)
+		if hov:
+			draw_rect(rr, UiKit.HOVER_WASH)
+		_hits.append([rr, "tab", "tech:" + b])
+		var plan: bool = (tpl["branches"] as Array).has(b)
+		UiFont.draw_small(self, b.left(4).to_upper(), Vector2(x0, y), Gfx.FIRE[4] if plan else Gfx.UI_TEXT)
+		UiKit.pips(self, Vector2(x0 + 22, y), Tech.branch_tier(v, b), Tech.MAX_TIER, Gfx.BRASS[3])
+		var tag: String = ""
+		var tcol: Color = Gfx.UI_DIM
+		var idle: bool = false
+		var buy_n: int = 0
+		for id in Tech.ids(b):
+			var st: TechTreeView.State = TechTreeView.state(v, id)
+			idle = idle or st == TechTreeView.State.INACTIVE
+			buy_n += 1 if st == TechTreeView.State.BUYABLE else 0
+		if b == nb:
+			tag = "NEXT"
+			tcol = Gfx.FIRE[4]
+		elif idle:
+			tag = "IDLE"
+			tcol = Gfx.UI_BAD
+		elif buy_n > 0:
+			tag = "+%d" % buy_n
+			tcol = Gfx.HAZARD
+		UiFont.draw_small(self, tag, Vector2(x0 + w - UiFont.width_small(tag), y), tcol)
+		y += 9.0
+	y += 2.0
+	UiFont.draw_small(self, ("PLAN: " if TechGuide.is_picked(world) else "TRY: ") + str(tpl["name"]), Vector2(x0, y), Gfx.UI_DIM)
+	y += 9.0
+	var br := Rect2(x0 - 1, y - 1, w + 2, 18)
+	if nxt == "":
+		UiFont.draw_small(self, "PLAN COMPLETE", Vector2(x0, y + 4), Gfx.BRASS[3])
+	else:
+		var st2: TechTreeView.State = TechTreeView.state(v, nxt)
+		var can: bool = st2 == TechTreeView.State.BUYABLE
+		var hov2: bool = _is_hover("buy_next", nxt)
+		UiKit.steel(self, br, Color.WHITE if can else Color(0.7, 0.66, 0.66))
+		UiKit.outline_rect(self, br, Gfx.HAZARD if can and (hov2 or fmod(_blink, 1.2) < 0.9) else Gfx.OUTLINE)
+		UiFont.draw_small(self, "NEXT", Vector2(x0 + 2, y + 2), Gfx.FIRE[4], Gfx.OUTLINE)
+		var nm: String = UiKit.tech_name(nxt)
+		if UiFont.width(nm) > w - 34.0:
+			nm = str(Tech.def(nxt)["short"])
+		UiFont.draw(self, nm, Vector2(x0 + 2, y + 9), Gfx.FIRE[5] if hov2 else Gfx.UI_TEXT, Gfx.OUTLINE)
+		var cost := str(Tech.price(v, nxt))
+		var cx: float = br.end.x - 4.0 - UiFont.width(cost)
+		UiFont.draw(self, cost, Vector2(cx, y + 9), Gfx.UI_TEXT if can else Gfx.UI_BAD, Gfx.OUTLINE)
+		_scrap_pip(Vector2(cx - 9, y + 9))
+		_hits.append([br, "buy_next", nxt])
+	y += 21.0
+	if not ready_f.is_empty():
+		var fr := Rect2(x0 - 1, y, w + 2, 10)
+		var fh: bool = _is_hover("tab", "tech:fusion")
+		UiKit.tape(self, fr, Color("#f0c070") if fh or fmod(_blink, 1.4) < 1.0 else Color("#d8b070"))
+		var ft: String = ("FUSION READY: " + str(Tech.def(ready_f[0])["short"])) if ready_f.size() == 1 else "%d FUSIONS READY" % ready_f.size()
+		UiFont.draw_small(self, ft if UiFont.width_small(ft) <= w - 4 else "FUSION READY", fr.position + Vector2(4, 2), Gfx.INK)
+		_hits.append([fr, "tab", "tech:fusion"])
 
 
 # ---------------------------------------------------------------- draft cards (centre)

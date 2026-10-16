@@ -8,7 +8,16 @@ extends RefCounted
 ##                  magenta already picked and ready.
 ## - "tech_tree"    (about 400 ticks): the same workshop later in a match: red owns 14 tech nodes
 ##                  (both ballistics forks taken, a fusion) and 640 scrap, with the TECH view
-##                  open; --hover a node.
+##                  open (full tree, beginner view off); --hover a node.
+## - "tech_mid"     (about 400 ticks) TECH view later in a match (tech tree v2.3 UI): plan FIREBRAND, a
+##                  built fusion (Hot Rod), a dormant one (Thermite Ram after swapping the bumper away),
+##                  an idle keystone (War Rig after Truck -> Roll Cage), an active keystone in its swap
+##                  window (Glowing Barrels), three fusions ready, mixed belts and three abilities.
+## - "tech_swap"    tech_mid with the swap confirmation open (click on the struck-out Ram Bumper).
+## - "workshop_mid" tech_mid's rig (Tungsten Stock instead of Mixed Belts, so one ammo type per gun and a
+##                  chip for the other) in the PARTS view: ammo per gun, ability slots, compact tech column.
+## - "tech_beginner" (about 400 ticks) the round 3 workshop in the beginner view: plan SCRAPPER, the
+##                  other branches folded under MORE.
 ## - "gameover"     (about 300 ticks): solo, the last fuel burns in round 2, YOUR CONVOY IS LOST.
 ## - "gameover_mp"  (about 200 ticks): magenta runs dry, red is the last rig standing.
 ## - "eliminated"   (about 220 ticks): three rigs; red runs dry and spectates (ELIMINATED).
@@ -45,7 +54,8 @@ extends RefCounted
 
 const NAMES: PackedStringArray = ["skirmish", "horde", "workshop", "tech_tree", "gameover", "gameover_mp", "eliminated",
 	"menu", "join", "lobby", "pause", "rematch", "waiting", "rig_growth", "late_round", "pvp_on", "rig_kill",
-	"recap", "recap_pvp", "scouting", "combat_feed", "pvp_grace", "spectator", "spectator_ws", "awards"]
+	"recap", "recap_pvp", "scouting", "combat_feed", "pvp_grace", "spectator", "spectator_ws", "awards",
+	"tech_mid", "tech_swap", "workshop_mid", "tech_beginner"]
 ## Info-UI line-up: [name, paint, GROWTH_BUILDS index, drive, target, extra tech].
 const LAN_NIGHT: Array = [
 	["MAD MAREK", 0, 6, "circle", "nearest", ["ballistics_ammo_bench"]],
@@ -76,7 +86,7 @@ static func build(name: String, p_seed: int) -> SimWorld:
 			return _skirmish(p_seed)
 		"horde":
 			return _horde(p_seed)
-		"workshop", "tech_tree":
+		"workshop", "tech_tree", "tech_mid", "tech_swap", "workshop_mid", "tech_beginner":
 			var w: SimWorld = _skirmish(p_seed)
 			w.fast_rounds = true
 			return w
@@ -177,7 +187,15 @@ static func ui_state(name: String) -> Dictionary:
 		"pause":
 			return {"screen": "pause", "solo": false}
 		"tech_tree":
-			return {"workshop_tab": "tech"}
+			return {"workshop_tab": "tech", "workshop_actions": [["beginner", false]]}
+		"tech_mid":
+			return {"workshop_tab": "tech", "workshop_actions": [["beginner", false], ["tpl", "firebrand"]]}
+		"tech_swap":
+			return {"workshop_tab": "tech", "workshop_actions": [["beginner", false], ["tpl", "firebrand"], ["tech", "propulsion_bumper"]]}
+		"workshop_mid":
+			return {"workshop_actions": [["tpl", "firebrand"]]}
+		"tech_beginner":
+			return {"workshop_tab": "tech", "workshop_actions": [["beginner", true], ["tpl", "scrapper"]]}
 		"rules":
 			return {"rules": "rig"}
 		"rules_weapon":
@@ -220,7 +238,7 @@ static func step(name: String, w: SimWorld) -> void:
 		"menu", "join", "lobby":
 			if w.phase == SimWorld.PHASE_WORKSHOP:
 				_ready_all(w)
-		"workshop", "tech_tree":
+		"workshop", "tech_tree", "tech_mid", "tech_swap", "workshop_mid", "tech_beginner":
 			if w.phase == SimWorld.PHASE_WORKSHOP:
 				if w.round < WORKSHOP_ROUND:
 					_ready_all(w)
@@ -229,6 +247,8 @@ static func step(name: String, w: SimWorld) -> void:
 					if name == "tech_tree":
 						_stage_tech_tree(w.vehicles[0])
 						_stage_salvage(w, w.vehicles[0])
+					elif name in ["tech_mid", "tech_swap", "workshop_mid"]:
+						_stage_tech_mid(w, w.vehicles[0], name != "workshop_mid")
 		"gameover":
 			if w.phase == SimWorld.PHASE_WORKSHOP:
 				_ready_all(w)
@@ -271,6 +291,24 @@ static func _stage_tech_tree(red: SimVehicle) -> void:
 			"electronics_radar", "electronics_targeting", "propulsion_tuned", "propulsion_drift",
 			"fusion_burning_wake", "salvage_hooks"]:
 		Tech.buy(red, id)
+	red.scrap = 640
+
+
+## Tech tree v2.3 UI check: a mixed rig with a built, a dormant and three ready fusions, an idle keystone
+## (War Rig after Truck -> Roll Cage, the free first swap), an active keystone in its swap window, mixed
+## belts (two ammo types per gun), three guns and three abilities for two slots.
+static func _stage_tech_mid(w: SimWorld, red: SimVehicle, mixed: bool = true) -> void:
+	red.scrap = 99999
+	for id: String in ["ballistics_ammo_bench", "ballistics_belt_feed", "engineering_frame", "ballistics_tables", "ballistics_napalm",
+			"ballistics_mixed_belts" if mixed else "ballistics_tungsten", "ballistics_glowing",
+			"engineering_welder", "engineering_pickup", "engineering_drone", "engineering_truck", "engineering_war_rig",
+			"propulsion_tuned", "propulsion_bumper", "propulsion_nitro", "fusion_thermite", "electronics_rangefinder",
+			"electronics_relay", "electronics_targeting", "electronics_emp", "electronics_neural"]:
+		Tech.buy(red, id, w.round)
+	Cards.grant(red, "cannon")
+	Tech.respec(red, "engineering_truck", "engineering_roll_cage", w.round)
+	Tech.respec(red, "propulsion_bumper", "propulsion_drift", w.round)
+	Tech.buy(red, "fusion_hot_rod", w.round)
 	red.scrap = 640
 
 
