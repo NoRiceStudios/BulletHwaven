@@ -9,7 +9,7 @@ const COMBO_WINDOW := 45  ## ticks (1.5 s): a kill within this of the last one c
 const COMBO_MIN := 3  ## the counter shows from this many chained kills on
 const COMBO_FADE := 18  ## ticks the final count lingers after the chain breaks
 ## Milestone words (Mad Max tone) and the combo that calls them out.
-const MILESTONES: Array = [[10, "ROADKILL"], [25, "SHREDDED"], [50, "MEAT GRINDER"], [100, "HIVE BREAKER"],
+const MILESTONES: Array = [[10, "ROADKILL"], [25, "SHREDDED"], [50, "BUG BLENDER"], [100, "HIVE BREAKER"],
 	[200, "WASTELAND LEGEND"]]
 const MILESTONE_TICKS := 40  ## how long a milestone word stays up
 const SURGE_DEFAULT_TICKS := 60  ## "surge" events without in_ticks: the sim's 2 s warning
