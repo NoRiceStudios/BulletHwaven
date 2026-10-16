@@ -103,6 +103,7 @@ func test_burn_ticks_and_kill_credit() -> void:
 	assert_true(lost > 1.7 and lost < 2.2, "about 2 damage over time, got %f" % lost)
 	# Kill credit: the burn finishes the enemy and the scrap goes to the igniting rig.
 	var k: int = _enemy(w, SimWorld.MITE, 500.0, 0.5, 40.0)
+	v.scrap_frac = 0.9  # mites pay a fraction of a scrap
 	var scrap0: int = v.scrap
 	var kills0: int = v.kills
 	var dealt0: float = float(v.round_stats["dealt"])

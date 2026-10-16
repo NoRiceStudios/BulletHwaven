@@ -33,18 +33,43 @@ func _find_event(w: SimWorld, type: String) -> Dictionary:
 
 # ---------------------------------------------------------------- 1: spawn curve and caps
 
-func test_spawn_rate_is_flat_in_the_last_15_seconds() -> void:
+func test_wave_curve_surges_lull_and_final_surge() -> void:
 	var w := SimWorld.new(1)
-	for r in [1, 3, 5, 9]:
+	for r in [1, 3, 9]:
 		var dur: int = w.combat_duration(r)
-		var flat_from: int = dur - int(SimWorld.SPAWN_RAMP_END_BEFORE * float(SimWorld.TICK_RATE))
-		var at_flat: float = w.spawn_rate_at(r, flat_from)
-		for t in range(flat_from, dur, 15):
-			assert_eq(w.spawn_rate_at(r, t), at_flat, "round %d flat at tick %d" % [r, t])
-		assert_gt(at_flat, w.spawn_rate_at(r, 0), "round %d still ramps earlier" % r)
-	# The full-length round ramps 1.5 -> 3.5 per second (x round scaling) and stops at 45 s.
-	assert_eq(w.spawn_rate_at(3, 0), SimWorld.SPAWN_RATE_START * SimWorld.spawn_rate_mult(3))
-	assert_eq(w.spawn_rate_at(3, 1799), (SimWorld.SPAWN_RATE_START + 4.0 * SimWorld.SPAWN_RATE_RAMP) * SimWorld.spawn_rate_mult(3))
+		var st: PackedInt32Array = SimWorld.surge_starts(dur)
+		var base: float = SimWorld.SPAWN_RATE_START * SimWorld.spawn_rate_mult(r)
+		assert_lt(w.spawn_rate_at(r, 0), w.spawn_rate_at(r, st[0] - 1), "round %d builds up" % r)
+		assert_gt(w.spawn_rate_at(r, st[0]), w.spawn_rate_at(r, st[0] - 1), "round %d surge starts" % r)
+		var lull: float = w.spawn_rate_at(r, st[1] - 1)
+		assert_lt(lull, base * 0.5, "round %d lull" % r)
+		assert_gt(w.spawn_rate_at(r, st[1]), lull * 4.0, "round %d final surge" % r)
+		assert_gt(w.spawn_rate_at(r, dur - 1), base * 2.0)
+		assert_true(absi(st[1] - (st[0] + int(0.15 * float(dur))) - SimWorld.WAVE_LULL_TICKS) <= 1)
+	assert_eq(SimWorld.surge_starts(1350)[0], 472)
+
+
+func test_surge_event_warns_two_seconds_ahead() -> void:
+	var w := SimWorld.new(3)
+	w.add_vehicle(1, Vector2(1000, 700))
+	var seen: Array[int] = []
+	for i in w.phase_ticks_left - 2:
+		w.step()
+		for e in w.events:
+			if e["type"] == "surge":
+				assert_eq(e["in_ticks"], 60)
+				seen.append(w.tick - 1 + 60)
+	var st: PackedInt32Array = SimWorld.surge_starts(SimWorld.COMBAT_TICKS_EARLY)
+	assert_eq(seen.size(), 2)
+	assert_eq(seen[0], st[0])
+	assert_eq(seen[1], st[1])
+
+
+func test_mites_spawn_in_packs_and_scrap_stays_fractional() -> void:
+	assert_eq(SimWorld.pack_size(1), 3)
+	assert_eq(SimWorld.pack_size(30), SimWorld.PACK_MAX)
+	assert_lt(SimWorld.mite_scrap(1), 1.0)
+	assert_gt(SimWorld.mite_scrap(40), 0.0)
 
 
 func test_boulder_and_spitter_alive_caps() -> void:

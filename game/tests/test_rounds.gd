@@ -575,7 +575,8 @@ func test_scrap_magnet_pays_more() -> void:
 		var id: int = w.spawn_enemy(SimWorld.MITE, Vector2(1000, 600))
 		assert_true(id >= 0)
 		w._hit_enemy(w.enemy_count - 1, 100.0, v.id)
-	assert_true(v.scrap >= 144 and v.scrap <= 145, "100 mites x 1.45 (got %d)" % v.scrap)
+	var expect: float = 100.0 * SimWorld.mite_scrap(w.round) * 1.45
+	assert_true(absf(float(v.scrap) + v.scrap_frac - expect) < 0.01, "100 mites x scrap x 1.45 (got %d)" % v.scrap)
 	assert_eq(v.kills, 100)
 
 
@@ -772,7 +773,7 @@ func test_enemy_scaling_per_round() -> void:
 	w.round = 6
 	w.spawn_enemy(SimWorld.BOULDER, Vector2(20, 20))
 	assert_eq(w.enemy_hp[0], SimWorld.ENEMY_HP[SimWorld.BOULDER])
-	assert_eq(w.enemy_hp[1], SimWorld.ENEMY_HP[SimWorld.BOULDER] * SimWorld.enemy_hp_mult(6))
+	assert_true(absf(w.enemy_hp[1] - SimWorld.ENEMY_HP[SimWorld.BOULDER] * SimWorld.enemy_hp_mult(6)) < 0.01)
 	# More enemies spawn in a later round.
 	var counts: Array[int] = []
 	for r in [1, 8]:
@@ -780,7 +781,7 @@ func test_enemy_scaling_per_round() -> void:
 		s.round = r
 		s.phase_ticks_left = s.combat_duration(r)
 		var made: int = 0
-		for i in 600:
+		for i in s.combat_duration(r) / 2:  # same share of the round
 			s.step()
 			made = s.next_enemy_id
 		counts.append(made)
