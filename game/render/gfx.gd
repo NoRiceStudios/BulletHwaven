@@ -122,6 +122,7 @@ const CRT_HI := Color("#ffe48a")
 ## Card category tape colours (warm / neutral; GLOW stays reserved for aliens).
 const CATEGORY_COLORS := {
 	"weapon": Color("#d8673e"), "armor": Color("#a3a8b0"), "mobility": Color("#d6ad30"), "behavior": Color("#a9a66a"),
+	"evolution": Color("#e8c24a"),  # placeholder gold, the visual pass restyles evolution cards
 }
 ## Player paint (PLAYERS ramp, step 3), indexed by SimVehicle.color_index (0..7). Eight distinct
 ## paints: never cyan/teal (alien GLOW) and never yellow/orange (FIRE tracers); design doc 11c.

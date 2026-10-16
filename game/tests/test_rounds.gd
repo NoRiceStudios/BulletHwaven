@@ -42,7 +42,7 @@ func _respawn_wait(w: SimWorld, v: SimVehicle) -> void:
 # ---------------------------------------------------------------- data tables
 
 func test_card_and_tech_tables() -> void:
-	assert_eq(Cards.count(), 16, "16 cards")
+	assert_eq(Cards.count(), 20, "16 pool cards + 4 evolutions")
 	var cats := {}
 	var seen := {}
 	for i in Cards.count():
@@ -54,7 +54,7 @@ func test_card_and_tech_tables() -> void:
 		assert_eq(Cards.id_at(i), id)
 		assert_gt(float(d["weight"]), 0.0)
 		cats[d["category"]] = int(cats.get(d["category"], 0)) + 1
-	for c in ["weapon", "armor", "mobility", "behavior"]:
+	for c in ["weapon", "armor", "mobility", "behavior", "evolution"]:
 		assert_eq(int(cats.get(c, 0)), 4, "4 cards in " + c)
 	for id in ["mg", "shotgun", "cannon", "flamer", "scrap_magnet", "berserker", "vulture", "regenerator"]:
 		assert_true(Cards.has(id), id)
@@ -330,7 +330,7 @@ func test_offers_are_seeded_and_weighted() -> void:
 	for i in 200:
 		for id in Cards.roll_offers(r, a.vehicles[0]):
 			seen[id] = int(seen.get(id, 0)) + 1
-	assert_eq(seen.size(), Cards.count(), "every card shows up")
+	assert_eq(seen.size(), Cards.count() - 4, "every pool card shows up (evolutions only when eligible)")
 
 
 func test_reroll() -> void:

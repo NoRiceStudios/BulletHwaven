@@ -609,6 +609,8 @@ static func _card_effect(id: String, level: int) -> String:
 		if splash > 0.0:
 			s += ", splash %d" % roundi(splash)
 		return s + " (before tech)"
+	if Cards.is_evolution(id):
+		return str(Cards.def(id).get("text", ""))
 	return _fx_text(Cards.def(id).get("fx", {}), true)
 
 
