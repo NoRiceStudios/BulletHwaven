@@ -23,7 +23,7 @@ const BOSS_B := 7  ## Shard Colossus
 const BOSS_SHARD := 8  ## a Colossus split-off (phase 3)
 # Per enemy kind: mite, boulder, spitter, glass wings, brood carrier, shrieker, then the bosses.
 const ENEMY_RADIUS: PackedFloat32Array = [6.0, 14.0, 8.0, 7.0, 17.0, 10.0, 36.0, 34.0, 22.0]
-const ENEMY_SPEED: PackedFloat32Array = [90.0, 35.0, 55.0, 190.0, 28.0, 50.0, 34.0, 48.0, 70.0]  # px/s (glass: dive speed; bosses: base speed, Bosses.speed_of() adds phase / enrage)
+const ENEMY_SPEED: PackedFloat32Array = [74.0, 35.0, 55.0, 190.0, 28.0, 50.0, 34.0, 48.0, 70.0]  # px/s (glass: dive speed; bosses: base speed, Bosses.speed_of() adds phase / enrage)
 const ENEMY_HP: PackedFloat32Array = [4.0, 80.0, 20.0, 7.0, 70.0, 14.0, 1.0, 1.0, 1.0]  # bosses: hp is set by Bosses (see enemy_max_hp_of)
 const ENEMY_CONTACT_DAMAGE: PackedFloat32Array = [0.15, 1.5, 0.6, 1.0, 0.8, 0.3, 2.5, 3.0, 1.6]  # per tick while touching (glass: only while diving)
 const ENEMY_SCRAP: PackedInt32Array = [1, 5, 2, 2, 4, 3, 0, 0, 3]
@@ -100,8 +100,9 @@ const UNDERDOG_FUEL_FACTOR := 0.7  # the lowest-fuel player loses 30% less fuel 
 const FUEL_STEAL := 10  # a player kill moves this much of the victim's fuel loss to the killer
 const LEADER_FUEL_BONUS := 10  # extra fuel for destroying the marked leader
 const REPEAT_KILL_FACTORS: Array[float] = [1.0, 0.5, 0.0]  # reward share for the 1st, 2nd, 3rd+ kill of the same victim in a round
-const FUEL_DRAIN_START_ROUND := 8  # PVP_START_ROUND + 4: multiplayer only, from the workshop after this round
-const FUEL_DRAIN_BASE := 5
+const FUEL_DRAIN_START_ROUND := 7  # PVP_START_ROUND + 3: multiplayer only, from the workshop after this round
+const FUEL_DRAIN_BASE := 6
+const FUEL_DRAIN_LETHAL_ROUND := 18  # from the workshop after this round the drain can eliminate every rig except the one with the most fuel
 const FUEL_DRAIN_ROUNDS_PER_STEP := 3  # the drain grows by 1 every this many rounds past the start
 const PVP_PROTECT_TICKS := 60  # 2 s of third-party protection after a player kill
 const PVP_PROTECT_FACTOR := 0.5  # damage multiplier while protected
@@ -122,10 +123,10 @@ const PACK_START := 3.0  # mites spawn in packs: 3 in round 1 ...
 const PACK_PER_ROUND := 0.6
 const PACK_MAX := 8  # ... up to 8
 const PACK_RADIUS := 24.0  # a pack clusters within this of one edge point
-const MITE_SCRAP_START := 0.22  # scrap per mite kill (fractional, carried): many more mites must not inflate the economy
+const MITE_SCRAP_START := 0.19  # scrap per mite kill (fractional, carried): many more mites must not inflate the economy
 const MITE_SCRAP_PER_ROUND := 0.009
 const MITE_SCRAP_MIN := 0.06
-const BOULDER_CHANCE := 0.04  # round 1; reaches the old 0.4 cap in the same round (13) as before
+const BOULDER_CHANCE := 0.02  # round 1 (per spawned alien; the horde spawns ~2-3x as fast as before, so this is lower)
 const SPAWN_INSET := 8.0
 # Alive caps: a spawn that would exceed the cap becomes a mite, so the field never snowballs.
 const BOULDER_CAP_BASE := 8
@@ -180,8 +181,8 @@ const RETREAT_EVENT_CAP := 150  # at most this many "retreat" events per round e
 const HP_SCALE_PER_ROUND := 0.09
 const HP_SCALE_QUAD := 0.005  # late-game term: the hive outgrows a linear power curve
 const SPAWN_SCALE_PER_ROUND := 0.35
-const BOULDER_CHANCE_PER_ROUND := 0.03
-const BOULDER_CHANCE_MAX := 0.4
+const BOULDER_CHANCE_PER_ROUND := 0.013
+const BOULDER_CHANCE_MAX := 0.2
 const DAMAGE_SCALE_PER_ROUND := 0.06
 # Early-round easing (playtest: the first waves were too strong). Spawn rate and enemy damage start at this
 # share in round 1 and rise linearly to full strength in round EASE_END_ROUND; later rounds are unchanged.
@@ -462,7 +463,7 @@ func is_underdog(v: SimVehicle) -> bool:
 
 
 ## Fuel every player loses at the workshop after round `r` (multiplayer only, 0 before
-## FUEL_DRAIN_START_ROUND): 5, growing by 1 every 3 rounds (8..10: 5, 11..13: 6, ...).
+## FUEL_DRAIN_START_ROUND): 6, growing by 1 every 3 rounds (7..9: 6, 10..12: 7, ...).
 static func fuel_drain_for_round(r: int) -> int:
 	if r < FUEL_DRAIN_START_ROUND:
 		return 0
@@ -1042,6 +1043,11 @@ func _begin_workshop() -> void:
 	# Multiplayer fuel drain from round FUEL_DRAIN_START_ROUND: only kills (fuel steal) refill it. Never
 	# eliminates by itself (floor 1). Solo has no drain: there is nobody to take fuel from.
 	fuel_drain = fuel_drain_for_round(round) if vehicles.size() >= 2 else 0
+	var drain_keeper: SimVehicle = null  # lethal drain: this rig (most fuel, first on ties) keeps its last point
+	if fuel_drain > 0 and round >= FUEL_DRAIN_LETHAL_ROUND:
+		for v in vehicles:
+			if not v.eliminated and (drain_keeper == null or v.fuel > drain_keeper.fuel):
+				drain_keeper = v
 	for v in vehicles:
 		v.vel = Vector2.ZERO
 		v.target_kind = 0
@@ -1071,10 +1077,15 @@ func _begin_workshop() -> void:
 		v.round_stats["interest"] = interest
 		Salvage.repay(self, v)
 		if fuel_drain > 0:
-			var d: int = mini(fuel_drain, maxi(v.fuel - 1, 0))
+			var floor_fuel: int = 1 if (drain_keeper == null or v == drain_keeper) else 0
+			var d: int = mini(fuel_drain, maxi(v.fuel - floor_fuel, 0))
 			v.fuel -= d
 			v.round_stats["fuel_drained"] = d
 			_emit("drain", v.pos, v.id, d)
+			if v.fuel <= 0:
+				v.eliminated = true
+				v.respawn_ticks = 0
+				continue
 		v.offers = Cards.roll_offers(rng, v, Cards.OFFER_COUNT + v.bonus_offers, round, [], v.boss_rare)
 		v.bonus_offers = 0
 		v.boss_rare = false

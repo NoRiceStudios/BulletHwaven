@@ -379,30 +379,54 @@ func test_leader_kill_pays_extra_fuel() -> void:
 	assert_eq(a.fuel, 50 + SimWorld.FUEL_STEAL + SimWorld.LEADER_FUEL_BONUS, "steal plus bounty fuel")
 
 
-func test_fuel_drain_from_round_eight_multiplayer_only() -> void:
-	assert_eq(SimWorld.FUEL_DRAIN_START_ROUND, SimWorld.PVP_START_ROUND + 4)
-	assert_eq(SimWorld.fuel_drain_for_round(7), 0)
-	assert_eq(SimWorld.fuel_drain_for_round(8), 5)
-	assert_eq(SimWorld.fuel_drain_for_round(10), 5)
-	assert_eq(SimWorld.fuel_drain_for_round(11), 6)
-	assert_eq(SimWorld.fuel_drain_for_round(20), 9)
-	var w := _world(2, 7)
+func test_fuel_drain_from_round_seven_multiplayer_only() -> void:
+	assert_eq(SimWorld.FUEL_DRAIN_START_ROUND, SimWorld.PVP_START_ROUND + 3)
+	assert_eq(SimWorld.fuel_drain_for_round(6), 0)
+	assert_eq(SimWorld.fuel_drain_for_round(7), 6)
+	assert_eq(SimWorld.fuel_drain_for_round(9), 6)
+	assert_eq(SimWorld.fuel_drain_for_round(10), 7)
+	assert_eq(SimWorld.fuel_drain_for_round(20), 10)
+	var w := _world(2, 6)
 	w._begin_workshop()
-	assert_eq(w.vehicles[0].fuel, 100, "round 7: no drain yet")
+	assert_eq(w.vehicles[0].fuel, 100, "round 6: no drain yet")
 	assert_eq(w.fuel_drain, 0)
-	var w2 := _world(2, 8)
+	var w2 := _world(2, 7)
 	w2.vehicles[1].fuel = 3
 	w2._begin_workshop()
-	assert_eq(w2.vehicles[0].fuel, 95)
-	assert_eq(w2.fuel_drain, 5)
+	assert_eq(w2.vehicles[0].fuel, 94)
+	assert_eq(w2.fuel_drain, 6)
 	assert_eq(w2.vehicles[1].fuel, 1, "the drain alone never eliminates")
 	assert_false(w2.vehicles[1].eliminated)
-	assert_eq(w2.vehicles[0].round_stats["fuel_drained"], 5)
+	assert_eq(w2.vehicles[0].round_stats["fuel_drained"], 6)
 	assert_eq(_count_events(w2, "drain"), 2)
 	var solo := _world(1, 12)
 	solo._begin_workshop()
 	assert_eq(solo.vehicles[0].fuel, 100, "solo has no drain")
 	assert_eq(solo.fuel_drain, 0)
+
+
+func test_lethal_drain_spares_only_the_fuel_leader() -> void:
+	var w := _world(3, SimWorld.FUEL_DRAIN_LETHAL_ROUND - 1)
+	w.vehicles[0].fuel = 30
+	w.vehicles[1].fuel = 5
+	w.vehicles[2].fuel = 30
+	w._begin_workshop()  # round 14: still floor 1
+	assert_eq(w.vehicles[1].fuel, 1)
+	assert_false(w.vehicles[1].eliminated)
+	var w2 := _world(3, SimWorld.FUEL_DRAIN_LETHAL_ROUND)
+	w2.vehicles[0].fuel = 30
+	w2.vehicles[1].fuel = 5
+	w2.vehicles[2].fuel = 30
+	w2._begin_workshop()
+	assert_true(w2.vehicles[1].eliminated, "the drain eliminates a rig that cannot pay it")
+	assert_false(w2.vehicles[0].eliminated)
+	assert_false(w2.vehicles[2].eliminated)
+	var w3 := _world(2, SimWorld.FUEL_DRAIN_LETHAL_ROUND)
+	w3.vehicles[0].fuel = 1
+	w3.vehicles[1].fuel = 1
+	w3._begin_workshop()
+	assert_false(w3.vehicles[0].eliminated, "the rig with the most fuel (first on ties) keeps its last point")
+	assert_true(w3.vehicles[1].eliminated)
 
 
 # ---------------------------------------------------------------- 4: newbie protection
