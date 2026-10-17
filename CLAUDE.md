@@ -17,4 +17,4 @@
 - Bioluminescent cyan (`GLOW`) is the only cold saturated colour: active aliens and alien projectiles.
 - Player projectiles, muzzle flashes and fire are always warm (`FIRE`); players are marked by paint colour (`PLAYERS`).
 - No repeating patterns on the ground; vehicles look scrap-built (see design doc 11b).
-- Art generator: `python tools/artgen/generate.py` writes to `art/samples/` (`--export-game-assets` writes game sprites to `game/assets/`). Modules: `palette.py`, `pixel.py`, `sprites.py`, `terrain.py`, `scene.py`. After changing it, regenerate and look at the output before committing.
+- Art generator: `python tools/artgen/generate.py` writes to `art/samples/` (`--export-game-assets` writes game sprites to `game/assets/`). Modules: `palette.py`, `pixel.py`, `sprites.py`, `aliens.py` (bosses and late species), `terrain.py`, `scene.py`. After changing it, regenerate and look at the output before committing.

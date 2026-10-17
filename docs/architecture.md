@@ -228,6 +228,32 @@ Events (all in `world.events` and over the snapshot):
 
 Constants on `SimWorld`: `SPITTER_MIN_ROUND = 3`, spawn chance `spitter_chance(r)` = 0 before round 3, then `0.08 + 0.03 (r-3)` capped at 0.25 (rolled after the boulder roll; no extra rng draw before round 3, so rounds 1-2 are unchanged). A spitter (hp 20, speed 55 px/s) holds 180 to 230 px from the nearest living vehicle (`SPITTER_KEEP_MIN/MAX`: backs away with a sideways drift when closer, closes in when farther, strafes slowly in between) and every `SPIT_PERIOD = 60` ticks (2 s, staggered by enemy id, so there is no extra per-enemy state) lobs one acid glob if the target is within `SPIT_RANGE = 260`: speed `SPIT_SPEED = 170` px/s, damage `SPIT_DAMAGE = 8` x `enemy_damage_mult(round)`, aimed with target lead and +-0.08 rad error (from `world.rng`), ttl about 1.8 s. The projectile has `owner = -1`; it damages vehicles only (armour applies, the kill costs fuel as an alien kill) and passes aliens by. Each shot emits `{"type": "spit", "pos": muzzle, "owner": -1, "kind": SPITTER}` for render. The old screenshot scenarios that fake spitter fire in `tools/scenarios.gd` now double up with the real thing and can drop their fake.
 
+## Alien sprite sheets
+
+Art for the bosses and late species (design doc 7a, 7f, 11d), drawn in `tools/artgen/aliens.py` and exported by `export_assets.export_aliens`. Not wired into sim or render yet. They follow the mite / boulder / spitter convention, so each one fits a `SheetLayer` (`setup(tex, Gfx.ENEMY_DIRS, rows, z, glow_tex, shadow_offset, 1.0, shadow_alpha)`):
+
+- **Directional sheets:** 16 columns. Column k shows the alien turned k * 22.5 degrees clockwise from north (RotSprite, outlined after rotating). Each row is one animation frame, and each frame is a square cell (`tex.width / 16`) centred on the alien. Every directional sheet has a `*_glow` sheet with the same grid, drawn additively like `mite_glow`. The glow covers only the emissive cyan (eyes, sacs, charged crystal).
+- **Loops:** walk rows loop 0-1-2-3. Pulse rows (`pulse0..2`) ping-pong 0-1-2-1. One-shot rows (aim, fire, windup, hurt, burst, shriek) are held while the state lasts.
+- **Projectiles:** 16 px cells, 16 columns, same direction rule (frame k = k * 22.5 degrees, the `FX_DIRS` layout of `acid.png`), each with a `_glow` sheet. All cold cyan, never warm.
+
+| File (+ `_glow`) | Cell | Rows (top to bottom) | Notes |
+|---|---|---|---|
+| `tripod_queen.png` | 128 | walk0, walk1, walk2, walk3, aim, fire | Boss, about 110 px across its legs. Walk steps one leg at a time. `aim` swells the mortar sac and lights it, the vents and the geode pockets. `fire` squeezes the sac, flashes the mouth and shows a vapour ring. Suggested shadow (8, 11) at 0.5 (a tall walker). |
+| `tripod_shell.png` | 16 | 1 row x 16 dirs | Mortar round: a glowing geode glob with a short trail. Scale it up at the top of its arc. |
+| `tripod_telegraph.png` | 48 | 1 row x 6 frames (not directional) | Ground marker at the impact point. Frame 0 = just fired, frame 5 = impact next (the dither fills in). Draw it with normal alpha blending, scaled to the blast radius (radius about 21 px at 1x). Additive cyan turns green on orange sand. |
+| `shard_colossus.png` | 128 | walk0, walk1, walk2, walk3, windup0, windup1, hurt | Boss, about 100 px. A knuckle-walking crystal giant: stained-glass back, salt spine, crystal clubs. `windup0` lights the seams and `windup1` is fully charged, for the shard ring or the charge. `hurt` recoils with the clubs up and fresh fractures. Suggested shadow (6, 9) at 0.5. |
+| `shard_minion.png` | 48 | walk0, walk1 | "Split into shards" minion, about 36 px: a glass crab. |
+| `crystal_shard.png` | 16 | 1 row x 16 dirs | Colossus projectile (cyan blade). |
+| `glass_wings.png` | 36 | flap0, flap1, flap2, flap3 | Flyer, about 26 px wingspan. The wings foreshorten: spread, half, edge-on, half. |
+| `glass_wings_shadow.png` | 36 | same grid as `glass_wings.png` | Soft drop shadow for the flyer: palette `SHADOW` rgb, with the shape carried in alpha (wings lighter). Draw it normally (not as a silhouette) at about (7, 12) so it reads as airborne. Do not use the SheetLayer silhouette shadow for this kind. |
+| `brood_carrier.png` | 48 | pulse0, pulse1, pulse2, burst | About 34 px. A milky belly with curled mites visible inside; the pulse frames light it from within. `burst` is the death frame (torn sac, mites spilling out): show it for a few ticks, then spawn the mites. Suggested shadow (2, 3). |
+| `shrieker.png` | 40 | idle, shriek | About 26 px. A fan of salt-crystal pipes on its back. `shriek` lights the pipe mouths and adds cyan sound arcs. |
+| `shrieker_ring.png` | 64 | 1 row x 6 frames (not directional, no `_glow`) | Buff pulse: an expanding, thinning cyan ring. It is fully emissive, so draw it additively, scaled to the buff radius (the ring reaches radius 30 px at frame 5). |
+
+Carcass decals are bleached like `decal_carcass.png` (pale, alpha 0.6, no outline). They are not directional, and each column is a variant: `decal_carcass_tripod.png` (128 px, 1), `decal_carcass_colossus.png` (128 px, 1), `decal_carcass_shard.png` (48 px, 2), `decal_carcass_wings.png` (36 px, 2), `decal_carcass_brood.png` (48 px, 2), `decal_carcass_shrieker.png` (40 px, 2). Stamp them with `DecalLayer.stamp(tex, cols, 1, variant, 0, pos)` like the mite carcass.
+
+Previews: `art/samples/aliens_preview.png` (the new aliens beside mites, a boulder and a spitter on the Dune Sea, at 1x with a 3x zoom below) and `art/samples/aliens_frames.png` (every row, facing north and at 45 degrees, at 2x).
+
 ## Tests
 
 `tests/test_lobby.gd` (lobby join, profile/colour uniqueness, name sanitising, validation of junk, start_match, rematch, late-join policy, solo defaults, beacon state, roster parsing), `tests/test_pvp.gd` (PvP grace period, leader mark and bounty, third-party protection, snapshot of both), `tests/test_spitter.gd` (spawn rounds, distance keeping, acid damage and armour, determinism, spit event over the snapshot), `tests/test_net.gd::test_snapshot_carries_identity`, `tests/test_iteration3.gd` (spawn curve and caps, stats and events, fuel steal and drain, invulnerability, grace, underdog, repeat kills, drafts, interest cap, contact reduction, charge versus boulders, determinism).
