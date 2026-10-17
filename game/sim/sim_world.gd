@@ -21,7 +21,7 @@ const BOSS_SHARD := 5  ## a Colossus split-off (phase 3)
 
 # Per-kind stats, indexed by enemy kind.
 const ENEMY_RADIUS: PackedFloat32Array = [6.0, 14.0, 8.0, 36.0, 34.0, 22.0]
-const ENEMY_SPEED: PackedFloat32Array = [78.0, 35.0, 55.0, 34.0, 48.0, 70.0]  # px/s (bosses: base speed, Bosses.speed_of() adds phase / enrage)
+const ENEMY_SPEED: PackedFloat32Array = [74.0, 35.0, 55.0, 34.0, 48.0, 70.0]  # px/s (bosses: base speed, Bosses.speed_of() adds phase / enrage)
 const ENEMY_HP: PackedFloat32Array = [4.0, 80.0, 20.0, 1.0, 1.0, 1.0]  # bosses: hp is set by Bosses (see enemy_max_hp_of)
 const ENEMY_CONTACT_DAMAGE: PackedFloat32Array = [0.15, 1.5, 0.6, 2.5, 3.0, 1.6]  # per tick while touching
 const ENEMY_SCRAP: PackedInt32Array = [1, 5, 2, 0, 0, 3]
@@ -93,8 +93,8 @@ const UNDERDOG_FUEL_FACTOR := 0.7  # the lowest-fuel player loses 30% less fuel 
 const FUEL_STEAL := 10  # a player kill moves this much of the victim's fuel loss to the killer
 const LEADER_FUEL_BONUS := 10  # extra fuel for destroying the marked leader
 const REPEAT_KILL_FACTORS: Array[float] = [1.0, 0.5, 0.0]  # reward share for the 1st, 2nd, 3rd+ kill of the same victim in a round
-const FUEL_DRAIN_START_ROUND := 8  # PVP_START_ROUND + 4: multiplayer only, from the workshop after this round
-const FUEL_DRAIN_BASE := 5
+const FUEL_DRAIN_START_ROUND := 7  # PVP_START_ROUND + 3: multiplayer only, from the workshop after this round
+const FUEL_DRAIN_BASE := 6
 const FUEL_DRAIN_ROUNDS_PER_STEP := 3  # the drain grows by 1 every this many rounds past the start
 const PVP_PROTECT_TICKS := 60  # 2 s of third-party protection after a player kill
 const PVP_PROTECT_FACTOR := 0.5  # damage multiplier while protected
@@ -448,7 +448,7 @@ func is_underdog(v: SimVehicle) -> bool:
 
 
 ## Fuel every player loses at the workshop after round `r` (multiplayer only, 0 before
-## FUEL_DRAIN_START_ROUND): 5, growing by 1 every 3 rounds (8..10: 5, 11..13: 6, ...).
+## FUEL_DRAIN_START_ROUND): 6, growing by 1 every 3 rounds (7..9: 6, 10..12: 7, ...).
 static func fuel_drain_for_round(r: int) -> int:
 	if r < FUEL_DRAIN_START_ROUND:
 		return 0

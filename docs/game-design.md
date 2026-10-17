@@ -282,7 +282,7 @@ When a **Champion kills a player**, it survives, levels up, gains a mutation and
 **Life system instead of instant elimination (against R3)**
 - Each player has **Fuel Reserves** (e.g. 100), a TFT-style player-HP model.
 - Vehicle destroyed = respawn after a few seconds, but you lose fuel (more if a *player* killed you, and the killer gets a bounty) **plus 1 random module**.
-- Fuel 0 = eliminated. Destroying a rival steals 10 of its fuel loss (leader: 10 more), and from round 8 every rig in a multiplayer game loses 5+ fuel per round (never below 1), so only kills offset it: passive play no longer wins by waiting. Solo has no drain.
+- Fuel 0 = eliminated. Destroying a rival steals 10 of its fuel loss (leader: 10 more), and from round 7 every rig in a multiplayer game loses 6+ fuel per round (never below 1), so only kills offset it: passive play no longer wins by waiting. Solo has no drain.
 - Result: a bad round is a setback, not game over. Elimination usually only happens in the second half.
 
 **Anti-snowball (against R4/R6)**
