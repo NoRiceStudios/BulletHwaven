@@ -37,7 +37,7 @@ const TABS: PackedStringArray = ["parts", "tech", "rules"]
 const TAB_LABELS := {"parts": "PARTS", "tech": "TECH", "rules": "RULES"}
 const TAB_KEYS := {"parts": "", "tech": "T", "rules": "P"}
 const TARGET_LABELS := {"nearest": "NEAREST", "strongest": "STRONGEST", "players_first": "PLAYERS 1ST", "weakest": "WEAKEST",
-	"boulders": "BOULDERS", "spitters": "SPITTERS", "boss": "BOSS"}
+	"boulders": "BOULDERS", "spitters": "SPITTERS", "boss": "BOSS", "shriekers": "SHRIEKERS"}
 const TOAST_SECS := 1.6
 const DRAIN_NOTICE_TICKS := 150  ## the "-N FUEL DRAIN" tape flashes this long after the drain
 
@@ -401,6 +401,7 @@ func _draw() -> void:
 			_draw_cards(v, vs)
 			_draw_contracts(v, vs)
 			_draw_recap(v)
+			_draw_hive()
 			_draw_convoy(v)
 			var scout: SimVehicle = _scout_target()
 			if scout != null:
@@ -1061,6 +1062,18 @@ func _scrap_pip(p: Vector2) -> void:
 
 
 # ---------------------------------------------------------------- convoy (right, bottom)
+
+## The hive signature (this match's species, the next boss) stacked above the convoy panel.
+func _draw_hive() -> void:
+	var bottom: float = BODY_BOTTOM - 4.0
+	var n: int = world.vehicles.size()
+	if n >= 2:
+		bottom -= 18.0 + n * 10.0 + 4.0
+	var h: float = HivePanel.height(world, COL_W)
+	var r := Rect2(RIGHT_X, bottom - h, COL_W, h)
+	HivePanel.draw(self, world, r)
+	_hits.append([r, "none", null])
+
 
 func _draw_convoy(v: SimVehicle) -> void:
 	var n: int = world.vehicles.size()

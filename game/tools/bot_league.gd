@@ -17,7 +17,7 @@ extends SceneTree
 
 const LANDMARK := 5
 const FFA_POS: Array = [Vector2(-240, -100), Vector2(240, -100), Vector2(240, 100), Vector2(-240, 100)]  ## offsets from the arena centre
-const KIND_NAMES: PackedStringArray = ["mite", "boulder", "spitter", "boss", "boss", "boss"]
+const KIND_NAMES: PackedStringArray = ["mite", "boulder", "spitter", "glass", "brood", "shrieker", "boss", "boss", "boss"]
 const FUEL_COLS: Array = [2, 4, 6, 8, 10, 12, 15, 20]
 
 var args: Dictionary = {}
@@ -153,7 +153,7 @@ func _play(kind: String, p_seed: int, pols: Array) -> Dictionary:
 				var vi: int = int(e["owner"])
 				var vd: SimVehicle = w.vehicles[vi]
 				var src: int = int(e.get("cause", -1))  # SimWorld.SRC_*: 0 mite, 1 boulder, 2 spitter, 3 acid, 4 ram, 5 shots
-				var cause: String = _cause(w, vd) if src < 0 else ["mite", "boulder", "spitter", "acid", "pvp", "pvp", "boss"][mini(src, 6)]
+				var cause: String = _cause(w, vd) if src < 0 else ["mite", "boulder", "spitter", "acid", "pvp", "pvp", "boss", "glass", "brood", "shrieker"][mini(src, 9)]
 				(stats[vi]["deaths"] as Array).append([w.tick, w.round, cause])
 		for i in n:
 			last_fuel[i] = w.vehicles[i].fuel
@@ -222,7 +222,7 @@ func _do_workshop(w: SimWorld, v: SimVehicle, bot: BotPolicy, st: Dictionary) ->
 
 
 func _cause(w: SimWorld, v: SimVehicle) -> String:
-	var weight: Array[float] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+	var weight: Array[float] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 	for j in w.enemy_count:
 		if w.enemy_pos[j].distance_squared_to(v.pos) < 40.0 * 40.0:
 			var k: int = w.enemy_kind[j]
@@ -230,7 +230,7 @@ func _cause(w: SimWorld, v: SimVehicle) -> String:
 	var bi: int = 0
 	if weight[1] > weight[bi]:
 		bi = 1
-	for bk in range(2, 6):
+	for bk in range(2, 9):
 		if weight[bk] > weight[bi]:
 			bi = bk
 	if weight[bi] > 0.0:
@@ -683,7 +683,7 @@ func _boss_section(recs: Array[Dictionary]) -> PackedStringArray:
 		out.append_array(_table(heads, prow))
 		out.append("")
 	var kinds: Array = []
-	for kk in [3, 4]:
+	for kk in [SimWorld.BOSS_A, SimWorld.BOSS_B]:
 		var es3: Array = enc.filter(func(e: Dictionary) -> bool: return int(e["kind"]) == kk)
 		if not es3.is_empty():
 			kinds.append(_boss_row(Bosses.boss_name(kk), es3, 0))

@@ -175,14 +175,19 @@ The aliens are the planet's **native wildlife**. They have evolved from sand, sa
 | **Boulder Backs** (brute) | Tanky armoured beetles, ram | Armour piercing, kiting |
 | **Spitters** | Ranged acid that corrodes armour | Speed, shields, closing in |
 | **Dune Worms** (burrowers) | Dig up under the vehicle | Rear weapons, mines, keep moving |
-| **Glass Wings** (flyers) | Ignore terrain and rams | Flak, tesla |
+| **Glass Wings** (flyers) | Ignore terrain and rams | Flak, tesla (**built**, see 7a "As built") |
 | **Leeches** (sappers) | Latch onto the vehicle and eat modules | Spiked plating, electric shock, ramming walls |
-| **Brood Carriers** | Slow; burst into a swarm when they die | Kill them at range, AoE |
-| **Shriekers** (support) | Buff and heal nearby aliens, stay at the back | **Target priority** in doctrine ("support first") |
+| **Brood Carriers** | Slow; burst into a swarm when they die | Kill them at range, AoE (**built**) |
+| **Shriekers** (support) | Buff and heal nearby aliens, stay at the back | **Target priority** in doctrine ("support first") (**built**) |
 | **Hive Nests** (stationary) | Keep spawning until destroyed | **Aggression** in doctrine (attack vs. avoid) |
 | **Mimics** | Look like scrap pickups or rocks | Loot greed in doctrine (Scrap Magnet becomes a risk) |
 | **Stalkers** (camouflaged) | Invisible until close, burst attack | Radar tech, armour |
 | **Tripod Walkers** (mini-boss) | Huge, slow, artillery | Burst DPS, mobility |
+
+**As built (lever 2: variety).** Three species beside mite, boulder and spitter; the numbers live in `sim/species.gd` and `SimWorld.ENEMY_*`.
+- **Glass Wings** (hp 7, speed 190, radius 7): flocks of 4 share a 5 s cycle (hunt, dive for about 1 s, pull away). They only hurt a rig while diving (contact 1.0 per tick of overlap). Rams, ground effects (embers, oil, smoke), the flamer and splash do not touch them; MG, scatter, cannon and direct hits do. Their shadow sits at (7, 12) from the body, so they read as flying. Chance per mite event `0.07 + 0.015 n` (max 0.17), alive cap `4 + 2n` (max 14), n = rounds since their first round.
+- **Brood Carriers** (hp 70, speed 28, radius 17): slow, tanky. They burst into 6 to 8 sand mites (after a 0.2 s burst frame) when shot dead, but not when the kill came from fire, burn or splash: the brood dies with the carrier. Chance `0.05 + 0.012 n` (max 0.12), cap `2 + n` (max 8).
+- **Shriekers** (hp 14, speed 50): hold 250 to 320 px from the nearest rig behind the horde. Every 5 s a ring (radius 90 px, telegraphed by a charge-up pose) heals nearby aliens by 20% of max hp and hastes them (x1.35 speed for 3 s). Bosses are not affected. Chance `0.05 + 0.01 n` (max 0.10), cap `2 + n/2` (max 5). Doctrine: target mode "shriekers", condition "shrieker near".
 
 On top of these come **neutral fauna**: herds of grazers that can be farmed for scrap but stampede when shot at, and scavengers that attack whichever vehicle (player *or* monster) is weakest.
 
@@ -209,6 +214,8 @@ At the start of every match the planet draws a **hive signature**:
 - **One boss trio** from the boss pool (section 7f)
 
 The signature is **shown in the first workshop**. Your first draft and tech decisions become a bet on this match ("lots of flyers this time, so flak is worth it").
+
+**As built (simplified).** The seed picks **2 of the 3 new species** (glass wings, brood carriers, shriekers). Each gets its own first round between 3 and 7, so one match can be glass wings from round 4 and shriekers from round 6. Mites, boulders and spitters are always in the pool. The boss order is the existing one (`Bosses.next_boss`). The first workshop shows a "HIVE SIGNATURE / THIS MATCH" panel with each species (ACTIVE, NEXT ROUND or ROUND n), a counter tip each, and the next boss with its round (ENRAGED when it will be). Later workshops show the short form. Mutations and the dominant mutation are not built yet.
 
 ### 7d. Layer 4: biomes (random per sector)
 The map is assembled from random **biome tiles**. Each biome changes the spawn weights, the terrain and the driving:

@@ -22,6 +22,7 @@ const GOO := 2  ## cyan goo droplets that cool to dark teal
 const ACID := 3  ## spitter acid spray, bright cyan with a hop
 const DUST := 4  ## desert dust from a boulder going down
 const FLASH := 5  ## the instant of death: a square of white-cyan light for a frame or two
+const GLASS_BIT := 6  ## glass / salt-crystal splinters of a glass wing or a shrieker: bone and pale cyan, they hop and settle
 
 const CHITIN: Array[Color] = [Color("#3a2a24"), Color("#5a4234"), Color("#7d5d45"), Color("#a07c5a"), Color("#c4a076"), Color("#dcc099")]
 
@@ -153,6 +154,40 @@ func burst(kind: int, pos: Vector2, age: float, h: int) -> bool:
 				var a5: float = rng.randf() * TAU
 				_add(pos, Vector2(cos(a5), sin(a5) * 0.8) * rng.randf_range(30.0, 60.0), age, rng.randf_range(0.4, 0.55),
 						rng.randf_range(4.0, 8.0), CHITIN_BIT, 2, i % 2)
+		SimWorld.GLASS:  # the wings shatter: a splinter spray, a few drops of goo
+			_add(pos, Vector2.ZERO, age, 0.1, 0.0, FLASH, 7, 0)
+			for i in 14:
+				var a8: float = rng.randf() * TAU
+				_add(pos, Vector2(cos(a8), sin(a8) * 0.8) * rng.randf_range(45.0, 120.0), age, rng.randf_range(0.35, 0.55),
+						rng.randf_range(4.0, 12.0), GLASS_BIT, 1 + int(i % 4 == 0), i % 2)
+			for i in 4:
+				var a9: float = rng.randf() * TAU
+				_add(pos, Vector2(cos(a9), sin(a9) * 0.8) * rng.randf_range(20.0, 50.0), age, rng.randf_range(0.25, 0.4),
+						rng.randf_range(1.0, 4.0), GOO, 1, 0)
+		SimWorld.BROOD:  # the sac tears: a big splat, goo flung wide, shell plates and a dust puff (the mites hatch a moment later)
+			_add(pos, Vector2.ZERO, age, 0.14, 0.0, FLASH, 13, 0)
+			for i in 14:
+				var a10: float = rng.randf() * TAU
+				_add(pos, Vector2(cos(a10), sin(a10) * 0.8) * rng.randf_range(35.0, 100.0), age, rng.randf_range(0.4, 0.6),
+						rng.randf_range(3.0, 9.0), GOO, 1 + i % 2, 0)
+			for i in 8:
+				var a11: float = rng.randf() * TAU
+				_add(pos, Vector2(cos(a11), sin(a11) * 0.8) * rng.randf_range(25.0, 65.0), age, rng.randf_range(0.45, 0.65),
+						rng.randf_range(4.0, 9.0), CHITIN_BIT, 2, i % 2)
+			for i in 6:
+				var a12: float = float(i) / 6.0 * TAU + rng.randf_range(-0.3, 0.3)
+				_add(pos + Vector2(cos(a12), sin(a12) * 0.8) * 6.0, Vector2(cos(a12), sin(a12) * 0.8) * rng.randf_range(14.0, 28.0), age,
+						rng.randf_range(0.4, 0.6), 0.0, DUST, 1, i % 2)
+		SimWorld.SHRIEKER:  # the pipes shatter: salt-crystal splinters and a faint cyan flash (the sound dies)
+			_add(pos, Vector2.ZERO, age, 0.1, 0.0, FLASH, 8, 0)
+			for i in 12:
+				var a13: float = rng.randf() * TAU
+				_add(pos, Vector2(cos(a13), sin(a13) * 0.8) * rng.randf_range(35.0, 90.0), age, rng.randf_range(0.4, 0.6),
+						rng.randf_range(4.0, 11.0), GLASS_BIT, 2, i % 2)
+			for i in 5:
+				var a14: float = rng.randf() * TAU
+				_add(pos, Vector2(cos(a14), sin(a14) * 0.8) * rng.randf_range(25.0, 60.0), age, rng.randf_range(0.3, 0.45),
+						rng.randf_range(2.0, 6.0), GOO, 1, 0)
 		_:  # mite: a small pop of chitin bits and goo
 			_add(pos, Vector2.ZERO, age, 0.09, 0.0, FLASH, 7, 0)
 			for i in 4:
@@ -242,6 +277,8 @@ func _process(delta: float) -> void:
 				_put(k + 2, cc - Vector2(q / 2, q / 2), Vector2(q, q), Gfx.GLOW[5])
 				k += 3
 				continue
+			GLASS_BIT:  # bone-white splinters with a pale cyan glint while fresh
+				c = Gfx.GLOW[4] if (shade == 1 and t < 0.4) else Gfx.BONE_LIGHT
 			_:
 				c = Gfx.SAND[5] if t < 0.5 or shade == 0 else Gfx.SAND[4]
 		_put(k, p2, Vector2(w2, h2), Color(c, _fade(i)))
@@ -341,7 +378,7 @@ func _draw_glow() -> void:
 		if t >= 1.0:
 			continue
 		var k: int = int(pp[2])
-		var s: float = 0.7 if k == SimWorld.MITE else (1.5 if k == SimWorld.BOULDER else 1.1)
+		var s: float = 0.7 if k == SimWorld.MITE else (1.5 if k == SimWorld.BOULDER else (1.4 if k == SimWorld.BROOD else (0.85 if k == SimWorld.GLASS else 1.1)))
 		var sz: Vector2 = cyan * s * (0.7 + 0.5 * t)
 		var p: Vector2 = Gfx.snap(pp[0])
 		_glow.draw_texture_rect(Gfx.TEX_HALO_CYAN, Rect2(p - sz / 2.0, sz), false, Color(1, 1, 1, 0.75 * (1.0 - t)))

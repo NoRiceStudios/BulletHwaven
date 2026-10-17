@@ -14,7 +14,7 @@ extends SceneTree
 ## It writes <dir>/session.json and <dir>/step_NN/{state.json,summary.txt,frames.json}. frames.json lists
 ## the screenshots to take; the shell script renders them with main.gd (--scenario=replay).
 
-const KIND_NAMES: PackedStringArray = ["mite", "boulder", "spitter"]
+const KIND_NAMES: PackedStringArray = ["mite", "boulder", "spitter", "glass wings", "brood carrier", "shrieker", "tripod queen", "shard colossus", "colossus shard"]
 const FX_PCT: PackedStringArray = ["speed", "turn", "scrap", "ram", "vulture", "dmg", "range", "rate", "creduce", "thorns", "luck"]
 const FX_LABELS := {
 	"hp": "max hp", "armor": "armor", "speed": "speed", "turn": "turn rate", "scrap": "scrap income",
@@ -258,7 +258,7 @@ func _play(session: Dictionary) -> Dictionary:
 		if collecting:
 			_post(st, w)
 		if w.tick % 30 == 0 and w.phase == SimWorld.PHASE_COMBAT:
-			for k in [SimWorld.BOULDER, SimWorld.SPITTER]:
+			for k in [SimWorld.BOULDER, SimWorld.SPITTER, SimWorld.GLASS, SimWorld.BROOD, SimWorld.SHRIEKER]:
 				if not seen.has(k) and w.enemy_kind.has(k):
 					seen[k] = [w.round, w.tick]
 		for v in w.vehicles:
@@ -408,7 +408,7 @@ func _post(st: Dictionary, w: SimWorld) -> void:
 		(st["hp_series"] as Array).append([int(rel / SimWorld.TICK_RATE), roundi(100.0 * me.hp / maxf(me.max_hp, 1.0)) if me.alive else 0])
 		(st["enemy_series"] as Array).append([int(rel / SimWorld.TICK_RATE), w.enemy_count])
 		var ks: Dictionary = st["kinds_seen"]
-		for k3 in [SimWorld.MITE, SimWorld.BOULDER, SimWorld.SPITTER]:
+		for k3 in [SimWorld.MITE, SimWorld.BOULDER, SimWorld.SPITTER, SimWorld.GLASS, SimWorld.BROOD, SimWorld.SHRIEKER]:
 			if not ks.has(k3) and w.enemy_kind.has(k3):
 				ks[k3] = rel
 	if flipped:
@@ -471,6 +471,14 @@ static func _top_key(weights: Dictionary) -> String:
 			bw = float(weights[k])
 			best = k
 	return best
+
+
+## This match's hive signature as text, e.g. "GLASS WINGS from round 4, SHRIEKER from round 6".
+static func _hive_text(w: SimWorld) -> String:
+	var parts: PackedStringArray = []
+	for e: Dictionary in Species.list(w):
+		parts.append("%s from round %d" % [e["name"], e["first"]])
+	return ", ".join(parts)
 
 
 static func _kind_name(k: int) -> String:
@@ -697,7 +705,7 @@ func _combat_dict(res: Dictionary, w: SimWorld) -> Dictionary:
 		"scrap_start": st["scrap0"], "scrap_earned": int(st["scrap_pre_interest"]) - int(st["scrap0"]),
 		"interest": st["interest"], "scrap_end": me.scrap,
 		"pvp_hits_dealt": st["hits_dealt"], "pvp_hits_taken": st["hits_taken"],
-		"new_threats": firsts,
+		"new_threats": firsts, "hive_signature": _hive_text(w),
 		"opponent_deaths": _opp_deaths(w, st), "spectating": st["spectating"],
 	}
 
@@ -938,6 +946,7 @@ func _combat_lines(lc: Dictionary, w: SimWorld, stay: bool) -> PackedStringArray
 		L.append("  PvP: %d of your shots hit rigs, %d rival shots hit you" % [lc["pvp_hits_dealt"], lc["pvp_hits_taken"]])
 	_rival_lines(L, lc, w)
 	var notes: PackedStringArray = []
+	notes.append("hive signature: " + str(lc["hive_signature"]))
 	for f: Dictionary in lc["new_threats"]:
 		notes.append("first %s seen at %.0fs (new this round)" % [f["kind"], f["first_seen_t"]])
 	if int(lc["spitter_shots_fired"]) > 0:
