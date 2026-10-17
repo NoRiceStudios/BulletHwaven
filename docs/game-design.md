@@ -228,11 +228,20 @@ The hive **learns from the players**. From the middle of the match, the hive mea
 - Counter-cards: *Genetic Sabotage* (resets one adaptation), *Lure Pheromones* (redirect the adaptation onto another damage type).
 
 ### 7f. Bosses (pool with random phases)
+*As built: see the end of this section. Two bosses are in (Tripod Queen, Shard Colossus), played in the boss rounds of 7j.*
+
 A pool of about 8 bosses. Each boss has **3 phases**, and each phase is drawn from 2–3 variants, so the same boss plays differently. Examples:
 - **The Dune Mother:** a giant worm that circles the arena; phases: devour / spawn brood / sandstorm
 - **The Shard Colossus:** a crystal giant; phases: split into shards / laser refraction / regenerate from the ground
 - **The Choir:** a group of three Shriekers that buff each other; they must die at the same time
 - **The Tripod Queen:** artillery from the edge of the screen, places nests
+
+**As built (boss rounds, lever 2: variety in combat).** Two bosses so far, fought in rounds 4, 8, 12, 16, 20 (7j). The match seed decides which one opens and they alternate (a match with seed s meets, say, Tripod, Colossus, Tripod, ...); the order is known at match start and the workshop shows "next boss in round N: NAME". From round 12 the boss is **enraged** (+25% speed, attack cooldowns x0.7).
+- **Arrival:** a "BOSS INCOMING" plate 3 s before the first surge of the round, then the boss walks in from the arena edge nearest your convoy. Regular spawns drop to 50% while it lives. Boss hp scales with the round and with the number of rigs alive (one shared pool in multiplayer, so it is a co-op fight with a bounty race). It has three phases at 100 / 66 / 33% hp; every change is announced (shake, event) and shown on the boss bar under the clock.
+- **The Tripod Queen** (big, slow artillery walker): lobs shells at where your rig will be; a ground marker shows the impact circle for 1.2 s (drive out of it). Phase 2: also births mite broods from her body. Phase 3: volleys of three shells and a faster walk. Keeps her distance, so you have to close in or out-range her.
+- **The Shard Colossus** (crystal brute): glows for 1 s, then fires a ring of slow crystal shards (gaps are dodgeable). Phase 2: charges at the nearest rig along a marked lane (like boulder charges, only bigger). Phase 3: it splits into three shard minibosses (1/6 of its full hp each, smaller rings); the fight ends when all three are dead.
+- **Ramming** a boss does reduced damage and hurts you; EMP only slows it. **Reward:** every rig that dealt at least 10% of its hp gets a scrap bounty (25 + 6 x round), the killing blow double, plus the killer's next draft has 4 offers with one guaranteed rare-or-better card. A boss still alive when the round timer ends retreats (no penalty, no bounty).
+- **Doctrine:** the rig and gun target `boss` (nearest boss body in range, else the nearest alien) and the rule condition `boss active`; `strongest` picks the boss too.
 
 ### 7g. Layer 6: events (random during rounds)
 - **Sandworm crossing:** a gigantic, invulnerable worm crosses the map, and everything in its path is destroyed (players *and* aliens). It's telegraphed by ground tremor.
@@ -254,7 +263,7 @@ When a **Champion kills a player**, it survives, levels up, gains a mutation and
 
 ### 7j. Round flow (example, about 14 rounds)
 - **Rounds 1–3:** 1–2 species, no mutations, each player in their own sector (no PvP). Learn the build basics. *In the current build there are no sectors; the same rule is enforced directly: before round 4 (`PVP_START_ROUND`) vehicles do not target, shoot or ram each other. Section 8 notes the first anti-snowball rules that came with it.*
-- **Rounds 4, 8, 12:** **Boss rounds** from the match's boss trio. Optionally a contested world boss.
+- **Rounds 4, 8, 12 (16, 20):** **Boss rounds** from the match's boss pool. Optionally a contested world boss. *As built: every 4th round, two bosses alternating from a seed-chosen opener, enraged from round 12; see 7f.*
 - **From round 5:** mutations start appearing, the next round is announced, and random events become possible.
 - **From round 6:** **the Blight** (a battle-royale zone) closes, sectors merge, and PvP becomes common. The hive starts to adapt.
 - **Rounds 11+:** one shared arena, mixed species with 2–3 mutations, nemeses come back, final fights.

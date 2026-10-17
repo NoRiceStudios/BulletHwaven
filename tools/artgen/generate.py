@@ -8,6 +8,8 @@ import argparse
 import math
 import os
 
+import numpy as np
+
 import scene
 from palette import OUTLINE, RAMPS, SAND, UI_PLATE, UI_TEXT
 from pixel import Canvas, cast_shadow, paste, rect, rgb, text, text_width
@@ -130,6 +132,152 @@ def rig_sheet():
     return cv
 
 
+def alien_preview(seed=21):
+    """Bosses and late species (aliens.py) at game scale on the Dune Sea, next to mites, boulders and
+    spitters, built exactly like the exported frames (RotSprite + outline, additive glow, drop shadows)."""
+    import aliens
+    import export_assets as E
+    from sprites import boulder_back
+    W, H = 640, 360
+    cv = Canvas(W, H)
+    cv.rgb[:] = dune_sea(W, H, seed)
+    cv.a[:] = 1
+    glows = []
+
+    def frame(spr, ang, size):
+        with E.no_outline():
+            base = spr() if callable(spr) else spr
+        f = E.rotsprite(base, ang, size)
+        E.outline(f, OUTLINE)
+        return f
+
+    def put(f, cx, cy, sh=(2, 3), strength=0.45, glow=None, name=""):
+        x, y = cx - f.w // 2, cy - f.h // 2
+        if sh:
+            cast_shadow(cv, f, x, y, *sh, strength=strength)
+        paste(cv, f, x, y)
+        if glow:
+            glows.append((E.glow_of(f, **glow), x, y))
+        if name:
+            label(cv, name, cx, cy + f.h // 2 - 4)
+
+    def decal(d, cx, cy):
+        paste(cv, d, cx - d.w // 2, cy - d.h // 2)
+
+    rng = np.random.default_rng(seed)
+    # carcass decals first (they lie on the ground)
+    decal(aliens.carcass_tripod(seed=1), 70, 300)
+    decal(aliens.carcass_colossus(seed=1), 600, 300)
+    for i, (fn, x, y) in enumerate([(aliens.carcass_shard, 420, 214), (aliens.carcass_wings, 200, 330),
+                                    (aliens.carcass_brood, 300, 330), (aliens.carcass_shrieker, 520, 340),
+                                    (aliens.carcass_brood, 160, 230), (aliens.carcass_shard, 560, 230)]):
+        decal(fn(seed=i * 7 + 1), x, y)
+    from export_assets import carcass
+    for i in range(6):
+        decal(carcass(i), rng.uniform(220, 420), rng.uniform(260, 350))
+
+    # Tripod Queen shelling a spot to the right: telegraph on the ground, a round in flight
+    tele = aliens.tripod_telegraph(3)  # normal alpha blend: additive cyan turns green on orange sand
+    paste(cv, tele, 262 - tele.w // 2, 150 - tele.h // 2)
+    put(frame(lambda: aliens.tripod_queen("walk1"), 0.35, aliens.TRIPOD_FRAME), 92, 92, sh=(8, 11),
+        strength=0.5, glow={"radius": 3, "gain": 1.8, "strength": 0.45}, name="TRIPOD QUEEN")
+    put(frame(lambda: aliens.tripod_queen("aim"), 0.0, aliens.TRIPOD_FRAME), 92, 232, sh=(8, 11),
+        strength=0.5, glow={"radius": 3, "gain": 1.8, "strength": 0.45}, name="AIM")
+    shell = aliens.tripod_shell(1.9)
+    put(shell, 222, 132, sh=(5, 12), strength=0.35, glow={"radius": 2, "gain": 2.5, "strength": 0.45})
+
+    # Shard Colossus winding up, shards in a ring, minions
+    put(frame(lambda: aliens.shard_colossus("windup1"), -0.3, aliens.COLOSSUS_FRAME), 520, 92, sh=(6, 9),
+        strength=0.5, glow={"radius": 3, "gain": 1.8, "strength": 0.45}, name="SHARD COLOSSUS")
+    put(frame(lambda: aliens.shard_colossus("walk1"), 3.4, aliens.COLOSSUS_FRAME), 400, 70, sh=(6, 9),
+        strength=0.5, glow={"radius": 3, "gain": 1.8, "strength": 0.45})
+    for k in range(10):
+        a = k * 2 * math.pi / 10 + 0.2
+        x, y = 520 + math.sin(a) * 58, 92 - math.cos(a) * 52
+        if 0 < y < H:
+            put(aliens.crystal_shard(a), int(x), int(y), sh=None,
+                glow={"radius": 2, "gain": 2.5, "strength": 0.45})
+    for k, (x, y, a) in enumerate([(440, 180, -1.8), (470, 205, -1.2), (600, 190, 2.6)]):
+        put(frame(lambda k=k: aliens.shard_minion(f"walk{k % 2}"), a, aliens.SHARD_FRAME), x, y,
+            glow={"radius": 2, "gain": 2.0, "strength": 0.4}, name="SHARD" if k == 0 else "")
+
+    # the old crowd for scale: mites, a boulder, a spitter
+    for k in range(14):
+        x, y = rng.uniform(220, 400), rng.uniform(170, 260)
+        put(frame(lambda k=k: sand_mite(True, seed=k % 2 + 1), rng.uniform(0, 6.3), 32), int(x), int(y),
+            sh=(1, 2), glow={"radius": 1, "gain": 3.0, "strength": 0.35})
+    put(frame(lambda: boulder_back(True, seed=7), 0.5, 64), 360, 300, sh=(4, 6), strength=0.6,
+        glow={"radius": 2, "gain": 1.6, "strength": 0.3}, name="BOULDER")
+    put(frame(lambda: spitter(True, seed=11), -0.6, 48), 250, 296, glow={"radius": 2, "gain": 2.0, "strength": 0.4},
+        name="SPITTER")
+
+    # Brood Carriers: pulsing, and one bursting into mites
+    for k, (x, y, a, row) in enumerate([(190, 190, 0.9, "pulse0"), (300, 140, 2.2, "pulse2"), (175, 285, -0.4, "burst")]):
+        put(frame(lambda row=row: aliens.brood_carrier(row), a, aliens.BROOD_FRAME), x, y,
+            glow={"radius": 2, "gain": 2.0, "strength": 0.4}, name="BROOD" if k == 0 else "")
+    # Shriekers at the back: one idle, one shrieking with its buff ring
+    ring = aliens.shrieker_ring(3)
+    glows.append((ring, 470 - ring.w // 2, 280 - ring.h // 2))
+    put(frame(lambda: aliens.shrieker("shriek"), 0.4, aliens.SHRIEKER_FRAME), 470, 280,
+        glow={"radius": 2, "gain": 2.0, "strength": 0.4}, name="SHRIEKER")
+    put(frame(lambda: aliens.shrieker("idle"), -0.7, aliens.SHRIEKER_FRAME), 540, 262,
+        glow={"radius": 2, "gain": 2.0, "strength": 0.4})
+
+    # Glass Wings flying over everything: shadow far below-right
+    for k, (x, y, a) in enumerate([(300, 40, 1.2), (330, 28, 1.4), (322, 58, 1.0), (590, 245, -2.2)]):
+        f = frame(lambda k=k: aliens.glass_wings(f"flap{k % 4}"), a, aliens.WING_FRAME)
+        shd = aliens.soft_shadow(f)
+        sx, sy = x - f.w // 2 + 7, y - f.h // 2 + 12
+        for yy in range(shd.h):
+            for xx in range(shd.w):
+                if shd.a[yy, xx] > 0 and 0 <= sy + yy < H and 0 <= sx + xx < W:
+                    al = shd.a[yy, xx]
+                    cv.rgb[sy + yy, sx + xx] = cv.rgb[sy + yy, sx + xx] * (1 - al) + shd.rgb[yy, xx] * al
+        put(f, x, y, sh=None, glow={"radius": 1, "gain": 2.5, "strength": 0.35}, name="GLASS WINGS" if k == 2 else "")
+
+    for g, x, y in glows:  # additive glow pass, as the game draws the *_glow sheets
+        for yy in range(g.h):
+            ty = y + yy
+            if not 0 <= ty < H:
+                continue
+            x0, x1 = max(0, x), min(W, x + g.w)
+            if x0 >= x1:
+                continue
+            cv.rgb[ty, x0:x1] += g.rgb[yy, x0 - x:x1 - x] * g.a[yy, x0 - x:x1 - x, None]
+    cv.rgb[:] = np.clip(cv.rgb, 0, 255)
+    return cv
+
+
+def alien_frames():
+    """Every animation row of the new aliens (facing north and turned 45 degrees), 2x, for render wiring."""
+    import aliens
+    import export_assets as E
+    groups = [("TRIPOD QUEEN", aliens.tripod_queen, aliens.TRIPOD_ROWS, aliens.TRIPOD_FRAME),
+              ("SHARD COLOSSUS", aliens.shard_colossus, aliens.COLOSSUS_ROWS, aliens.COLOSSUS_FRAME),
+              ("SHARD", aliens.shard_minion, aliens.SHARD_ROWS, aliens.SHARD_FRAME),
+              ("GLASS WINGS", aliens.glass_wings, aliens.WING_ROWS, aliens.WING_FRAME),
+              ("BROOD CARRIER", aliens.brood_carrier, aliens.BROOD_ROWS, aliens.BROOD_FRAME),
+              ("SHRIEKER", aliens.shrieker, aliens.SHRIEKER_ROWS, aliens.SHRIEKER_FRAME)]
+    W = 8 + max(len(rows) * (fr + 4) for _, _, rows, fr in groups)
+    H = sum(2 * fr + 22 for *_, fr in groups) + 8
+    cv = Canvas(W, H)
+    cv.rgb[:] = dune_sea(W, H, seed=11) * 0.55 + rgb(SAND[2]) * 0.45
+    cv.a[:] = 1
+    y = 6
+    for name, fn, rows, fr in groups:
+        text(cv, name, 6, y, UI_TEXT, OUTLINE)
+        for i, r in enumerate(rows):
+            for j, ang in enumerate((0.0, math.pi / 4)):
+                with E.no_outline():
+                    base = fn(r)
+                f = E.rotsprite(base, ang, fr)
+                E.outline(f, OUTLINE)
+                paste(cv, f, 6 + i * (fr + 4), y + 8 + j * fr)
+            label(cv, r.upper(), 6 + i * (fr + 4) + fr // 2, y + 10 + 2 * fr)
+        y += 2 * fr + 22
+    return cv
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--scale", type=int, default=3)
@@ -147,6 +295,17 @@ def main():
     sprite_sheet().to_image(s).save(os.path.join(OUT, "sprites.png"))
     biome_sheet().to_image(s).save(os.path.join(OUT, "biomes.png"))
     rig_sheet().to_image(s).save(os.path.join(OUT, "rigs.png"))
+    al = alien_preview()  # game scale (1x) on top, the same scene zoomed 3x below
+    pv = Canvas(al.w * 3, al.h * 4 + 12)
+    pv.put(rect(pv.w, pv.h, 0, 0, pv.w - 1, pv.h - 1), UI_PLATE[0])
+    paste(pv, al, 0, 0)
+    text(pv, "GAME SCALE (1X)  -  BELOW: 3X ZOOM", al.w + 12, 8, UI_TEXT)
+    z = Canvas(al.w * 3, al.h * 3)
+    z.rgb = np.repeat(np.repeat(al.rgb, 3, 0), 3, 1)
+    z.a[:] = 1
+    paste(pv, z, 0, al.h + 12)
+    pv.to_image(1).save(os.path.join(OUT, "aliens_preview.png"))
+    alien_frames().to_image(2).save(os.path.join(OUT, "aliens_frames.png"))
     sc = scene.build()
     scene.finish(scene.render_day(sc)).to_image(s).save(os.path.join(OUT, "mockup_day.png"))
     scene.finish(scene.render_night(sc)).to_image(s).save(os.path.join(OUT, "mockup_night.png"))
