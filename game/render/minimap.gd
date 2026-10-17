@@ -139,8 +139,8 @@ func _draw() -> void:
 	_draw_rigs(w, a, inner)
 
 
-## Alien density: one pixel per map cell, brighter cyan where more aliens crowd; boulders and
-## spitters stand out as the brightest specks.
+## Alien density: one pixel per map cell, brighter cyan where more aliens crowd; boulders, spitters,
+## brood carriers and shriekers (a small cross) stand out as the brightest specks; glass wings are dim.
 func _draw_hive(w: SimWorld, a: Rect2, inner: Rect2) -> void:
 	var iw: int = int(inner.size.x)
 	var ih: int = int(inner.size.y)
@@ -157,7 +157,14 @@ func _draw_hive(w: SimWorld, a: Rect2, inner: Rect2) -> void:
 		var x: int = clampi(int(p.x * sx), 0, iw - 1)
 		var y: int = clampi(int(p.y * sy), 0, ih - 1)
 		var k: int = y * iw + x
-		_count[k] = mini(_count[k] + (1 if w.enemy_kind[i] == SimWorld.MITE else 16), 255)
+		var ek: int = w.enemy_kind[i]
+		_count[k] = mini(_count[k] + (1 if ek == SimWorld.MITE else (2 if ek == SimWorld.GLASS else 16)), 255)
+		if ek == SimWorld.SHRIEKER:  # a shrieker is a small cross: the buffer to kill first
+			for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				var cx: int = x + d.x
+				var cy: int = y + d.y
+				if cx >= 0 and cx < iw and cy >= 0 and cy < ih:
+					_count[cy * iw + cx] = maxi(_count[cy * iw + cx], 3)
 	for k in _count.size():
 		var c: int = _count[k]
 		if c == 0:

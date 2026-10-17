@@ -194,7 +194,7 @@ static func is_offerable(v: SimVehicle, id: String) -> bool:
 ##  - in the early rounds (`round_no` 1..EARLY_ROUNDS) unowned weapons weigh double (weapon variety);
 ##  - cards in `exclude` (the previous offer, for a reroll) are not offered again, unless that would
 ##    leave fewer than `count` cards to choose from.
-static func roll_offers(rng: RandomNumberGenerator, v: SimVehicle, count: int = OFFER_COUNT, round_no: int = 0, exclude: Array[String] = []) -> Array[String]:
+static func roll_offers(rng: RandomNumberGenerator, v: SimVehicle, count: int = OFFER_COUNT, round_no: int = 0, exclude: Array[String] = [], min_rare: bool = false) -> Array[String]:
 	var pool: Array[String] = []
 	var weights: Array[int] = []
 	for d: Dictionary in DEFS:
@@ -239,6 +239,22 @@ static func roll_offers(rng: RandomNumberGenerator, v: SimVehicle, count: int = 
 		cats[pcat] = int(cats.get(pcat, 0)) + 1
 		out.append(pool[pick])
 		_remove(pool, weights, pick)
+	# Boss reward: at least one card of rare or better rarity (replaces the last offer when none is).
+	if min_rare and not out.is_empty():
+		var has_rare: bool = false
+		for oid in out:
+			if str(def(oid)["rarity"]) != "common":
+				has_rare = true
+				break
+		if not has_rare:
+			var rare_cand: Array[int] = []
+			for k in pool.size():
+				if str(def(pool[k])["rarity"]) != "common":
+					rare_cand.append(k)
+			if not rare_cand.is_empty():
+				var rk: int = _draw(rng, weights, rare_cand)
+				out[out.size() - 1] = pool[rk]
+				_remove(pool, weights, rk)
 	# Shuffle so the guaranteed weapon is not always first (Fisher-Yates with the world rng).
 	for k in range(out.size() - 1, 0, -1):
 		var m: int = rng.randi() % (k + 1)

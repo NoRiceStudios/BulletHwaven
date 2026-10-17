@@ -15,14 +15,19 @@ const SPAWN_REACH := Vector2(640.0, 360.0)
 const MITE := 0
 const BOULDER := 1
 const SPITTER := 2
-
-# Per-kind stats, indexed by enemy kind.
-const ENEMY_RADIUS: PackedFloat32Array = [6.0, 14.0, 8.0]
-const ENEMY_SPEED: PackedFloat32Array = [90.0, 35.0, 55.0]  # px/s
-const ENEMY_HP: PackedFloat32Array = [4.0, 80.0, 20.0]
-const ENEMY_CONTACT_DAMAGE: PackedFloat32Array = [0.15, 1.5, 0.6]  # per tick while touching
-const ENEMY_SCRAP: PackedInt32Array = [1, 5, 2]
-const MAX_ENEMY_RADIUS := 14.0
+const GLASS := 3  ## Glass Wings, a flyer (see species.gd)
+const BROOD := 4  ## Brood Carrier: bursts into mites
+const SHRIEKER := 5  ## Shrieker: heals and hastens nearby aliens
+const BOSS_A := 6  ## Tripod Queen (see bosses.gd); all boss kinds are >= BOSS_A
+const BOSS_B := 7  ## Shard Colossus
+const BOSS_SHARD := 8  ## a Colossus split-off (phase 3)
+# Per enemy kind: mite, boulder, spitter, glass wings, brood carrier, shrieker, then the bosses.
+const ENEMY_RADIUS: PackedFloat32Array = [6.0, 14.0, 8.0, 7.0, 17.0, 10.0, 36.0, 34.0, 22.0]
+const ENEMY_SPEED: PackedFloat32Array = [74.0, 35.0, 55.0, 190.0, 28.0, 50.0, 34.0, 48.0, 70.0]  # px/s (glass: dive speed; bosses: base speed, Bosses.speed_of() adds phase / enrage)
+const ENEMY_HP: PackedFloat32Array = [4.0, 80.0, 20.0, 7.0, 70.0, 14.0, 1.0, 1.0, 1.0]  # bosses: hp is set by Bosses (see enemy_max_hp_of)
+const ENEMY_CONTACT_DAMAGE: PackedFloat32Array = [0.15, 1.5, 0.6, 1.0, 0.8, 0.3, 2.5, 3.0, 1.6]  # per tick while touching (glass: only while diving)
+const ENEMY_SCRAP: PackedInt32Array = [1, 5, 2, 2, 4, 3, 0, 0, 3]
+const MAX_ENEMY_RADIUS := 36.0
 
 # Damage sources (stats, "vehicle_destroyed" cause). 0..2 equal the enemy kind (contact damage).
 const SRC_MITE := 0
@@ -31,7 +36,13 @@ const SRC_SPITTER := 2  # spitter body contact
 const SRC_ACID := 3
 const SRC_RAM := 4  # a rival's ram / spikes
 const SRC_PLAYER := 5  # a rival's shots
-const SRC_NAMES: PackedStringArray = ["mite", "boulder", "spitter", "acid", "ram", "player"]
+const SRC_BOSS := 6  # a boss: contact, shells, charges
+const SRC_GLASS := 7  # glass wings diving into a rig
+const SRC_BROOD := 8  # brood carrier body contact
+const SRC_SHRIEKER := 9  # shrieker body contact
+const SRC_NAMES: PackedStringArray = ["mite", "boulder", "spitter", "acid", "ram", "player", "boss", "glass", "brood", "shrieker"]
+const CONTACT_KINDS := 6  # enemy kinds that deal contact damage as a "regular" alien (bookkeeping in _update_enemies)
+const CONTACT_SRC: PackedInt32Array = [SRC_MITE, SRC_BOULDER, SRC_SPITTER, SRC_GLASS, SRC_BROOD, SRC_SHRIEKER]
 const WEAPON_RAM := 4  # "weapon" of a player kill by ramming (Cards.WEAPON_KINDS holds 0..3)
 
 # Ballistics ammo and weapon heat (tech tree v2.3, section 4.1). Ammo ids, bits and scaling: Ammo.
@@ -89,8 +100,9 @@ const UNDERDOG_FUEL_FACTOR := 0.7  # the lowest-fuel player loses 30% less fuel 
 const FUEL_STEAL := 10  # a player kill moves this much of the victim's fuel loss to the killer
 const LEADER_FUEL_BONUS := 10  # extra fuel for destroying the marked leader
 const REPEAT_KILL_FACTORS: Array[float] = [1.0, 0.5, 0.0]  # reward share for the 1st, 2nd, 3rd+ kill of the same victim in a round
-const FUEL_DRAIN_START_ROUND := 8  # PVP_START_ROUND + 4: multiplayer only, from the workshop after this round
-const FUEL_DRAIN_BASE := 5
+const FUEL_DRAIN_START_ROUND := 7  # PVP_START_ROUND + 3: multiplayer only, from the workshop after this round
+const FUEL_DRAIN_BASE := 6
+const FUEL_DRAIN_LETHAL_ROUND := 18  # from the workshop after this round the drain can eliminate every rig except the one with the most fuel
 const FUEL_DRAIN_ROUNDS_PER_STEP := 3  # the drain grows by 1 every this many rounds past the start
 const PVP_PROTECT_TICKS := 60  # 2 s of third-party protection after a player kill
 const PVP_PROTECT_FACTOR := 0.5  # damage multiplier while protected
@@ -111,10 +123,10 @@ const PACK_START := 3.0  # mites spawn in packs: 3 in round 1 ...
 const PACK_PER_ROUND := 0.6
 const PACK_MAX := 8  # ... up to 8
 const PACK_RADIUS := 24.0  # a pack clusters within this of one edge point
-const MITE_SCRAP_START := 0.22  # scrap per mite kill (fractional, carried): many more mites must not inflate the economy
+const MITE_SCRAP_START := 0.19  # scrap per mite kill (fractional, carried): many more mites must not inflate the economy
 const MITE_SCRAP_PER_ROUND := 0.009
 const MITE_SCRAP_MIN := 0.06
-const BOULDER_CHANCE := 0.04  # round 1; reaches the old 0.4 cap in the same round (13) as before
+const BOULDER_CHANCE := 0.02  # round 1 (per spawned alien; the horde spawns ~2-3x as fast as before, so this is lower)
 const SPAWN_INSET := 8.0
 # Alive caps: a spawn that would exceed the cap becomes a mite, so the field never snowballs.
 const BOULDER_CAP_BASE := 8
@@ -169,8 +181,8 @@ const RETREAT_EVENT_CAP := 150  # at most this many "retreat" events per round e
 const HP_SCALE_PER_ROUND := 0.09
 const HP_SCALE_QUAD := 0.005  # late-game term: the hive outgrows a linear power curve
 const SPAWN_SCALE_PER_ROUND := 0.35
-const BOULDER_CHANCE_PER_ROUND := 0.03
-const BOULDER_CHANCE_MAX := 0.4
+const BOULDER_CHANCE_PER_ROUND := 0.013
+const BOULDER_CHANCE_MAX := 0.2
 const DAMAGE_SCALE_PER_ROUND := 0.06
 # Early-round easing (playtest: the first waves were too strong). Spawn rate and enemy damage start at this
 # share in round 1 and rise linearly to full strength in round EASE_END_ROUND; later rounds are unchanged.
@@ -252,7 +264,31 @@ var zone_owner: PackedInt32Array = PackedInt32Array()
 
 var events: Array[Dictionary] = []
 
+# Boss rounds (see bosses.gd). boss_first is derived from the seed at construction; the rest is per round.
+var boss_forced: bool = false  ## tests / scenarios: bosses come even with spawning_enabled = false
+var boss_first: int = 0  ## which boss opens the schedule (0 = BOSS_A, 1 = BOSS_B); they alternate every boss round
+var boss_round: int = 0  ## round the boss fields below belong to (reset lazily by Bosses.tick)
+var boss_kind: int = -1  ## this round's boss kind (BOSS_A / BOSS_B), -1 = not a boss round
+var boss_state: int = 0  ## Bosses.ST_*
+var boss_phase: int = 0  ## 0 = not spawned, 1..3
+var boss_enraged: bool = false
+var boss_max_hp: float = 0.0  ## full hp of the boss (shared pool; a Colossus shard has 1/6 of it)
+var boss_hp_frac: float = 0.0  ## remaining hp of all boss bodies / boss_max_hp
+var boss_warn_left: int = 0  ## ticks until the spawn while warned
+var boss_spawn_pos: Vector2 = Vector2.ZERO
+var boss_marks: Array[Dictionary] = []  ## telegraph markers {k, pos, pos2, r, left, total} (Bosses.MARK_*)
+var boss_ents: Dictionary = {}  ## host only: enemy id -> attack state of a boss body
+var boss_dealt: Dictionary = {}  ## host only: vehicle id -> damage dealt to the boss this round
+var boss_dmg_taken: float = 0.0  ## host only: damage the boss's attacks did to vehicles this round
+var boss_ticks: int = 0  ## host only: ticks since the spawn
+var boss_log: Array[Dictionary] = []  ## host only, diagnostics for the bot league
+
 ## Set false to stop the timed enemy spawner (tests, scenarios).
+# Hive signature (see species.gd): first round of Glass Wings / Brood Carrier / Shrieker in this match (0 = not in it).
+# Derived from the seed at construction, synced in the snapshot header.
+var hive_first: PackedInt32Array = PackedInt32Array([0, 0, 0])
+var brood_pending: Array = []  ## host only: [release tick, pos, mites] of burst brood carriers
+
 var spawning_enabled: bool = true
 var next_enemy_id: int = 0
 
@@ -269,6 +305,7 @@ var _in_splash: bool = false  # inside _splash_damage (scrap storm counts splash
 var _burning: bool = false  # some enemy may be burning (skips the burn loop otherwise)
 var _pending_proj: Array = []  # projectiles to add once the projectile loop is done: [pos, vel, ttl, dmg, owner, weapon, ammo mask]
 var _spitter_gap: int = 0
+var _fire_dmg: bool = false  # the damage being applied comes from fire (ember / fire zones): a brood carrier killed by it dies childless
 var _last_spitter_side: int = -1
 var _query_buf: PackedInt32Array = PackedInt32Array()
 var _splash_buf: PackedInt32Array = PackedInt32Array()
@@ -278,6 +315,7 @@ var _ch_pos: PackedVector2Array = PackedVector2Array()  # what aliens chase: veh
 var _ch_idx: PackedInt32Array = PackedInt32Array()  # vehicle index; a decoy is -1 - vehicle index
 var _jam_pos: PackedVector2Array = PackedVector2Array()  # alive jammer rigs (aliens near them slow down)
 var _jam_r2: float = 0.0
+var _boss_contact: PackedFloat32Array = PackedFloat32Array()  # per vehicle, boss contact damage this tick
 var _contact: PackedFloat32Array = PackedFloat32Array()  # per vehicle x 3 enemy kinds, damage this tick
 
 
@@ -286,6 +324,8 @@ func _init(p_seed: int) -> void:
 	rng.seed = p_seed
 	_hash = SpatialHash.new(ARENA, HASH_CELL)
 	phase_ticks_left = combat_duration(1)
+	boss_first = Bosses.first_for_seed(p_seed)
+	hive_first = Species.signature(p_seed)
 
 
 # ---------------------------------------------------------------- public API
@@ -423,7 +463,7 @@ func is_underdog(v: SimVehicle) -> bool:
 
 
 ## Fuel every player loses at the workshop after round `r` (multiplayer only, 0 before
-## FUEL_DRAIN_START_ROUND): 5, growing by 1 every 3 rounds (8..10: 5, 11..13: 6, ...).
+## FUEL_DRAIN_START_ROUND): 6, growing by 1 every 3 rounds (7..9: 6, 10..12: 7, ...).
 static func fuel_drain_for_round(r: int) -> int:
 	if r < FUEL_DRAIN_START_ROUND:
 		return 0
@@ -448,7 +488,7 @@ func interest_for(v: SimVehicle) -> int:
 static func new_round_stats(r: int) -> Dictionary:
 	return {
 		"round": r,
-		"taken": {"mite": 0.0, "boulder": 0.0, "spitter": 0.0, "acid": 0.0, "rival": 0.0},
+		"taken": {"mite": 0.0, "boulder": 0.0, "spitter": 0.0, "acid": 0.0, "rival": 0.0, "glass": 0.0, "brood": 0.0, "shrieker": 0.0},
 		"taken_players": {},  # attacker vehicle id -> hp (rival shots and rams)
 		"dealt": 0.0, "dealt_players": 0.0,
 		"kills": 0, "kills_players": 0,
@@ -554,6 +594,14 @@ static func enemy_max_hp(kind: int, r: int) -> float:
 	return ENEMY_HP[kind] * enemy_hp_mult(r)
 
 
+## Full hp of enemy index `j` (a boss shares one pool: Bosses.max_hp_for, a Colossus shard has a sixth of it).
+func enemy_max_hp_of(j: int) -> float:
+	var k: int = enemy_kind[j]
+	if k < BOSS_A:
+		return enemy_max_hp(k, round)
+	return boss_max_hp * (Bosses.SPLIT_HP_FRAC if k == BOSS_SHARD else 1.0)
+
+
 ## True in the 30 ticks before the spitter with stable id `id` spits (every SPIT_PERIOD ticks, staggered by id).
 ## Pure in (tick, id), so clients with the radar array flag spitters from the synced tick alone.
 static func spit_warning(t: int, id: int) -> bool:
@@ -562,6 +610,9 @@ static func spit_warning(t: int, id: int) -> bool:
 
 ## Stuns enemy index `j` for `ticks` (EMP): it neither moves nor attacks. Keeps the longer of two stuns.
 func stun_enemy(j: int, ticks: int) -> void:
+	if enemy_kind[j] >= BOSS_A:  # bosses only slow down
+		_status_enemy(j, 8, Bosses.stun_to_slow(ticks))
+		return
 	var st: int = enemy_status[j]
 	if (st & 255) < ticks:
 		enemy_status[j] = (st & ~255) | clampi(ticks, 0, 255)
@@ -678,6 +729,8 @@ func _step_combat() -> void:
 			_emit("pvp_on", ARENA.get_center(), -1, -1)
 	update_leader()
 	_update_respawns()
+	Bosses.tick(self)
+	Species.tick(self)
 	_update_enemies()
 	_update_vehicles()
 	_update_projectiles()
@@ -712,7 +765,9 @@ func _step_workshop() -> void:
 func checksum() -> int:
 	var ctx := HashingContext.new()
 	ctx.start(HashingContext.HASH_SHA256)
-	var head := PackedInt64Array([tick, enemy_count, proj_count, vehicles.size(), phase, round, phase_ticks_left, winner_peer, next_enemy_id, leader_peer, pvp_grace_ticks, fuel_drain])
+	var head := PackedInt64Array([tick, enemy_count, proj_count, vehicles.size(), phase, round, phase_ticks_left, winner_peer, next_enemy_id, leader_peer, pvp_grace_ticks, fuel_drain,
+		boss_first, boss_kind, boss_state, boss_phase, int(boss_enraged), roundi(boss_max_hp), boss_marks.size(),
+		hive_first[0], hive_first[1], hive_first[2]])
 	ctx.update(head.to_byte_array())
 	var vf := PackedFloat64Array()
 	for v in vehicles:
@@ -977,6 +1032,7 @@ func _find_spawn_spot(v: SimVehicle) -> Vector2:
 ## and every player gets fresh card offers. Destroyed vehicles respawn at once.
 func _begin_workshop() -> void:
 	_compact_enemies()
+	Bosses.end_round(self)
 	var stride: int = maxi(1, ceili(float(enemy_count) / float(RETREAT_EVENT_CAP)))
 	for i in range(0, enemy_count, stride):
 		_emit("retreat", enemy_pos[i], -1, enemy_kind[i])
@@ -987,6 +1043,11 @@ func _begin_workshop() -> void:
 	# Multiplayer fuel drain from round FUEL_DRAIN_START_ROUND: only kills (fuel steal) refill it. Never
 	# eliminates by itself (floor 1). Solo has no drain: there is nobody to take fuel from.
 	fuel_drain = fuel_drain_for_round(round) if vehicles.size() >= 2 else 0
+	var drain_keeper: SimVehicle = null  # lethal drain: this rig (most fuel, first on ties) keeps its last point
+	if fuel_drain > 0 and round >= FUEL_DRAIN_LETHAL_ROUND:
+		for v in vehicles:
+			if not v.eliminated and (drain_keeper == null or v.fuel > drain_keeper.fuel):
+				drain_keeper = v
 	for v in vehicles:
 		v.vel = Vector2.ZERO
 		v.target_kind = 0
@@ -1016,12 +1077,18 @@ func _begin_workshop() -> void:
 		v.round_stats["interest"] = interest
 		Salvage.repay(self, v)
 		if fuel_drain > 0:
-			var d: int = mini(fuel_drain, maxi(v.fuel - 1, 0))
+			var floor_fuel: int = 1 if (drain_keeper == null or v == drain_keeper) else 0
+			var d: int = mini(fuel_drain, maxi(v.fuel - floor_fuel, 0))
 			v.fuel -= d
 			v.round_stats["fuel_drained"] = d
 			_emit("drain", v.pos, v.id, d)
-		v.offers = Cards.roll_offers(rng, v, Cards.OFFER_COUNT + v.bonus_offers, round)
+			if v.fuel <= 0:
+				v.eliminated = true
+				v.respawn_ticks = 0
+				continue
+		v.offers = Cards.roll_offers(rng, v, Cards.OFFER_COUNT + v.bonus_offers, round, [], v.boss_rare)
 		v.bonus_offers = 0
+		v.boss_rare = false
 		Salvage.apply_reserve(v)
 		Salvage.roll(self, v)
 
@@ -1106,6 +1173,8 @@ func _clear_field() -> void:
 	enemy_status.resize(0)
 	enemy_ram_tick.resize(0)
 	_burning = false
+	Bosses.clear_field(self)
+	brood_pending.clear()
 	_pending_proj.clear()
 	zone_pos.resize(0)
 	zone_radius.resize(0)
@@ -1153,8 +1222,10 @@ func _update_enemies() -> void:
 	var nv: int = _av_pos.size()
 	var nch: int = _ch_pos.size()
 	var njam: int = _jam_pos.size()
-	_contact.resize(vehicles.size() * 3)
+	_contact.resize(vehicles.size() * CONTACT_KINDS)
 	_contact.fill(0.0)
+	_boss_contact.resize(vehicles.size())
+	_boss_contact.fill(0.0)
 
 	var cols: int = _hash.cols
 	var rows: int = _hash.rows
@@ -1180,6 +1251,7 @@ func _update_enemies() -> void:
 		var stunned: bool = false
 		var blind: bool = false
 		var slowed: bool = false
+		var hasted: bool = false
 		if st != 0:
 			var s_stun: int = st & 255
 			var s_slow: int = (st >> 8) & 255
@@ -1187,7 +1259,9 @@ func _update_enemies() -> void:
 			stunned = s_stun > 0
 			slowed = s_slow > 0
 			blind = s_blind > 0
-			enemy_status[i] = maxi(s_stun - 1, 0) | (maxi(s_slow - 1, 0) << 8) | (maxi(s_blind - 1, 0) << 16)
+			var s_haste: int = Species.haste_of(st)
+			hasted = s_haste > 0
+			enemy_status[i] = maxi(s_stun - 1, 0) | (maxi(s_slow - 1, 0) << 8) | (maxi(s_blind - 1, 0) << 16) | (maxi(s_haste - 1, 0) << Species.HASTE_SHIFT)
 		var best_d2: float = INF
 		var bk: int = -1
 		if not stunned and not blind:
@@ -1203,8 +1277,16 @@ func _update_enemies() -> void:
 			if dl > 0.001:
 				if kind == SPITTER:
 					desired = _spitter_desire(dir / dl, dl, enemy_id[i])
+				elif kind == GLASS:
+					desired = Species.glass_desire(tick, enemy_id[i], p, _ch_pos[bk])
+				elif kind == SHRIEKER:
+					desired = Species.shrieker_desire(dir / dl, dl, enemy_id[i])
+				elif kind >= BOSS_A:
+					desired = Bosses.move_desire(self, i, kind, p, _ch_pos[bk])
 				else:
 					desired = dir * (ENEMY_SPEED[kind] / dl)
+			if hasted:
+				desired *= Species.HASTE_MULT
 			if slowed:
 				desired *= Mobility.OIL_SLOW
 			for jk in njam:
@@ -1212,6 +1294,11 @@ func _update_enemies() -> void:
 					desired *= Mobility.JAM_SLOW
 					break
 		var vel: Vector2 = Vector2.ZERO if stunned else enemy_vel[i].lerp(desired, 0.25)
+		var is_boss: bool = kind >= BOSS_A
+		if is_boss:
+			var cvel: Vector2 = Bosses.charge_velocity(self, enemy_id[i])
+			if cvel != Vector2.ZERO:
+				vel = cvel
 		var np: Vector2 = p + vel * DT
 
 		# Mild separation from neighbours (3x3 cells, capped).
@@ -1219,6 +1306,8 @@ func _update_enemies() -> void:
 		var cy: int = clampi(int((p.y - oy) * inv), 0, rows - 1)
 		var sep: Vector2 = Vector2.ZERO
 		var seen: int = 0
+		if is_boss:
+			seen = MAX_SEPARATION_NEIGHBORS  # bosses are not shoved around by the swarm
 		for gy in range(maxi(cy - 1, 0), mini(cy + 2, rows)):
 			if seen >= MAX_SEPARATION_NEIGHBORS:
 				break
@@ -1246,7 +1335,10 @@ func _update_enemies() -> void:
 
 		# Contact with vehicles: stop at the hull, deal damage, take ram damage.
 		var killed: bool = false
+		var flying: bool = kind == GLASS and not Species.glass_diving(tick, enemy_id[i])  # a glass wing only touches a rig in its dive
 		for k in nv:
+			if flying:
+				break
 			var vp: Vector2 = _av_pos[k]
 			var dv2: Vector2 = np - vp
 			var rr2: float = vr + r
@@ -1260,15 +1352,24 @@ func _update_enemies() -> void:
 				vel = Vector2.ZERO
 				var vidx: int = _av_idx[k]
 				var cv: SimVehicle = vehicles[vidx]
-				if not stunned:
-					_contact[vidx * 3 + kind] += _contact_hit(kind, cv.eff_armor, cv.contact_reduction)
+				if is_boss:
+					_boss_contact[vidx] += _contact_hit(kind, cv.eff_armor, cv.contact_reduction)
+					Bosses.on_contact(self, i, vidx)
+				elif not stunned:
+					_contact[vidx * CONTACT_KINDS + kind] += _contact_hit(kind, cv.eff_armor, cv.contact_reduction)
 				var ram: float = cv.ram_damage
-				if cv.thorns > 0.0:
+				if kind == GLASS:
+					ram = 0.0  # rams and thorns do not reach a flyer
+				elif cv.thorns > 0.0:
 					ram += cv.thorns * ENEMY_CONTACT_DAMAGE[kind] * enemy_damage_mult(round)
+				if is_boss:  # ramming a boss: reduced damage dealt, and the rammer pays for it
+					ram *= Bosses.RAM_DAMAGE_FACTOR
+					if cv.ramming:
+						_boss_contact[vidx] += Bosses.RAM_RECOIL * enemy_damage_mult(round)
 				if ram > 0.0 and not killed:
 					_hit_enemy(i, ram, vidx, true)
 					killed = enemy_hp[i] <= 0.0
-					if cv.ramming:
+					if cv.ramming and not is_boss:
 						var kb: Vector2 = Mobility.ram_hit(self, cv, i)
 						if kb != Vector2.ZERO:
 							np += kb
@@ -1287,17 +1388,22 @@ func _update_enemies() -> void:
 				_spit(np, vehicles[-1 - ci].decoy_pos, Vector2.ZERO)
 
 	for vidx in vehicles.size():
-		var c0: float = _contact[vidx * 3]
-		var c1: float = _contact[vidx * 3 + 1]
-		var c2: float = _contact[vidx * 3 + 2]
-		var ctot: float = c0 + c1 + c2
+		var ctot: float = 0.0
+		var dom_k: int = 0
+		var dom_v: float = -1.0
+		var split := PackedFloat32Array()
+		for ck in CONTACT_KINDS:
+			var cval: float = _contact[vidx * CONTACT_KINDS + ck]
+			split.append(cval)
+			ctot += cval
+			if cval > dom_v:
+				dom_v = cval
+				dom_k = ck
 		if ctot > 0.0:
-			var dom: int = SRC_MITE
-			if c1 > c0 and c1 >= c2:
-				dom = SRC_BOULDER
-			elif c2 > c0 and c2 > c1:
-				dom = SRC_SPITTER
-			_damage_vehicle(vehicles[vidx], ctot, -1, false, dom, PackedFloat32Array([c0, c1, c2]))
+			_damage_vehicle(vehicles[vidx], ctot, -1, false, CONTACT_SRC[dom_k], split)
+		if _boss_contact[vidx] > 0.0:
+			boss_dmg_taken += _boss_contact[vidx]
+			_damage_vehicle(vehicles[vidx], _boss_contact[vidx], -1, false, SRC_BOSS)
 
 
 ## Spitter movement: hold SPITTER_KEEP_MIN..SPITTER_KEEP_MAX px from the target (`u` = unit vector to
@@ -1339,6 +1445,13 @@ func _contact_hit(kind: int, armor: float, reduction: float = 0.0) -> float:
 func _hit_enemy(j: int, dmg: float, killer: int, by_ram: bool = false) -> void:
 	if enemy_hp[j] <= 0.0:
 		return
+	var kind0: int = enemy_kind[j]
+	if kind0 >= BOSS_A:
+		if kind0 == BOSS_B and boss_phase < 3:  # the Colossus does not die before it splits (Bosses._split)
+			dmg = minf(dmg, enemy_hp[j] - 1.0)
+			if dmg <= 0.0:
+				return
+		Bosses.on_damage(self, killer, minf(dmg, enemy_hp[j]))
 	var applied: float = minf(dmg, enemy_hp[j])
 	enemy_hp[j] -= dmg
 	var kv: SimVehicle = vehicles[killer] if (killer >= 0 and killer < vehicles.size()) else null
@@ -1351,6 +1464,11 @@ func _hit_enemy(j: int, dmg: float, killer: int, by_ram: bool = false) -> void:
 		return
 	var kind: int = enemy_kind[j]
 	_emit("kill", enemy_pos[j], killer, kind)
+	if kind >= BOSS_A:
+		Bosses.on_death(self, j, killer)
+	elif kind == BROOD:  # fire, burn or splash kills the brood with it
+		Species.on_brood_death(self, j, killer, _fire_dmg or _in_splash or enemy_burn_ticks[j] > 0 \
+				or (_hit_ammo & Ammo.FIRE_BIT) != 0 or _hit_weapon == EVO_FLAMER_IDX)
 	if (_hit_ammo & Ammo.SHRAPNEL_BIT) != 0 and (_hit_ammo & Ammo.SHARD_BIT) == 0:
 		_queue_shards(enemy_pos[j], killer, kind)
 	if kv != null:
@@ -1422,7 +1540,8 @@ func _spawn_tick() -> void:
 		if ticks_in == starts[si] - SURGE_WARN_TICKS and ticks_in >= 0:
 			_emit("surge", _swarm_center(), -1, si, {"in_ticks": SURGE_WARN_TICKS, "index": si})
 	# the accumulator counts spawn events: a mite event is a pack, boulders and spitters are single
-	_spawn_accum += spawn_rate_at(round, ticks_in) * DT / float(pack)
+	var boss_mult: float = Bosses.BOSS_SPAWN_FACTOR if Bosses.engaged(self) else 1.0
+	_spawn_accum += spawn_rate_at(round, ticks_in) * boss_mult * DT / float(pack)
 	if _spitter_gap > 0:
 		_spitter_gap -= 1
 	if _spawn_accum < 1.0:
@@ -1436,6 +1555,8 @@ func _spawn_tick() -> void:
 			n_boulder += 1
 		elif ek == SPITTER:
 			n_spitter += 1
+	var species_on: bool = Species.any_active(self, round)
+	var species_n: PackedInt32Array = Species.count_alive(self) if species_on else PackedInt32Array([0, 0, 0])
 	var p_boulder: float = minf(boulder_chance(round) * float(pack), 0.5)  # per event, so packs do not dilute them
 	var p_spitter: float = minf(spitter_chance(round) * float(pack), 0.3) if round >= SPITTER_MIN_ROUND else 0.0
 	while _spawn_accum >= 1.0:
@@ -1464,6 +1585,11 @@ func _spawn_tick() -> void:
 		var at: Vector2 = _edge_pos(area, side, t)
 		var lo: Vector2 = area.position + Vector2(SPAWN_INSET, SPAWN_INSET)
 		var hi: Vector2 = area.end - Vector2(SPAWN_INSET, SPAWN_INSET)
+		if kind == MITE and species_on:  # hive signature: a mite event may become one of this match's species
+			var sk: int = Species.roll(self, species_n)
+			if sk >= 0:
+				Species.spawn_event(self, sk, at, lo, hi, species_n)
+				continue
 		if kind == MITE:
 			for k in pack:
 				var ang: float = rng.randf() * TAU
@@ -1653,8 +1779,12 @@ func _damage_vehicle(v: SimVehicle, dmg: float, attacker: int, use_armor: bool =
 	var killer_kind: int = -1
 	if src <= SRC_SPITTER:
 		killer_kind = src
+	elif src >= SRC_GLASS:
+		killer_kind = GLASS + (src - SRC_GLASS)
 	elif src == SRC_ACID:
 		killer_kind = SPITTER
+	elif src == SRC_BOSS:
+		killer_kind = maxi(boss_kind, BOSS_A)
 	(v.round_stats["deaths"] as Array).append({
 		"t": combat_duration(round) - phase_ticks_left, "cause": SRC_NAMES[clampi(src, 0, SRC_NAMES.size() - 1)],
 		"src": src, "killer": killer_id, "killer_kind": killer_kind,
@@ -1698,12 +1828,14 @@ func _note_taken(v: SimVehicle, hp: float, src: int, attacker: int, split: Packe
 	if hp <= 0.0:
 		return
 	var taken: Dictionary = v.round_stats["taken"]
-	if split.size() == 3:
-		var tot: float = split[0] + split[1] + split[2]
+	if split.size() == CONTACT_KINDS:
+		var tot: float = 0.0
+		for sv in split:
+			tot += sv
 		if tot > 0.0:
-			taken["mite"] = float(taken["mite"]) + hp * split[0] / tot
-			taken["boulder"] = float(taken["boulder"]) + hp * split[1] / tot
-			taken["spitter"] = float(taken["spitter"]) + hp * split[2] / tot
+			for ck in CONTACT_KINDS:
+				var key: String = SRC_NAMES[CONTACT_SRC[ck]]
+				taken[key] = float(taken[key]) + hp * split[ck] / tot
 		return
 	match src:
 		SRC_MITE:
@@ -1712,7 +1844,9 @@ func _note_taken(v: SimVehicle, hp: float, src: int, attacker: int, split: Packe
 			taken["boulder"] = float(taken["boulder"]) + hp
 		SRC_SPITTER:
 			taken["spitter"] = float(taken["spitter"]) + hp
-		SRC_ACID:
+		SRC_GLASS, SRC_BROOD, SRC_SHRIEKER:
+			taken[SRC_NAMES[src]] = float(taken[SRC_NAMES[src]]) + hp
+		SRC_ACID, SRC_BOSS:
 			taken["acid"] = float(taken["acid"]) + hp
 		_:
 			taken["rival"] = float(taken["rival"]) + hp
@@ -1885,7 +2019,7 @@ func _is_weak(kind: int, index: int, id: int) -> bool:
 	if kind == 1:
 		if index < 0 or index >= enemy_count:
 			return false
-		return enemy_hp[index] < Cards.VULTURE_HP_FRACTION * enemy_max_hp(enemy_kind[index], round)
+		return enemy_hp[index] < Cards.VULTURE_HP_FRACTION * enemy_max_hp_of(index)
 	if kind == 2 and id >= 0 and id < vehicles.size():
 		var t: SimVehicle = vehicles[id]
 		return t.alive and t.hp < Cards.VULTURE_HP_FRACTION * t.max_hp
@@ -1949,6 +2083,8 @@ func _update_projectiles() -> void:
 				var j: int = _query_buf[q]
 				if enemy_hp[j] <= 0.0 or enemy_id[j] == last_id:
 					continue
+				if enemy_kind[j] == GLASS and proj_weapon[i] == EVO_FLAMER_IDX:
+					continue  # the flame stream is a ground weapon: it does not reach a flyer
 				var t: float = _segment_circle_t(p0, step_v, enemy_pos[j], ENEMY_RADIUS[enemy_kind[j]] + PROJECTILE_RADIUS)
 				if t >= 0.0 and t < best_t:
 					best_t = t
@@ -1999,7 +2135,7 @@ func _update_projectiles() -> void:
 					dmg *= 1.0 + sw
 				var ex: float = float(ofx.get("execute", 0.0))
 				if ex > 0.0 and (amask & Ammo.SHARD_BIT) == 0 and enemy_hp[hit_enemy] > 0.0 \
-						and enemy_hp[hit_enemy] < ex * enemy_max_hp(ekind, round):
+						and ekind < BOSS_A and enemy_hp[hit_enemy] < ex * enemy_max_hp(ekind, round):
 					dmg = maxf(dmg, enemy_hp[hit_enemy])
 					_emit("execute", hit_pos, owner, ekind)
 			_hit_weapon = proj_weapon[i] if proj_weapon[i] != 255 else -1
@@ -2062,7 +2198,7 @@ func _splash_damage(center: Vector2, radius: float, dmg: float, owner: int, skip
 	_in_splash = true
 	for q in cnt:
 		var j: int = _splash_buf[q]
-		if j != skip:
+		if j != skip and enemy_kind[j] != GLASS:  # a ground blast does not reach a flyer
 			_hit_enemy(j, dmg, owner)
 	_in_splash = false
 
@@ -2155,17 +2291,21 @@ func _update_zones() -> void:
 		if zone_kind[z] == ZONE_EMBER or zone_kind[z] == ZONE_FIRE:
 			var owner: int = zone_owner[z]
 			var cnt: int = _hash.query_circle(zone_pos[z], zone_radius[z], enemy_pos, _splash_buf, STALE_MARGIN)
+			_fire_dmg = true
 			for q in cnt:
 				var j: int = _splash_buf[q]
-				if enemy_hp[j] > 0.0:
+				if enemy_hp[j] > 0.0 and enemy_kind[j] != GLASS:
 					_hit_enemy(j, EMBER_DPS * DT, owner)
 					_ignite(j, EMBER_BURN_DPS, owner)
+			_fire_dmg = false
 		elif zone_kind[z] == ZONE_OIL or zone_kind[z] == ZONE_SMOKE:
 			# Oil slows what stands in it for 2 s; smoke makes aliens lose their target for 1 s.
 			var oil: bool = zone_kind[z] == ZONE_OIL
 			var cnt2: int = _hash.query_circle(zone_pos[z], zone_radius[z], enemy_pos, _splash_buf, STALE_MARGIN)
 			for q in cnt2:
 				var j2: int = _splash_buf[q]
+				if enemy_kind[j2] == GLASS:
+					continue
 				if oil:
 					_status_enemy(j2, 8, Abilities.OIL_SLOW_TICKS)
 				else:

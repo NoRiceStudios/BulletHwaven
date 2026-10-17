@@ -175,14 +175,19 @@ The aliens are the planet's **native wildlife**. They have evolved from sand, sa
 | **Boulder Backs** (brute) | Tanky armoured beetles, ram | Armour piercing, kiting |
 | **Spitters** | Ranged acid that corrodes armour | Speed, shields, closing in |
 | **Dune Worms** (burrowers) | Dig up under the vehicle | Rear weapons, mines, keep moving |
-| **Glass Wings** (flyers) | Ignore terrain and rams | Flak, tesla |
+| **Glass Wings** (flyers) | Ignore terrain and rams | Flak, tesla (**built**, see 7a "As built") |
 | **Leeches** (sappers) | Latch onto the vehicle and eat modules | Spiked plating, electric shock, ramming walls |
-| **Brood Carriers** | Slow; burst into a swarm when they die | Kill them at range, AoE |
-| **Shriekers** (support) | Buff and heal nearby aliens, stay at the back | **Target priority** in doctrine ("support first") |
+| **Brood Carriers** | Slow; burst into a swarm when they die | Kill them at range, AoE (**built**) |
+| **Shriekers** (support) | Buff and heal nearby aliens, stay at the back | **Target priority** in doctrine ("support first") (**built**) |
 | **Hive Nests** (stationary) | Keep spawning until destroyed | **Aggression** in doctrine (attack vs. avoid) |
 | **Mimics** | Look like scrap pickups or rocks | Loot greed in doctrine (Scrap Magnet becomes a risk) |
 | **Stalkers** (camouflaged) | Invisible until close, burst attack | Radar tech, armour |
 | **Tripod Walkers** (mini-boss) | Huge, slow, artillery | Burst DPS, mobility |
+
+**As built (lever 2: variety).** Three species beside mite, boulder and spitter; the numbers live in `sim/species.gd` and `SimWorld.ENEMY_*`.
+- **Glass Wings** (hp 7, speed 190, radius 7): flocks of 4 share a 5 s cycle (hunt, dive for about 1 s, pull away). They only hurt a rig while diving (contact 1.0 per tick of overlap). Rams, ground effects (embers, oil, smoke), the flamer and splash do not touch them; MG, scatter, cannon and direct hits do. Their shadow sits at (7, 12) from the body, so they read as flying. Chance per mite event `0.07 + 0.015 n` (max 0.17), alive cap `4 + 2n` (max 14), n = rounds since their first round.
+- **Brood Carriers** (hp 70, speed 28, radius 17): slow, tanky. They burst into 6 to 8 sand mites (after a 0.2 s burst frame) when shot dead, but not when the kill came from fire, burn or splash: the brood dies with the carrier. Chance `0.05 + 0.012 n` (max 0.12), cap `2 + n` (max 8).
+- **Shriekers** (hp 14, speed 50): hold 250 to 320 px from the nearest rig behind the horde. Every 5 s a ring (radius 90 px, telegraphed by a charge-up pose) heals nearby aliens by 20% of max hp and hastes them (x1.35 speed for 3 s). Bosses are not affected. Chance `0.05 + 0.01 n` (max 0.10), cap `2 + n/2` (max 5). Doctrine: target mode "shriekers", condition "shrieker near".
 
 On top of these come **neutral fauna**: herds of grazers that can be farmed for scrap but stampede when shot at, and scavengers that attack whichever vehicle (player *or* monster) is weakest.
 
@@ -210,6 +215,8 @@ At the start of every match the planet draws a **hive signature**:
 
 The signature is **shown in the first workshop**. Your first draft and tech decisions become a bet on this match ("lots of flyers this time, so flak is worth it").
 
+**As built (simplified).** The seed picks **2 of the 3 new species** (glass wings, brood carriers, shriekers). Each gets its own first round between 3 and 7, so one match can be glass wings from round 4 and shriekers from round 6. Mites, boulders and spitters are always in the pool. The boss order is the existing one (`Bosses.next_boss`). The first workshop shows a "HIVE SIGNATURE / THIS MATCH" panel with each species (ACTIVE, NEXT ROUND or ROUND n), a counter tip each, and the next boss with its round (ENRAGED when it will be). Later workshops show the short form. Mutations and the dominant mutation are not built yet.
+
 ### 7d. Layer 4: biomes (random per sector)
 The map is assembled from random **biome tiles**. Each biome changes the spawn weights, the terrain and the driving:
 | Biome | Effect |
@@ -228,11 +235,20 @@ The hive **learns from the players**. From the middle of the match, the hive mea
 - Counter-cards: *Genetic Sabotage* (resets one adaptation), *Lure Pheromones* (redirect the adaptation onto another damage type).
 
 ### 7f. Bosses (pool with random phases)
+*As built: see the end of this section. Two bosses are in (Tripod Queen, Shard Colossus), played in the boss rounds of 7j.*
+
 A pool of about 8 bosses. Each boss has **3 phases**, and each phase is drawn from 2–3 variants, so the same boss plays differently. Examples:
 - **The Dune Mother:** a giant worm that circles the arena; phases: devour / spawn brood / sandstorm
 - **The Shard Colossus:** a crystal giant; phases: split into shards / laser refraction / regenerate from the ground
 - **The Choir:** a group of three Shriekers that buff each other; they must die at the same time
 - **The Tripod Queen:** artillery from the edge of the screen, places nests
+
+**As built (boss rounds, lever 2: variety in combat).** Two bosses so far, fought in rounds 4, 8, 12, 16, 20 (7j). The match seed decides which one opens and they alternate (a match with seed s meets, say, Tripod, Colossus, Tripod, ...); the order is known at match start and the workshop shows "next boss in round N: NAME". From round 12 the boss is **enraged** (+25% speed, attack cooldowns x0.7).
+- **Arrival:** a "<NAME> APPROACHES" plate 3 s before the first surge of the round (the ground churns and rumbles where it will surface, the screen edge pulses cyan), then the boss bursts out of the sand at the arena edge nearest your convoy. Regular spawns drop to 50% while it lives. Boss hp scales with the round and with the number of rigs alive (one shared pool in multiplayer, so it is a co-op fight with a bounty race). It has three phases at 100 / 66 / 33% hp; every change is announced (shake, event) and shown on the boss bar under the clock.
+- **The Tripod Queen** (big, slow artillery walker): lobs shells at where your rig will be; a ground marker shows the impact circle for 1.2 s (drive out of it). Phase 2: also births mite broods from her body. Phase 3: volleys of three shells and a faster walk. Keeps her distance, so you have to close in or out-range her.
+- **The Shard Colossus** (crystal brute): glows for 1 s, then fires a ring of slow crystal shards (gaps are dodgeable). Phase 2: charges at the nearest rig along a marked lane (like boulder charges, only bigger). Phase 3: it splits into three shard minibosses (1/6 of its full hp each, smaller rings); the fight ends when all three are dead.
+- **Ramming** a boss does reduced damage and hurts you; EMP only slows it. **Reward:** every rig that dealt at least 10% of its hp gets a scrap bounty (25 + 6 x round), the killing blow double, plus the killer's next draft has 4 offers with one guaranteed rare-or-better card. A boss still alive when the round timer ends retreats (it burrows away; no penalty, no bounty). A kill gets a multi-stage death (sac pops, a crystal burst, a scrap fountain) and a "<NAME> DOWN" banner with the killing blow and the bounty.
+- **Doctrine:** the rig and gun target `boss` (nearest boss body in range, else the nearest alien) and the rule condition `boss active`; `strongest` picks the boss too.
 
 ### 7g. Layer 6: events (random during rounds)
 - **Sandworm crossing:** a gigantic, invulnerable worm crosses the map, and everything in its path is destroyed (players *and* aliens). It's telegraphed by ground tremor.
@@ -254,7 +270,7 @@ When a **Champion kills a player**, it survives, levels up, gains a mutation and
 
 ### 7j. Round flow (example, about 14 rounds)
 - **Rounds 1–3:** 1–2 species, no mutations, each player in their own sector (no PvP). Learn the build basics. *In the current build there are no sectors; the same rule is enforced directly: before round 4 (`PVP_START_ROUND`) vehicles do not target, shoot or ram each other. Section 8 notes the first anti-snowball rules that came with it.*
-- **Rounds 4, 8, 12:** **Boss rounds** from the match's boss trio. Optionally a contested world boss.
+- **Rounds 4, 8, 12 (16, 20):** **Boss rounds** from the match's boss pool. Optionally a contested world boss. *As built: every 4th round, two bosses alternating from a seed-chosen opener, enraged from round 12; see 7f.*
 - **From round 5:** mutations start appearing, the next round is announced, and random events become possible.
 - **From round 6:** **the Blight** (a battle-royale zone) closes, sectors merge, and PvP becomes common. The hive starts to adapt.
 - **Rounds 11+:** one shared arena, mixed species with 2–3 mutations, nemeses come back, final fights.
@@ -273,7 +289,7 @@ When a **Champion kills a player**, it survives, levels up, gains a mutation and
 **Life system instead of instant elimination (against R3)**
 - Each player has **Fuel Reserves** (e.g. 100), a TFT-style player-HP model.
 - Vehicle destroyed = respawn after a few seconds, but you lose fuel (more if a *player* killed you, and the killer gets a bounty) **plus 1 random module**.
-- Fuel 0 = eliminated. Destroying a rival steals 10 of its fuel loss (leader: 10 more), and from round 8 every rig in a multiplayer game loses 5+ fuel per round (never below 1), so only kills offset it: passive play no longer wins by waiting. Solo has no drain.
+- Fuel 0 = eliminated. Destroying a rival steals 10 of its fuel loss (leader: 10 more), and from round 7 every rig in a multiplayer game loses 6+ fuel per round (never below 1 until round 18, after which the drain eliminates every rig but the one with the most fuel), so only kills offset it: passive play no longer wins by waiting. Solo has no drain.
 - Result: a bad round is a setback, not game over. Elimination usually only happens in the second half.
 
 **Anti-snowball (against R4/R6)**

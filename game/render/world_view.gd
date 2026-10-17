@@ -33,6 +33,8 @@ var frozen: bool = false:
 			_effects.frozen = value
 		if _kill_fx != null:
 			_kill_fx.frozen = value
+		if _species != null:
+			_species.frozen = value
 
 var _ground: Sprite2D
 var _decals: DecalLayer
@@ -42,8 +44,10 @@ var _tracers: SheetLayer
 var _evo_tracers: SheetLayer  ## shots of evolved weapons (Ammo.EVO_BIT): gatling streaks, grinder slugs, giant shells
 var _acid: SheetLayer
 var _halos: Node2D
+var _boss_view: BossView  ## boss bodies, telegraphs and moments (the HUD reads its moment ticks: boss_view())
 var _combat: CombatFx
 var _kill_fx: KillFx
+var _species: SpeciesFx
 ## Kill combo of the watched rig and the hive surge warning (read by the HUD).
 var juice: JuiceState = JuiceState.new()
 var _labels: Node2D
@@ -132,11 +136,19 @@ func _ready() -> void:
 		# boulders cast a longer, darker shadow so a pile reads as separate rocks (#12)
 		[Gfx.TEX_BOULDER, Gfx.TEX_BOULDER_GLOW, 2, Vector2(4, 6), 0.62],
 		[Gfx.TEX_SPITTER, Gfx.TEX_SPITTER_GLOW, 1, Vector2(2, 3), 0.45],
+		# glass wings fly: no ground silhouette (SpeciesFx draws the soft shadow offset by GLASS_SHADOW_OFFSET), drawn over the rigs
+		[Gfx.TEX_GLASS, Gfx.TEX_GLASS_GLOW, 4, Vector2.ZERO, 0.0, Gfx.Z_PROJECTILES],
+		[Gfx.TEX_BROOD, Gfx.TEX_BROOD_GLOW, 4, Vector2(2, 3), 0.5],
+		[Gfx.TEX_SHRIEKER, Gfx.TEX_SHRIEKER_GLOW, 2, Vector2(2, 3), 0.45],
 	]
+	_species = SpeciesFx.new()
+	_species.view = self
+	_species.frozen = frozen
+	add_child(_species)
 	for k in kinds:
 		var layer := SheetLayer.new()
 		add_child(layer)
-		layer.setup(k[0], Gfx.ENEMY_DIRS, k[2], Gfx.Z_ENEMIES, k[1], k[3], 1.0, k[4])
+		layer.setup(k[0], Gfx.ENEMY_DIRS, k[2], k[5] if k.size() > 5 else Gfx.Z_ENEMIES, k[1], k[3], 1.0, k[4])
 		_enemy_layers.append(layer)
 
 	_tracers = SheetLayer.new()
@@ -160,6 +172,10 @@ func _ready() -> void:
 	_effects = EffectsLayer.new()
 	_effects.frozen = frozen
 	add_child(_effects)
+
+	_boss_view = BossView.new()
+	_boss_view.view = self
+	add_child(_boss_view)
 
 	_combat = CombatFx.new()
 	_combat.view = self
@@ -232,6 +248,8 @@ func set_world(w: SimWorld, peer: int) -> void:
 	_effects.clear()
 	_combat.clear()
 	_kill_fx.clear()
+	_boss_view.clear()
+	_species.clear()
 	juice.reset()
 	_hit_cells.clear()
 	_shells_prev.clear()
@@ -423,6 +441,11 @@ func _jitter(v: SimVehicle) -> PackedInt32Array:
 
 # ---------------------------------------------------------------- display state for CombatFx
 
+## Boss bodies, telegraphs and moments (the HUD reads the moment ticks).
+func boss_view() -> BossView:
+	return _boss_view
+
+
 ## The RigView of vehicle `id` (null before its first frame).
 func rig_view(id: int) -> RigView:
 	return _vehicle_nodes.get(id)
@@ -489,6 +512,7 @@ func _update_enemies(lead: float, k: float) -> void:
 	var n: int = world.enemy_count
 	for layer in _enemy_layers:
 		layer.begin(n)
+	_species.begin(n)
 	var disp: Dictionary = {}
 	_combat.begin_frame()
 	var burn_n: int = world.enemy_burn_ticks.size()
@@ -522,7 +546,7 @@ func _update_enemies(lead: float, k: float) -> void:
 			starts[id] = st
 			var fresh: int = 1 if world.tick - st < 5 else 0
 			_combat.burn_pos.append(Gfx.snap(p))
-			_combat.burn_meta.append(kind | (fresh << 3) | (id << 4))
+			_combat.burn_meta.append(mini(kind, 7) | (fresh << 3) | (id << 4))
 		if i < stun_n and (world.enemy_status[i] & 255) > 0:
 			_combat.stun_pos.append(Gfx.snap(p))
 		if warn and kind == SimWorld.SPITTER and SimWorld.spit_warning(world.tick, id):
@@ -533,11 +557,15 @@ func _update_enemies(lead: float, k: float) -> void:
 			var fl: float = 0.0
 			if not _hit_cells.is_empty():
 				fl = _hit_flash(world.enemy_pos[i], kind)
-			_enemy_layers[kind].add(p, frame, id % 2, fl)
+			var row: int = SpeciesFx.row_for(kind, id, world.tick)
+			_enemy_layers[kind].add(p, frame, row, fl)
+			if kind == SimWorld.GLASS:
+				_species.add_glass_shadow(p, frame, row)
 	_enemy_disp = disp
 	_burn_start = starts
 	for layer in _enemy_layers:
 		layer.finish()
+	_species.finish()
 
 
 func _update_projectiles(lead: float) -> void:
@@ -578,7 +606,7 @@ func _update_projectiles(lead: float) -> void:
 				_combat.flamer_pos.append(Gfx.snap(p))
 			else:
 				_tracers.add(p, frame, CombatFx.ammo_row(mask, i))
-		else:
+		elif not BossView.is_ring_shard(world, i):  # the Colossus' ring shards are drawn by BossView
 			_acid.add(p, frame)
 			_acid_pos.append(Gfx.snap(p))
 	_tracers.finish()
@@ -778,9 +806,20 @@ func _consume_events(events: Array, age: float, transient: bool, tick: int = -1,
 						if kind >= 0 and not frozen and hits < HITS_PER_TICK:
 							hits += 1
 							_register_hit(pos)
+			"boss", "boss_spawn", "boss_phase", "boss_split", "boss_kill", "boss_retreat", "boss_shell", "boss_blast", "boss_ring", \
+					"boss_charge", "boss_brood":
+				_boss_view.on_event(type, e, age, transient, tick if tick >= 0 else world.tick)
+			"shriek", "brood":  # a shrieker's buff ring; a brood carrier's burst frame
+				if transient:
+					_species.on_event(e, age)
+					if type == "brood" and kind == 0:  # burned or blasted: the brood dies with it, a puff of flame instead of mites
+						_effects.spawn(EffectsLayer.Kind.FIRE_PUFF, pos, 0.0, age, h)
 			"surge":  # the hive surges in `in_ticks`: the HUD's SWARM INCOMING banner
 				juice.on_surge(tick if tick >= 0 else world.tick, int(e.get("in_ticks", JuiceState.SURGE_DEFAULT_TICKS)))
 			"kill":
+				if kind >= SimWorld.BOSS_A:  # boss bodies: their own bursts and carcasses (BossView)
+					_boss_view.on_event(type, e, age, transient, tick if tick >= 0 else world.tick)
+					continue
 				if kind < 0:
 					continue  # player kill: the wreck comes from "vehicle_destroyed", no alien goo
 				_kill_decal(pos, kind, h)
@@ -994,6 +1033,14 @@ func _kill_decal(pos: Vector2, kind: int, h: int) -> void:
 		SimWorld.SPITTER:
 			_decals.stamp(Gfx.TEX_GOO, 4, 1, 3, 0, pos)
 			_decals.stamp(Gfx.TEX_GOO, 4, 1, h % 3, 0, pos + Vector2(4, -3))
+		SimWorld.GLASS:  # bleached wing husks, no goo
+			_decals.stamp(Gfx.TEX_CARCASS_WINGS, 2, 1, h % 2, 0, pos)
+		SimWorld.BROOD:
+			_decals.stamp(Gfx.TEX_GOO_BIG, 2, 1, h % 2, 0, pos)
+			_decals.stamp(Gfx.TEX_CARCASS_BROOD, 2, 1, (h / 3) % 2, 0, pos)
+		SimWorld.SHRIEKER:
+			_decals.stamp(Gfx.TEX_GOO, 4, 1, h % 3, 0, pos + Vector2(3, 2))
+			_decals.stamp(Gfx.TEX_CARCASS_SHRIEKER, 2, 1, (h / 5) % 2, 0, pos)
 		_:
 			_decals.stamp(Gfx.TEX_GOO, 4, 1, h % 4, 0, pos)
 			if h % 10 < 6:

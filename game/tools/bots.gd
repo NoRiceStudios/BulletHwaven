@@ -360,7 +360,7 @@ static func _table() -> Dictionary:
 
 ## Commands that move the vehicle's doctrine to this policy's choice (empty if already there).
 ## Valid in every phase.
-func doctrine_commands(_world: SimWorld, v: SimVehicle) -> Array[Dictionary]:
+func doctrine_commands(world: SimWorld, v: SimVehicle) -> Array[Dictionary]:
 	var drive: String = str(cfg.get("drive", "circle"))
 	var target: String = str(cfg.get("target", "nearest"))
 	if str(cfg.get("mode", "")) == "random":
@@ -371,6 +371,12 @@ func doctrine_commands(_world: SimWorld, v: SimVehicle) -> Array[Dictionary]:
 		out.append({"type": "set_drive", "value": drive})
 	if str(v.doctrine.get("target", "")) != target:
 		out.append({"type": "set_target", "value": target})
+	# Shrieker matches: every gun shoots a shrieker in range first (the pulse heals and speeds up the horde).
+	if world.hive_first[2] > 0 and str(cfg.get("mode", "")) != "random":
+		for wp in v.weapons:
+			var kind: String = str(wp["kind"])
+			if Doctrine.weapon_doc(v, kind)["rules"].is_empty():
+				out.append({"type": "set_rules", "scope": kind, "value": "shrieker_near=1|target:shriekers"})
 	return out
 
 
