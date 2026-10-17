@@ -20,7 +20,7 @@ const COND_LABELS := {
 	"t_player": "TGT IS RIVAL", "t_boulder": "TGT IS BOULDER", "t_spitter": "TGT IS SPITTER", "pvp": "PVP ON",
 	"has_target": "HAS TARGET",
 	"boulders": "BOULDERS NEAR", "fuel": "OWN FUEL", "rival_weaker": "RIVAL WEAKER", "ability_ready": "ABILITY READY",
-	"t_leader": "TGT IS LEADER",
+	"t_leader": "TGT IS LEADER", "boss_active": "BOSS ACTIVE",
 }
 const COND_HELP := {
 	"hp": "YOUR RIG'S HP IN PERCENT OF ITS MAXIMUM.",
@@ -38,12 +38,13 @@ const COND_HELP := {
 	"rival_weaker": "A RIVAL RIG NEAR YOU HAS A LOWER HP SHARE THAN YOU (RADAR ARRAY, PVP ONLY).",
 	"ability_ready": "AN EQUIPPED ABILITY IS OFF COOLDOWN (TARGETING COMPUTER).",
 	"t_leader": "THE TARGET IS THE MARKED BOUNTY LEADER (HUNTER-KILLER LOGIC).",
+	"boss_active": "A BOSS IS ON THE FIELD.",
 }
 const ACTION_LABELS := {
 	"drive:circle": "CIRCLE", "drive:kite": "KITE", "drive:charge": "CHARGE", "drive:flee": "FLEE",
 	"drive:hold": "HOLD POSITION",
 	"target:nearest": "TGT NEAREST", "target:strongest": "TGT STRONGEST", "target:weakest": "TGT WEAKEST",
-	"target:players_first": "TGT RIVALS", "target:boulders": "TGT BOULDERS", "target:spitters": "TGT SPITTERS",
+	"target:players_first": "TGT RIVALS", "target:boulders": "TGT BOULDERS", "target:spitters": "TGT SPITTERS", "target:boss": "TGT BOSS",
 	"target:follow": "FOLLOW RIG", "fire:hold": "HOLD FIRE", "fire:free": "FIRE AT WILL",
 	"ammo:fire": "LOAD FIRE", "ammo:shrapnel": "LOAD SHRAPNEL", "ammo:ap": "LOAD AP",
 	"fire:focus": "FOCUS FIRE", "ability:nitro": "USE NITRO", "ability:emp": "USE EMP", "ability:smoke": "USE SMOKE",
@@ -61,6 +62,7 @@ const ACTION_HELP := {
 	"target:players_first": "RIVAL RIGS IN RANGE FIRST (BOUNTY LEADER FIRST), THEN ALIENS.",
 	"target:boulders": "THE NEAREST BOULDER, ELSE THE NEAREST ALIEN.",
 	"target:spitters": "THE NEAREST SPITTER, ELSE THE NEAREST ALIEN.",
+	"target:boss": "THE NEAREST BOSS BODY IN RANGE, ELSE THE NEAREST ALIEN.",
 	"target:follow": "SHOOT WHAT THE RIG IS AIMING AT.",
 	"fire:hold": "THIS GUN DOES NOT SHOOT.",
 	"fire:free": "THIS GUN SHOOTS (OVERRIDES A LOWER HOLD FIRE).",
@@ -587,7 +589,7 @@ static func sentence(rule: Dictionary, p_scope: String) -> String:
 		_:
 			act = "FOLLOWS THE RIG'S TARGET" if v == "follow" else "TARGETS " + {"nearest": "THE NEAREST ALIEN",
 				"strongest": "THE TOUGHEST ALIEN", "weakest": "THE WEAKEST ALIEN", "players_first": "RIVAL RIGS FIRST",
-				"boulders": "BOULDERS FIRST", "spitters": "SPITTERS FIRST"}.get(v, v)
+				"boulders": "BOULDERS FIRST", "spitters": "SPITTERS FIRST", "boss": "THE BOSS FIRST"}.get(v, v)
 	if parts.is_empty():
 		return "ALWAYS: %s %s." % [who, act]
 	return "IF %s: %s %s." % [" AND ".join(parts), who, act]
@@ -619,6 +621,8 @@ static func _cond_phrase(c: Array) -> String:
 			return "PVP IS %s" % ["ON" if yes else "OFF"]
 		"has_target":
 			return "THERE IS %sTARGET" % ["A " if yes else "NO "]
+		"boss_active":
+			return "A BOSS IS %sON THE FIELD" % ["" if yes else "NOT "]
 		"boulders":
 			return "%s THAN %d BOULDERS ARE NEAR" % ["FEWER" if lt else "MORE", n]
 		"fuel":
