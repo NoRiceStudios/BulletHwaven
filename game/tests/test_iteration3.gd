@@ -405,6 +405,30 @@ func test_fuel_drain_from_round_seven_multiplayer_only() -> void:
 	assert_eq(solo.fuel_drain, 0)
 
 
+func test_lethal_drain_spares_only_the_fuel_leader() -> void:
+	var w := _world(3, SimWorld.FUEL_DRAIN_LETHAL_ROUND - 1)
+	w.vehicles[0].fuel = 30
+	w.vehicles[1].fuel = 5
+	w.vehicles[2].fuel = 30
+	w._begin_workshop()  # round 14: still floor 1
+	assert_eq(w.vehicles[1].fuel, 1)
+	assert_false(w.vehicles[1].eliminated)
+	var w2 := _world(3, SimWorld.FUEL_DRAIN_LETHAL_ROUND)
+	w2.vehicles[0].fuel = 30
+	w2.vehicles[1].fuel = 5
+	w2.vehicles[2].fuel = 30
+	w2._begin_workshop()
+	assert_true(w2.vehicles[1].eliminated, "the drain eliminates a rig that cannot pay it")
+	assert_false(w2.vehicles[0].eliminated)
+	assert_false(w2.vehicles[2].eliminated)
+	var w3 := _world(2, SimWorld.FUEL_DRAIN_LETHAL_ROUND)
+	w3.vehicles[0].fuel = 1
+	w3.vehicles[1].fuel = 1
+	w3._begin_workshop()
+	assert_false(w3.vehicles[0].eliminated, "the rig with the most fuel (first on ties) keeps its last point")
+	assert_true(w3.vehicles[1].eliminated)
+
+
 # ---------------------------------------------------------------- 4: newbie protection
 
 func test_respawn_and_combat_start_invulnerability() -> void:
