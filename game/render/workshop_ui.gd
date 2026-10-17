@@ -407,11 +407,46 @@ func _draw() -> void:
 				_draw_dossier(scout, Rect2(RIGHT_X - COL_W - 6.0, BODY_Y, COL_W, 226), _scout_pin == scout.id)
 			UiKit.footer(self, "1 2 3  PICK      R  REROLL      T  TECH      P  RULES      SPACE  READY", vs)
 	_draw_bar(v, vs)
+	if _tab == "parts":
+		_draw_next_boss()
 	_draw_toast(vs)
 	if view != null and _tab == "parts":  # a weapon just evolved: the banner over the panels, between the columns
 		var gap_cx: float = floorf((LEFT_X + COL_W + RIGHT_X - 108.0) / 2.0)  # between the rig and tech panels
 		Hud.draw_evolved_banner(self, view.juice, world.tick, gap_cx, BAR.end.y + 22.0, true)
 	TechTreeView.draw_gloss(self)
+
+
+## A compact plate hanging under the top bar, over the gap between the rig panel and the tech column:
+## "NEXT BOSS  ROUND 8  SHARD COLOSSUS" (Bosses.next_boss). When the boss comes in the very next round it
+## gets a hazard edge and blinks "NEXT ROUND"; an enraged one carries an ENRAGED tag.
+func _draw_next_boss() -> void:
+	var nb: Dictionary = Bosses.next_boss(world)
+	if int(nb.get("kind", -1)) < 0:
+		return
+	var r_n: int = int(nb["round"])
+	var soon: bool = r_n == world.round + 1
+	var name_s: String = str(nb["name"])
+	var lead: String = "NEXT ROUND" if soon else "ROUND %d" % r_n
+	var enr: bool = bool(nb["enraged"])
+	var w: float = UiFont.width_small("NEXT BOSS") + UiFont.width(lead) + UiFont.width_title(name_s, 10) + 30.0
+	if enr:
+		w += UiFont.width_small("ENRAGED") + 12.0
+	var cx: float = floorf((LEFT_X + COL_W + RIGHT_X - 108.0) / 2.0)
+	var r := Rect2(floorf(cx - w / 2.0), BAR.end.y + 3.0, w, 15)
+	UiKit.panel(self, r)
+	if soon:
+		UiKit.hazard_band(self, Rect2(r.position.x + 1, r.end.y - 3, r.size.x - 2, 2))
+	_hits.append([r, "none", null])
+	var y: float = r.position.y + 4.0
+	var x: float = UiFont.draw_small(self, "NEXT BOSS", Vector2(r.position.x + 6, y + 1), Gfx.UI_DIM) + 6.0
+	var hot: bool = soon and fmod(_blink, 1.0) < 0.6
+	x = UiFont.draw(self, lead, Vector2(x, y), Gfx.UI_BAD if hot else Gfx.FIRE[4], Gfx.UI_SHADOW) + 6.0
+	x = UiFont.draw_title(self, name_s, Vector2(x, y - 1), Gfx.GLOW[4] if soon else Gfx.GLOW[3], 10, Gfx.OUTLINE) + 6.0
+	if enr:
+		var tr := Rect2(x, y - 2, UiFont.width_small("ENRAGED") + 6.0, 9)
+		draw_rect(tr, Gfx.OUTLINE)
+		draw_rect(tr.grow(-1.0), Gfx.UI_BAD)
+		UiFont.draw_small(self, "ENRAGED", tr.position + Vector2(3, 2), Gfx.BONE_LIGHT)
 
 
 func _draw_toast(vs: Vector2) -> void:

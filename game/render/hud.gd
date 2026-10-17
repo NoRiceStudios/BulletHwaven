@@ -33,6 +33,9 @@ var _gain_t: float = 9.0  ## s since the last gain
 var _combo_seen: int = 0
 var _combo_pop: float = 0.0
 var _combo_left: bool = false  ## the counter sits left of the rig (a rival is on its right)
+## Boss bar damage chip: the shown fraction trails the real one (real time, 0 lag when frozen).
+var _boss_lag: float = 0.0
+var _boss_lag_hold: float = 0.0
 const SCRAP_PULSE_S := 0.35
 const GAIN_SHOW_S := 0.9
 
@@ -49,6 +52,7 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	_tick_juice(delta)
+	_tick_boss_lag(delta, view == null or view.frozen)
 	queue_redraw()
 
 
@@ -133,7 +137,7 @@ func _draw() -> void:
 			_dim(vs, view.local_screen_pos() if view else vs / 2.0)
 		elif me != null and me.alive and me.hp / me.max_hp < LOW_HP:
 			_low_hp(vs, me.hp / me.max_hp)
-		if view != null and view.juice.surge_active(world.tick):
+		if view != null and view.juice.surge_active(world.tick) and not _boss_intro():
 			_surge_edge(vs)
 		_draw_rival_tags()  # under the panels
 		_draw_top(vs)
@@ -146,13 +150,13 @@ func _draw() -> void:
 		elif me != null and not me.eliminated:
 			_draw_drain_warning(me, vs)
 		_draw_feed(vs)
-		_draw_boss(vs)
+		_draw_boss(vs, watching)
 		_draw_grace(vs, watching)
 		if v != null and (watching or not (me != null and me.eliminated)):
 			_draw_rival_arrows(vs, v)
 			if v.alive:
 				_draw_combo(v)
-		if view != null and view.juice.surge_active(world.tick):
+		if view != null and view.juice.surge_active(world.tick) and not _boss_intro():
 			_draw_surge(vs, watching)
 		if me != null and me.eliminated and not watching:
 			_draw_eliminated(vs)
@@ -168,7 +172,11 @@ func _draw() -> void:
 		if world.phase == SimWorld.PHASE_COMBAT:
 			_banner(vs, "ROUND %d" % world.round, "THE HIVE STIRS" if world.round > 1 else "HOLD THE LINE", el, 64.0)
 		elif world.phase == SimWorld.PHASE_WORKSHOP:
-			_banner(vs, "HIVE RETREATS", "MAKE CAMP - %s ON THE CLOCK" % UiKit.clock(world.workshop_duration()), el, 112.0)
+			var bv: BossView = view.boss_view() if view != null else null
+			var sub: String = "MAKE CAMP - %s ON THE CLOCK" % UiKit.clock(world.workshop_duration())
+			if bv != null and not bv.end_kill and bv.end_round == world.round and bv.end_tick >= 0 and bv.end_kind >= 0:
+				sub = "THE %s BURROWS AWAY - %s WILL BE BACK" % [Bosses.boss_name(bv.end_kind), "SHE" if bv.end_kind == SimWorld.BOSS_A else "IT"]
+			_banner(vs, "HIVE RETREATS", sub, el, 112.0)
 
 
 ## Name tag and hp bar over every rival rig on screen (screen space, so the text stays crisp).
@@ -529,49 +537,364 @@ func _clear_of_panels(p: Vector2, bounds: Rect2) -> Vector2:
 	return p
 
 
-const BOSS_BAR_W := 230.0
-const BOSS_NOTE_TICKS := 90  ## "BOSS DOWN" / "BOSS RETREATS" stays this long
+# ---------------------------------------------------------------- boss rounds (BossView keeps the moment ticks)
+
+const BOSS_BAR_W := 300.0
+const BOSS_BAR_H := 30.0
+const BOSS_INTRO_HOLD := 30  ## the APPROACHES plate stays this long after the spawn ("EMERGES")
+const BOSS_PLATE_TICKS := 70  ## phase / split plates
+const BOSS_KILL_TICKS := 165  ## the DOWN banner
+const BOSS_PLATE_Y := 82.0
+const BOSS_PHASE_SUB := {3: ["", "BROOD SACS OPEN", "TRIPLE VOLLEYS"], 4: ["", "IT CHARGES - WATCH THE LANES", "IT SHATTERS"]}
 
 
 ## Height the boss bar takes under the top plate (other top banners move down by it).
 func _boss_offset() -> float:
 	if world.boss_state == Bosses.ST_ACTIVE or world.boss_state == Bosses.ST_WARNED:
-		return 27.0
-	if view != null and world.tick - view.boss_end_tick < BOSS_NOTE_TICKS and world.boss_state >= Bosses.ST_KILLED:
-		return 27.0
+		return BOSS_BAR_H + 4.0
 	return 0.0
 
 
-## PLACEHOLDER boss bar under the top plate: name, enraged tag, phase pips and an hp bar; a warning plate
-## before the spawn and a short "BOSS DOWN" / "BOSS RETREATS" note after. Driven by world.boss_* only.
-func _draw_boss(vs: Vector2) -> void:
-	if world.phase != SimWorld.PHASE_COMBAT or _boss_offset() <= 0.0:
+## The wide boss bar under the clock plate and the boss moments' plates. Driven by world.boss_* and the
+## BossView moment ticks only, so host, clients and screenshots agree.
+func _draw_boss(vs: Vector2, watching: bool) -> void:
+	if world.phase != SimWorld.PHASE_COMBAT or view == null:
+		return
+	var bv: BossView = view.boss_view()
+	var cx: float = floorf(vs.x / 2.0)
+	if world.boss_state == Bosses.ST_WARNED:
+		_boss_edge(vs)
+		_boss_pointer(vs, world.boss_spawn_pos, true)
+	elif world.boss_state == Bosses.ST_ACTIVE:
+		_boss_pointer(vs, _boss_main_pos(), false)
+	if _boss_offset() > 0.0:
+		_boss_bar(Rect2(cx - BOSS_BAR_W / 2.0, 37.0 + (29.0 if watching else 0.0), BOSS_BAR_W, BOSS_BAR_H))
+	# centre plates: approach (until just after the spawn), phase / split, kill
+	var since_spawn: int = world.tick - bv.spawn_tick
+	var split_now: bool = bv.split_tick >= bv.spawn_tick and world.tick >= bv.split_tick  # a split outranks the intro
+	if world.boss_state == Bosses.ST_WARNED or (world.boss_state == Bosses.ST_ACTIVE and since_spawn >= 0 and since_spawn < BOSS_INTRO_HOLD and not split_now):
+		_boss_approach(vs, since_spawn if world.boss_state == Bosses.ST_ACTIVE else -1)
+		return
+	var ek: int = world.tick - bv.end_tick
+	if bv.end_kill and ek >= 0 and ek < BOSS_KILL_TICKS and bv.end_round == world.round:
+		_boss_down(vs, ek, bv)
+		return
+	var ps: int = world.tick - bv.phase_tick
+	var sp: int = world.tick - bv.split_tick
+	if world.boss_state == Bosses.ST_ACTIVE and sp >= 0 and sp < BOSS_PLATE_TICKS:
+		_boss_plate(vs, "SHATTERED", "%d SHARDS - BREAK THEM ALL" % Bosses.SPLIT_COUNT, sp, false)
+	elif world.boss_state == Bosses.ST_ACTIVE and ps >= 0 and ps < BOSS_PLATE_TICKS and bv.phase_n >= 2:
+		var subs: Array = BOSS_PHASE_SUB.get(world.boss_kind, ["", "", ""])
+		_boss_plate(vs, "PHASE %d" % bv.phase_n, str(subs[clampi(bv.phase_n - 1, 0, 2)]), ps, false)
+
+
+## True while the boss is announced or just surfacing: its plate replaces the SWARM INCOMING plate (the boss
+## comes with the first surge, so the two would say the same thing on top of each other).
+func _boss_intro() -> bool:
+	if world.boss_state == Bosses.ST_WARNED:
+		return true
+	return view != null and world.boss_state == Bosses.ST_ACTIVE and world.tick - view.boss_view().spawn_tick < BOSS_INTRO_HOLD
+
+
+## Position of the main boss body (the first shard after a split), Vector2.INF when none.
+func _boss_main_pos() -> Vector2:
+	var best := Vector2.INF
+	for i in world.enemy_count:
+		if world.enemy_kind[i] >= SimWorld.BOSS_A and world.enemy_hp[i] > 0.0:
+			if world.enemy_kind[i] != SimWorld.BOSS_SHARD:
+				return world.enemy_pos[i]
+			if best == Vector2.INF:
+				best = world.enemy_pos[i]
+	return best
+
+
+## Boss bar: the name in the stencil face, phase pips and the ENRAGED tag; a segmented cyan hp bar with
+## notches at the phase thresholds and a pale chip that trails the damage. While warned the bar charges up
+## ("EMERGES IN 3"); after the Colossus splits it shows one segment per shard ("SHARDS 2/3").
+func _boss_bar(r: Rect2) -> void:
+	_panels.append(r)
+	UiKit.panel(self, r)
+	draw_rect(Rect2(r.position.x + 2, r.end.y - 3, r.size.x - 4, 1), Color(Gfx.GLOW[1], 0.8))
+	var name_s: String = Bosses.boss_name(world.boss_kind)
+	var x0: float = r.position.x + 7.0
+	var xr: float = r.end.x - 7.0
+	var hot: bool = (world.tick / 8) % 2 == 0
+	var nx: float = UiFont.draw_title(self, name_s, Vector2(x0, r.position.y + 5), Gfx.BONE_LIGHT, 11, Gfx.OUTLINE)
+	if world.boss_enraged:
+		var tr := Rect2(nx + 6.0, r.position.y + 4, UiFont.width_small("ENRAGED") + 8.0, 9)
+		draw_rect(tr, Gfx.OUTLINE)
+		draw_rect(tr.grow(-1.0), Gfx.UI_BAD if hot else Color("#8a2a1c"))
+		UiFont.draw_small(self, "ENRAGED", tr.position + Vector2(4, 2), Gfx.BONE_LIGHT)
+	var bar := Rect2(x0, r.position.y + 17.0, r.size.x - 14.0, 8.0)
+	var shards: Array[float] = _shard_fracs()
+	if world.boss_state == Bosses.ST_WARNED:
+		var secs: int = ceili(float(world.boss_warn_left) / float(SimWorld.TICK_RATE))
+		var t := "EMERGES IN %d" % secs
+		UiFont.draw(self, t, Vector2(xr - UiFont.width(t), r.position.y + 6), Gfx.UI_BAD if hot else Gfx.FIRE[4], Gfx.UI_SHADOW)
+		var fill: float = 1.0 - float(world.boss_warn_left) / float(Bosses.WARN_TICKS)
+		_boss_hp(bar, [fill], fill, true)
+		return
+	if not shards.is_empty():
+		var alive: int = 0
+		for f in shards:
+			alive += 1 if f > 0.0 else 0
+		var st := "SHARDS %d/%d" % [alive, Bosses.SPLIT_COUNT]
+		UiFont.draw(self, st, Vector2(xr - UiFont.width(st), r.position.y + 6), Gfx.GLOW[4], Gfx.UI_SHADOW)
+		var tot: float = 0.0
+		for f in shards:
+			tot += f
+		_boss_hp(bar, shards, tot / float(shards.size()), false)
+		return
+	var left_s: int = ceili(float(world.phase_ticks_left) / float(SimWorld.TICK_RATE))
+	if left_s <= 6:  # the round is about to end: it will slink off
+		var rt := "RETREATS IN %d" % left_s
+		UiFont.draw(self, rt, Vector2(xr - UiFont.width(rt), r.position.y + 6), Gfx.UI_DIM if hot else Gfx.UI_TEXT, Gfx.UI_SHADOW)
+	else:  # phase pips: the current one lit
+		var px: float = xr - 3.0 * 9.0 + 2.0
+		UiFont.draw_small(self, "PHASE", Vector2(px - UiFont.width_small("PHASE") - 4.0, r.position.y + 6), Gfx.UI_DIM)
+		for k in 3:
+			var on: bool = k < world.boss_phase
+			var pr := Rect2(px + float(k) * 9.0, r.position.y + 5, 7, 7)
+			draw_rect(pr, Gfx.OUTLINE)
+			draw_rect(pr.grow(-1.0), (Gfx.GLOW[4] if k == world.boss_phase - 1 else Gfx.GLOW[2]) if on else Gfx.UI_PLATE_DARK)
+	_boss_hp(bar, [world.boss_hp_frac], world.boss_hp_frac, false)
+	for tfrac: float in [Bosses.PHASE2_FRAC, Bosses.PHASE3_FRAC]:  # phase notches, dim once passed
+		var nx2: float = bar.position.x + 1.0 + floorf((bar.size.x - 2.0) * tfrac)
+		var passed: bool = world.boss_hp_frac <= tfrac
+		draw_rect(Rect2(nx2, bar.position.y - 2.0, 1, bar.size.y + 4.0), Gfx.OUTLINE)
+		draw_rect(Rect2(nx2 - 1.0, bar.position.y - 3.0, 3, 2), Gfx.UI_DIM if passed else Gfx.BONE_LIGHT)
+
+
+## Hp fill of the boss bar: `segs` equal segments (one per body after a split) each 0..1 full; `total` is
+## what the trailing chip follows. `charging`: the intro fill (running stripes).
+func _boss_hp(bar: Rect2, segs: Array, total: float, charging: bool) -> void:
+	draw_rect(bar, Gfx.OUTLINE)
+	var inner: Rect2 = bar.grow(-1.0)
+	draw_rect(inner, Color("#10191a"))
+	var n: int = segs.size()
+	var sw: float = floorf((inner.size.x - float(n - 1)) / float(n))
+	for k in n:
+		var f: float = clampf(float(segs[k]), 0.0, 1.0)
+		var sx: float = inner.position.x + float(k) * (sw + 1.0)
+		var w: float = (inner.end.x - sx) if k == n - 1 else sw
+		if k < n - 1:
+			draw_rect(Rect2(sx + w, inner.position.y, 1, inner.size.y), Gfx.OUTLINE)
+		var fw: float = floorf(w * f)
+		if fw <= 0.0:
+			continue
+		var col: Color = Gfx.GLOW[2] if charging else (Gfx.GLOW[3] if world.boss_phase < 3 else Gfx.GLOW[4])
+		draw_rect(Rect2(sx, inner.position.y, fw, inner.size.y), col)
+		draw_rect(Rect2(sx, inner.position.y, fw, 1), Gfx.GLOW[3] if charging else Gfx.GLOW[5])
+		draw_rect(Rect2(sx, inner.end.y - 1, fw, 1), Gfx.GLOW[1])
+		if charging:  # running stripes while it charges in
+			var x: float = sx - 6.0 + float((world.tick / 2) % 6)
+			while x < sx + fw - 1.0:
+				if x >= sx:
+					draw_rect(Rect2(x, inner.position.y + 1, 2, inner.size.y - 2), Gfx.GLOW[3])
+				x += 6.0
+	# damage chip: a pale stretch that trails the real hp for a moment (real time; not in screenshots)
+	if not charging and n == 1 and _boss_lag > total:
+		var lx: float = inner.position.x + floorf(inner.size.x * total)
+		var lw: float = floorf(inner.size.x * (_boss_lag - total))
+		if lw > 0.0:
+			draw_rect(Rect2(lx, inner.position.y, lw, inner.size.y), Color(Gfx.BONE_LIGHT, 0.75))
+
+
+## Trailing damage chip of the boss bar (real time; follows instantly when frozen or rising).
+func _tick_boss_lag(delta: float, frozen: bool) -> void:
+	if world == null:
+		return
+	var f: float = world.boss_hp_frac
+	if frozen or f >= _boss_lag or world.boss_state != Bosses.ST_ACTIVE:
+		_boss_lag = f
+		_boss_lag_hold = 0.0
+		return
+	_boss_lag_hold += delta
+	if _boss_lag_hold > 0.35:
+		_boss_lag = maxf(f, _boss_lag - delta * 0.25)
+
+
+## After the Colossus split: each shard's hp fraction (0 = broken), in a stable order; empty before.
+func _shard_fracs() -> Array[float]:
+	var out: Array[float] = []
+	if world.boss_kind != SimWorld.BOSS_B or world.boss_state != Bosses.ST_ACTIVE:
+		return out
+	var ids: Array = []
+	var hp: Dictionary = {}
+	for i in world.enemy_count:
+		var k: int = world.enemy_kind[i]
+		if k == SimWorld.BOSS_B and world.enemy_hp[i] > 0.0:
+			return out  # the body is still whole
+		if k == SimWorld.BOSS_SHARD and world.enemy_hp[i] > 0.0:
+			ids.append(world.enemy_id[i])
+			hp[world.enemy_id[i]] = world.enemy_hp[i] / maxf(world.enemy_max_hp_of(i), 1.0)
+	if ids.is_empty():
+		return out
+	ids.sort()
+	for id in ids:
+		out.append(clampf(float(hp[id]), 0.0, 1.0))
+	while out.size() < Bosses.SPLIT_COUNT:
+		out.append(0.0)
+	return out
+
+
+## The big stencil plate before the spawn: "TRIPOD QUEEN" / "APPROACHES" (ENRAGED variant in hot red) with a
+## WARNING tape over it; it slams in, and flips to "EMERGES" as the boss breaks the surface.
+func _boss_approach(vs: Vector2, since_spawn: int) -> void:
+	var el: int = world.tick - view.boss_view().warn_tick
+	if since_spawn > BOSS_INTRO_HOLD - 8 and (since_spawn / 2) % 2 == 0:
+		return
+	var name_s: String = Bosses.boss_name(world.boss_kind)
+	var sub: String = "EMERGES" if since_spawn >= 0 else "APPROACHES"
+	var enraged: bool = world.boss_enraged
+	_boss_plate_raw(vs, name_s, sub, el, "ENRAGED" if enraged else "WARNING", true, enraged or since_spawn >= 0)
+
+
+func _boss_plate(vs: Vector2, title: String, sub: String, el: int, hot: bool) -> void:
+	if el > BOSS_PLATE_TICKS - 10 and (el / 2) % 2 == 0:
+		return
+	_boss_plate_raw(vs, title, sub, el, "", false, hot)
+
+
+## A dark plate with a hazard (warning) or cyan (hive) frame, the title slamming in in the stencil face, an
+## optional tape label over it and a line under it.
+func _boss_plate_raw(vs: Vector2, title: String, sub: String, el: int, tape: String, hazard: bool, hot: bool) -> void:
+	var cx: float = floorf(vs.x / 2.0)
+	var slam: float = clampf(1.0 - float(el) / 5.0, 0.0, 1.0)
+	var base: int = 20
+	var size: int = base + int(round(slam * 10.0))
+	var tw: float = float(UiFont.width_big_px(title, base, true))
+	var w: float = maxf(tw, float(UiFont.width_big_px(sub, 11, true))) + 70.0
+	var h: float = 42.0
+	var r := Rect2(cx - floorf(w / 2.0), BOSS_PLATE_Y + _boss_offset() - 34.0, w, h)
+	draw_rect(r.grow(1.0), Gfx.OUTLINE)
+	draw_rect(r, Color("#1b1414"))
+	if hazard:
+		UiKit.hazard_frame(self, r, 3.0)
+	else:
+		UiKit.outline_rect(self, r.grow(-1.0), Gfx.GLOW[3] if (el / 3) % 2 == 0 else Gfx.GLOW[2])
+		UiKit.outline_rect(self, r.grow(-3.0), Color(Gfx.GLOW[1], 0.8))
+	draw_rect(Rect2(r.position.x + 4, r.position.y + 4, r.size.x - 8, 1), Color(1.0, 0.85, 0.6, 0.06))
+	var col: Color
+	if el < 3:
+		col = Gfx.FIRE[6] if hazard else Gfx.GLOW[5]
+	elif hazard:
+		col = (Gfx.UI_BAD if (el / 4) % 2 == 0 else Gfx.FIRE[4]) if hot else Gfx.FIRE[4]
+	else:
+		col = Gfx.GLOW[4]
+	var stw: float = float(UiFont.width_big_px(title, size, true))
+	UiFont.draw_big_rim(self, title, Vector2(floorf(cx - stw / 2.0), r.position.y + 7.0 - roundf(slam * 4.0)), col, Gfx.OUTLINE, size, true)
+	var sub_col: Color = Gfx.BONE_LIGHT if hazard else Gfx.UI_TEXT
+	var sw: float = float(UiFont.width_big_px(sub, 11, true))
+	UiFont.draw_big_rim(self, sub, Vector2(floorf(cx - sw / 2.0), r.end.y - 13.0), sub_col, Gfx.OUTLINE, 11, true)
+	if tape != "":
+		var tr: Rect2 = UiKit.tape_label(self, tape, cx, r.position.y - 6.0, Color("#f08a6a") if tape == "ENRAGED" else Color("#e8dcc4"))
+		_panels.append(tr)
+	if hazard:  # alien pips on the flanks, beating with the footsteps
+		var beat: bool = world.boss_state == Bosses.ST_WARNED and world.boss_warn_left % 18 < 5
+		for sx: float in [r.position.x + 10.0, r.end.x - 17.0]:
+			draw_rect(Rect2(sx - 1, r.get_center().y - 4, 9, 9), Gfx.OUTLINE)
+			draw_rect(Rect2(sx, r.get_center().y - 3, 7, 7), Gfx.GLOW[5] if beat else Gfx.GLOW[2])
+	_panels.append(r)
+
+
+## The boss is down: a warm brass plate (the players' moment) with the name, the bounty and who struck last.
+func _boss_down(vs: Vector2, el: int, bv: BossView) -> void:
+	if el > BOSS_KILL_TICKS - 12 and (el / 2) % 2 == 0:
 		return
 	var cx: float = floorf(vs.x / 2.0)
-	var r := Rect2(cx - BOSS_BAR_W / 2.0, 37.0, BOSS_BAR_W, 24)
-	UiKit.panel(self, r)
+	var title: String = Bosses.boss_name(bv.end_kind) + " DOWN"
+	var slam: float = clampf(1.0 - float(el) / 6.0, 0.0, 1.0)
+	var base: int = 22
+	var size: int = base + int(round(slam * 12.0))
+	var tw: float = float(UiFont.width_big_px(title, base, true))
+	var w: float = tw + 90.0
+	var h: float = 50.0
+	var r := Rect2(cx - floorf(w / 2.0), BOSS_PLATE_Y - 34.0, w, h)
+	draw_rect(r.grow(1.0), Gfx.OUTLINE)
+	draw_rect(r, Gfx.BRASS[2])
+	draw_rect(Rect2(r.position, Vector2(r.size.x, 1)), Gfx.BRASS[3])
+	draw_rect(Rect2(r.position.x, r.end.y - 1, r.size.x, 1), Gfx.BRASS[0])
+	var inner: Rect2 = r.grow(-3.0)
+	draw_rect(inner.grow(1.0), Gfx.BRASS[0])
+	draw_rect(inner, Color("#221c1d"))
+	if el < 14:  # a glint sweeps across
+		var gx: float = floorf(inner.position.x + (inner.size.x + 20.0) * float(el) / 13.0 - 10.0)
+		for row in int(inner.size.y):
+			var x: float = gx - float(row) * 0.5
+			if x > inner.position.x and x + 3.0 < inner.end.x:
+				draw_rect(Rect2(x, inner.position.y + float(row), 3, 1), Color(Gfx.FIRE[6], 0.22))
+	var col: Color = Gfx.FIRE[6] if el < 3 else (Gfx.FIRE[5] if (el / 5) % 2 == 0 or el > 30 else Gfx.FIRE[4])
+	var stw: float = float(UiFont.width_big_px(title, size, true))
+	UiFont.draw_big_rim(self, title, Vector2(floorf(cx - stw / 2.0), r.position.y + 7.0 - roundf(slam * 4.0)), col, Gfx.OUTLINE, size, true)
+	var killer: SimVehicle = UiKit.vehicle_by_id(world, bv.end_killer)
+	var me: SimVehicle = world.get_vehicle_for_peer(local_peer)
+	var bounty: int = Bosses.BOUNTY_BASE + Bosses.BOUNTY_PER_ROUND * world.round
+	var mine: int = 0
+	if me != null and int(me.round_stats.get("round", -1)) == world.round:
+		mine = int(me.round_stats.get("boss_bounty", 0))
+	var line: String = ("BOUNTY +%d SCRAP" % mine) if mine > 0 else ("BOUNTY %d SCRAP - x2 FOR THE KILL" % bounty)
+	var y2: float = r.position.y + 34.0
+	if killer != null:
+		var kt: String = "KILLING BLOW "
+		var kn: String = UiKit.player_name(killer)
+		var kw: float = UiFont.width(kt) + UiFont.width(kn) + 14.0 + UiFont.width(line)
+		var x: float = floorf(cx - kw / 2.0)
+		x = UiFont.draw(self, kt, Vector2(x, y2), Gfx.UI_DIM, Gfx.OUTLINE)
+		x = UiKit.paint_text(self, kn, Vector2(x, y2), killer.color_index) + 14.0
+		UiFont.draw(self, line, Vector2(x, y2), Gfx.FIRE[5], Gfx.OUTLINE)
+	else:
+		UiKit.center_text(self, line, cx, y2, Gfx.FIRE[5], Gfx.OUTLINE)
+	var s := Vector2(Gfx.TEX_SKULL.get_size())
+	for sx: float in [r.position.x - s.x - 6.0, r.end.x + 6.0]:
+		draw_texture(Gfx.TEX_SKULL, Vector2(floorf(sx), floorf(r.get_center().y - s.y / 2.0)))
 	_panels.append(r)
-	var name_s: String = Bosses.boss_name(world.boss_kind)
-	if world.boss_state == Bosses.ST_WARNED:
-		UiKit.hazard_frame(self, r.grow(-2.0), 2.0)
-		var secs: int = ceili(float(world.boss_warn_left) / float(SimWorld.TICK_RATE))
-		var hot: bool = (world.tick / 5) % 2 == 0
-		UiKit.center_big(self, "BOSS INCOMING", cx, r.position.y + 3, Gfx.UI_BAD if hot else Gfx.FIRE[4], Gfx.OUTLINE)
-		UiKit.center_text(self, "%s%s IN %d" % [name_s, " (ENRAGED)" if world.boss_enraged else "", secs], cx, r.position.y + 14, Gfx.UI_DIM, Gfx.UI_SHADOW)
+
+
+## While the boss is announced: the hive's cyan pulses on the screen edges, strongest on the side it will come
+## from, beating with the footsteps under the sand.
+func _boss_edge(vs: Vector2) -> void:
+	var sp: Vector2 = view.get_viewport().get_canvas_transform() * world.boss_spawn_pos
+	var dir: Vector2 = (sp - vs / 2.0).normalized()
+	var p: float = 1.0 - float(world.boss_warn_left) / float(Bosses.WARN_TICKS)
+	var beat: float = 1.0 - float(world.boss_warn_left % 18) / 18.0
+	var k: float = (0.35 + 0.65 * beat * beat) * (0.5 + 0.5 * p)
+	var bands: PackedFloat32Array = [0.42, 0.26, 0.14, 0.06]
+	var sides: Array[float] = [maxf(0.0, -dir.y), maxf(0.0, dir.y), maxf(0.0, -dir.x), maxf(0.0, dir.x)]  # top, bottom, left, right
+	for i in bands.size():
+		var bw: float = 5.0
+		var o: float = float(i) * bw
+		var a: float = bands[i] * k
+		var col: Color = Gfx.GLOW[2] if i > 0 else Gfx.GLOW[3]
+		draw_rect(Rect2(0, o, vs.x, bw), Color(col, a * (0.2 + 0.8 * sides[0])))
+		draw_rect(Rect2(0, vs.y - o - bw, vs.x, bw), Color(col, a * (0.2 + 0.8 * sides[1])))
+		draw_rect(Rect2(o, 0, bw, vs.y), Color(col, a * (0.2 + 0.8 * sides[2])))
+		draw_rect(Rect2(vs.x - o - bw, 0, bw, vs.y), Color(col, a * (0.2 + 0.8 * sides[3])))
+
+
+## An arrow on the screen edge toward the boss (or where it will surface) while it is off screen.
+func _boss_pointer(vs: Vector2, wp: Vector2, coming: bool) -> void:
+	if wp == Vector2.INF:
 		return
-	if world.boss_state != Bosses.ST_ACTIVE:
-		var down: bool = world.boss_state == Bosses.ST_KILLED
-		UiKit.center_big(self, "BOSS DOWN" if down else "BOSS RETREATS", cx, r.position.y + 3, Gfx.FIRE[5] if down else Gfx.UI_DIM, Gfx.OUTLINE)
-		UiKit.center_text(self, name_s, cx, r.position.y + 14, Gfx.UI_DIM, Gfx.UI_SHADOW)
+	var sp: Vector2 = view.get_viewport().get_canvas_transform() * wp
+	if Rect2(Vector2.ZERO, vs).grow(-8.0).has_point(sp):
 		return
-	UiFont.draw(self, name_s, Vector2(r.position.x + 6, r.position.y + 3), Gfx.UI_TEXT, Gfx.OUTLINE)
-	if world.boss_enraged:
-		var ew: float = UiFont.width("ENRAGED")
-		UiFont.draw(self, "ENRAGED", Vector2(r.end.x - ew - 6, r.position.y + 3), Gfx.UI_BAD if (world.tick / 8) % 2 == 0 else Gfx.FIRE[4], Gfx.OUTLINE)
-	var bar := Rect2(r.position.x + 6, r.position.y + 14, r.size.x - 12, 6)
-	UiKit.bar(self, bar, world.boss_hp_frac, Gfx.GLOW[3] if world.boss_phase < 3 else Gfx.GLOW[4])
-	for tfrac in [Bosses.PHASE2_FRAC, Bosses.PHASE3_FRAC]:
-		draw_rect(Rect2(bar.position.x + floorf((bar.size.x - 2.0) * tfrac) + 1.0, bar.position.y, 1, bar.size.y), Color(Gfx.OUTLINE, 0.9))
+	var inset := Rect2(Vector2(14, 14), vs - Vector2(28, 28))
+	var c: Vector2 = vs / 2.0
+	var dir: Vector2 = (sp - c).normalized()
+	var t: float = INF
+	if absf(dir.x) > 0.001:
+		t = minf(t, ((inset.end.x if dir.x > 0.0 else inset.position.x) - c.x) / dir.x)
+	if absf(dir.y) > 0.001:
+		t = minf(t, ((inset.end.y if dir.y > 0.0 else inset.position.y) - c.y) / dir.y)
+	var p: Vector2 = _clear_of_panels(c + dir * t, inset).floor()
+	var on: bool = not coming or (world.tick / 4) % 2 == 0
+	UiKit.pointer(self, p, dir, 12.0, Gfx.GLOW[4] if on else Gfx.GLOW[2])
+	var label: String = "BOSS"
+	var lp: Vector2 = (p - dir * 24.0).floor()
+	var lw: float = UiFont.width_small(label)
+	draw_rect(Rect2(lp.x - lw / 2.0 - 3.0, lp.y - 5.0, lw + 6.0, 10), Color(Gfx.OUTLINE, 0.8))
+	UiFont.draw_small(self, label, Vector2(floorf(lp.x - lw / 2.0), lp.y - 3.0), Gfx.GLOW[4])
 
 
 ## PvP grace (round PVP_START_ROUND): a hazard-framed countdown at the top until rivals may shoot.

@@ -347,6 +347,7 @@ def tripod_shell(ang, size=16):
 
 TELEGRAPH_FRAME = 48
 TELEGRAPH_FRAMES = 6
+TELEGRAPH_GAME_FRAME = 132  # exported game size: ring radius size / 2 - 3 = 63 px, the blast reach (no scaling in game)
 
 
 def tripod_telegraph(i, n=TELEGRAPH_FRAMES, size=TELEGRAPH_FRAME):

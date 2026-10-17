@@ -87,7 +87,8 @@ const NAMES: PackedStringArray = ["skirmish", "horde", "workshop", "tech_tree", 
 	"menu", "join", "lobby", "pause", "rematch", "waiting", "rig_growth", "late_round", "pvp_on", "rig_kill",
 	"recap", "recap_pvp", "scouting", "combat_feed", "pvp_grace", "spectator", "spectator_ws", "awards",
 	"tech_mid", "tech_swap", "workshop_mid", "tech_beginner", "fx_firebrand", "fx_fortress", "fx_scrapper",
-	"fx_chassis", "fx_ram", "juice", "juice_surge", "evo_combat", "evo_flip", "evo_workshop", "evo_moment", "boss_tripod", "boss_colossus", "boss_shards"]
+	"fx_chassis", "fx_ram", "juice", "juice_surge", "evo_combat", "evo_flip", "evo_workshop", "evo_moment", "boss_tripod", "boss_colossus", "boss_shards",
+	"boss_warning", "boss_enraged", "boss_spawn", "boss_phase", "boss_kill", "boss_kill_colossus", "boss_retreat"]
 const EVO_FLIP_TICK := 90
 const EVO_PICK_DELAY := 30
 const JUICE_SURGE_TICK := 100
@@ -167,7 +168,8 @@ static func build(name: String, p_seed: int) -> SimWorld:
 			return _juice_world(p_seed)
 		"evo_combat", "evo_flip":
 			return _evo_world(name, p_seed)
-		"boss_tripod", "boss_colossus", "boss_shards":
+		"boss_tripod", "boss_colossus", "boss_shards", "boss_warning", "boss_enraged", "boss_spawn", "boss_phase", "boss_kill", \
+				"boss_kill_colossus", "boss_retreat":
 			return _boss_world(name, p_seed)
 		"evo_workshop", "evo_moment":
 			var we: SimWorld = _skirmish(p_seed)
@@ -463,16 +465,29 @@ static func _rig_kill(p_seed: int) -> SimWorld:
 	return w
 
 
-## Boss scenarios (round 4 boss fight, placeholder art): three tough rigs, the boss walks in at once and is moved next to
-## them (see _boss_step). "boss_tripod": Tripod Queen at ~50% hp (phase 2: shells and mite broods; shoot about 90 to 200
+## Boss scenarios (round 4 boss fight): three tough rigs; the boss walks in and is moved next to them (see
+## _boss_step). "boss_tripod": Tripod Queen at ~50% hp (phase 2: shells and mite broods; shoot about 90 to 200
 ## ticks), "boss_colossus": Shard Colossus at ~55% (phase 2: glow rings and charges; about 100 to 260 ticks),
-## "boss_shards": the Colossus at 20% (phase 3: three shard minibosses; about 120 ticks).
+## "boss_shards": the Colossus at 20% (it splits at once: the crystal burst at 3 to 30 ticks, the three shard
+## minibosses later). Moments: "boss_warning" (the Queen announced: shoot 20 to 90, she surfaces at about 92),
+## "boss_enraged" (the same for an enraged round-12 Colossus), "boss_spawn" (the convoy near the west edge: she
+## erupts at about tick 21; shoot 22 to 50), "boss_phase" (phase 2 roar at BOSS_MOMENT_TICK; shoot +3 to +60),
+## "boss_kill" / "boss_kill_colossus" (the boss dies at about BOSS_MOMENT_TICK + 1; shoot +5 to +150),
+## "boss_retreat" (the round ends with the Queen alive at about tick 60: the workshop opens; shoot 62 to 120).
+const BOSS_MOMENT_TICK := 60
+
+
 static func _boss_world(name: String, p_seed: int) -> SimWorld:
 	var w := SimWorld.new(p_seed)
-	w.round = 4
-	w.boss_first = 0 if name == "boss_tripod" else 1
+	w.round = 12 if name == "boss_enraged" else 4
+	var colossus: bool = name in ["boss_colossus", "boss_shards", "boss_enraged", "boss_kill_colossus"]
+	# boss_first picks the opener; round 12 is the third boss round, the opener's own again
+	w.boss_first = 1 if colossus else 0
 	var c: Vector2 = SimWorld.ARENA.get_center()
 	var spots: Array = [c, c + Vector2(-90, 70), c + Vector2(80, 110)]
+	if name == "boss_spawn":  # the convoy by the west edge, so the eruption is in frame
+		c = Vector2(250.0, c.y)
+		spots = [c, c + Vector2(60, 90), c + Vector2(40, -100)]
 	var builds: Array = [GROWTH_BUILDS[6], GROWTH_BUILDS[3], GROWTH_BUILDS[2]]
 	for i in 3:
 		var v: SimVehicle = w.add_vehicle(i + 1, spots[i], ATTRACT_NAMES[i * 2], [0, 2, 3][i])
@@ -480,28 +495,62 @@ static func _boss_world(name: String, p_seed: int) -> SimWorld:
 		v.max_hp *= 12.0
 		v.hp = v.max_hp
 		v.fuel = 100
+		v.round_stats = SimWorld.new_round_stats(w.round)
 	w.apply_command(1, {"type": "set_drive", "value": "circle"})
 	w.apply_command(1, {"type": "set_target", "value": "boss"})
 	_scatter(w, 50, 0.04, 0.02, 160.0, 600.0)
-	var start: int = SimWorld.surge_starts(w.combat_duration(4))[0]
-	w.phase_ticks_left = w.combat_duration(4) - (start - 20)
+	var dur: int = w.combat_duration(w.round)
+	var start: int = SimWorld.surge_starts(dur)[0]
+	var lead: int = Bosses.WARN_TICKS + 2 if name == "boss_warning" or name == "boss_enraged" else 20
+	w.phase_ticks_left = dur - (start - lead)
 	return w
 
 
 static func _boss_step(name: String, w: SimWorld) -> void:
 	w.step()
-	if w.boss_state != Bosses.ST_ACTIVE:
+	if w.boss_state != Bosses.ST_ACTIVE or name == "boss_spawn":
 		return
 	var first: bool = not w.has_meta("boss_placed")
 	w.set_meta("boss_placed", true)
 	var c: Vector2 = w.vehicles[0].pos
+	var fracs: Dictionary = {"boss_tripod": 0.5, "boss_colossus": 0.55, "boss_shards": 0.2, "boss_phase": 0.69,
+		"boss_kill": 0.2, "boss_kill_colossus": 0.2, "boss_retreat": 0.45}
+	var moment: bool = w.tick == BOSS_MOMENT_TICK
 	for i in w.enemy_count:
-		if w.enemy_kind[i] >= SimWorld.BOSS_A:
-			if first or name == "boss_tripod":  # the Queen is pinned next to the camera rig so the shot frames her
-				w.enemy_pos[i] = c + (Vector2(230, 40) if name == "boss_tripod" else Vector2(170, -30))
-			if first:
-				var frac: float = {"boss_tripod": 0.5, "boss_colossus": 0.55, "boss_shards": 0.2}[name]
-				w.enemy_hp[i] = w.boss_max_hp * frac
+		var k: int = w.enemy_kind[i]
+		if k < SimWorld.BOSS_A or w.enemy_hp[i] <= 0.0:
+			continue
+		var pinned: bool = name == "boss_tripod" or (k == SimWorld.BOSS_A and name in ["boss_phase", "boss_kill", "boss_retreat"])
+		if first or pinned:  # pinned next to the camera rig so the shot frames it
+			var off := Vector2(170, -30)
+			if k == SimWorld.BOSS_A:
+				off = Vector2(230, 40) if name == "boss_tripod" else Vector2(150, -20)
+			w.enemy_pos[i] = c + off
+		if first and k != SimWorld.BOSS_SHARD:
+			if name == "boss_colossus" or name == "boss_tripod":  # a longer fight, so every attack shows
+				w.boss_max_hp *= 4.0
+			w.enemy_hp[i] = w.boss_max_hp * float(fracs.get(name, 1.0))
+		if moment and name == "boss_phase":
+			w.enemy_hp[i] = w.boss_max_hp * 0.64
+		if name == "boss_kill_colossus" and k == SimWorld.BOSS_SHARD and w.tick > 20:
+			if w.tick < BOSS_MOMENT_TICK:  # whittle the shards down: the first two die early, the last waits by the camera
+				if w.enemy_id[i] % 3 != 0 and w.tick % 10 == 0:
+					w.enemy_hp[i] = 0.5
+				w.enemy_pos[i] = c + Vector2(110, -30)
+		if moment and (name == "boss_kill" or name == "boss_kill_colossus"):
+			w.enemy_hp[i] = 0.5  # the next shot kills
+	if (name == "boss_kill" or name == "boss_kill_colossus") and w.tick >= BOSS_MOMENT_TICK - 4:
+		if not w.has_meta("rig_pins"):  # the rigs hold still so the camera stays on the kill
+			var pins: Array = []
+			for v in w.vehicles:
+				pins.append(v.pos)
+			w.set_meta("rig_pins", pins)
+		var pins2: Array = w.get_meta("rig_pins")
+		for vi in w.vehicles.size():
+			w.vehicles[vi].pos = pins2[vi]
+			w.vehicles[vi].vel = Vector2.ZERO
+	if name == "boss_retreat" and first:
+		w.phase_ticks_left = mini(w.phase_ticks_left, 40)
 
 
 ## Two rigs (red: circle / nearest, magenta: kite / players_first) in a running horde.

@@ -506,7 +506,8 @@ def export_aliens(save):
         rows = [[fn(a) for a in fx_ang]]
         save(sheet(rows), f"{name}.png")
         save(glow_sheet(rows, **proj_glow), f"{name}_glow.png")
-    tele = [[aliens.tripod_telegraph(i) for i in range(aliens.TELEGRAPH_FRAMES)]]
+    # drawn 1:1 in game at the shell's reach for a rig centre (Bosses.SHELL_RADIUS 56 + half a rig 7 = R 63)
+    tele = [[aliens.tripod_telegraph(i, size=aliens.TELEGRAPH_GAME_FRAME) for i in range(aliens.TELEGRAPH_FRAMES)]]
     save(sheet(tele), "tripod_telegraph.png")
     save(glow_sheet(tele, radius=2, gain=1.5, strength=0.3), "tripod_telegraph_glow.png")
     save(sheet([[aliens.shrieker_ring(i) for i in range(aliens.RING_FRAMES)]]), "shrieker_ring.png")
