@@ -9,7 +9,7 @@ const NITRO_MIN_SPEED := 25.0  ## px/s: the nitro only burns while the rig is re
 const DEAD_TINT := Color(0.32, 0.27, 0.27)
 
 var foot: int = 0
-var guns: Array = []  ## [[kind, level], ...] in weapon order
+var guns: Array = []  ## [[kind, level, evolved], ...] in weapon order
 var _sig: String = ""
 var _mat: ShaderMaterial
 var _shadow: Sprite2D
@@ -17,6 +17,8 @@ var _trailer_shadow: Sprite2D
 var _trailer: Sprite2D
 var _layers: Array[Sprite2D] = []
 var _guns: Array[Sprite2D] = []
+var _gun_shadows: Dictionary = {}  ## gun index -> Sprite2D: evolved guns cast a shadow on the hull, so they stand off it
+const GUN_SHADOW := Vector2(2, 3)
 var _flames: Array[Sprite2D] = []  ## [flame, glow] per exhaust
 var _trailer_dir: Vector2 = Vector2.ZERO  ## trailer forward direction (world), ZERO = not placed yet
 var _trailer_pos: Vector2 = Vector2.ZERO
@@ -26,7 +28,11 @@ var _nitro: int = 0  ## nitro card level (0 = none): idle exhaust flames while r
 var _nitro_ab: bool = false  ## the nitro ability (propulsion tech): a big jet while it burns
 var _mounts: Array = []  ## per gun: [0 hull / 1 trailer / 2 sidecar, index]
 var jitter: PackedInt32Array = PackedInt32Array()  ## per gun: 1 = shaking this frame (jammed barrel)
-
+## Recent "fire" ticks per weapon kind index (newest last, at most FIRE_LOG): evolved guns animate from
+## them (gatling spin, earthshaker recoil) and CombatFx throws the gatling's brass casings.
+var fire_log: Dictionary = {}
+const FIRE_LOG := 16
+const RECOIL: PackedFloat32Array = [3.0, 2.0, 1.0]  ## earthshaker barrel kick (px) for the ticks after a shot
 
 func _init() -> void:
 	_mat = RigArt.paint_material(0)
@@ -64,6 +70,9 @@ func setup(v: SimVehicle) -> void:
 	foot = RigArt.footprint(v)
 	for s in _layers + _guns:
 		s.queue_free()
+	for k in _gun_shadows:
+		(_gun_shadows[k] as Node).queue_free()
+	_gun_shadows.clear()
 	for s in _flames:
 		s.queue_free()
 	_layers.clear()
@@ -77,8 +86,19 @@ func setup(v: SimVehicle) -> void:
 	guns = RigArt.guns(v)
 	_mounts = _mount_plan(guns.size(), RigArt.has_trailer(v), RigArt.has_sidecar(v))
 	for g: Array in guns:
-		var s := _sprite(RigArt.GUN_TEX[g[0]], Gfx.Z_TURRETS, 3)
-		s.frame_coords = Vector2i(0, int(g[1]) - 1)
+		var s: Sprite2D
+		if bool(g[2]):
+			s = _sprite(RigArt.GUN_EVO_TEX, Gfx.Z_TURRETS, 8)
+			s.frame_coords = Vector2i(0, Cards.weapon_kind_index(str(g[0])) * 2)
+			var sh := _sprite(RigArt.GUN_EVO_TEX, Gfx.Z_RIG_DECO, 8)
+			var sm := ShaderMaterial.new()
+			sm.shader = Gfx.SILHOUETTE_SHADER
+			sm.set_shader_parameter("shadow_color", Color(0.12, 0.1, 0.16, 0.55))
+			sh.material = sm
+			_gun_shadows[_guns.size()] = sh
+		else:
+			s = _sprite(RigArt.GUN_TEX[g[0]], Gfx.Z_TURRETS, 3)
+			s.frame_coords = Vector2i(0, int(g[1]) - 1)
 		_guns.append(s)
 	_shadow.frame_coords = Vector2i(0, RigArt.shadow_row(v))
 	var trailer: bool = RigArt.has_trailer(v)
@@ -136,6 +156,13 @@ func place(v: SimVehicle, p: Vector2, head: float, tick: int, frozen: bool) -> v
 			g.position += Vector2(((tick + i) % 2) * 2 - 1, 0)
 		var aim: float = float(v.weapons[i].get("aim", head)) if i < v.weapons.size() else head
 		g.frame_coords.x = Gfx.frame_for_angle(aim, Gfx.VEHICLE_DIRS)
+		if bool(guns[i][2]):
+			_animate_evo(i, g, v, tick)
+			var sh: Sprite2D = _gun_shadows.get(i)
+			if sh != null:
+				sh.visible = g.visible
+				sh.position = g.position + GUN_SHADOW
+				sh.frame_coords = g.frame_coords
 	if not _flames.is_empty():
 		var boost: bool = v.nitro_ticks > 0 and v.sputter_ticks <= 0
 		var burning: bool = v.alive and (boost or (_nitro > 0 and v.vel.length() > NITRO_MIN_SPEED))
@@ -148,6 +175,55 @@ func place(v: SimVehicle, p: Vector2, head: float, tick: int, frozen: bool) -> v
 				s.visible = burning
 				s.position = pos
 				s.frame_coords = Vector2i(fframe, row)
+
+
+## Evolved guns live a little: the gatling's barrels spin and it shudders while it fires, the grinder's
+## teeth chatter, the earthshaker kicks back after a shot (brace lamp blinking), the inferno's pilot flickers.
+func _animate_evo(i: int, g: Sprite2D, v: SimVehicle, tick: int) -> void:
+	var ki: int = Cards.weapon_kind_index(str(guns[i][0]))
+	var since: int = tick - last_fire(ki)
+	var firing: bool = since >= 0 and since <= 3
+	var phase: int = 0
+	match str(guns[i][0]):
+		"mg":
+			phase = tick % 2 if firing else 0
+			if firing and v.alive:
+				g.position += Vector2(0, (tick % 2))
+		"shotgun":
+			phase = (tick / 2) % 2 if firing else 0
+		"cannon":
+			phase = (tick / 8 + v.id) % 2
+			if since >= 0 and since < RECOIL.size():
+				var a: float = Gfx.frame_rotation(g.frame_coords.x, Gfx.VEHICLE_DIRS) - PI / 2.0
+				g.position -= Gfx.snap(Vector2.from_angle(a) * RECOIL[since])
+		"flamer":
+			phase = (tick / 2 + v.id) % 2
+	g.frame_coords.y = ki * 2 + phase
+
+
+## A "fire" event of weapon kind `kind_index` at `tick`.
+func note_fire(kind_index: int, tick: int) -> void:
+	var log: PackedInt32Array = fire_log.get(kind_index, PackedInt32Array())
+	if not log.is_empty() and log[log.size() - 1] >= tick:
+		return
+	log.append(tick)
+	if log.size() > FIRE_LOG:
+		log.remove_at(0)
+	fire_log[kind_index] = log
+
+
+## The tick weapon kind `kind_index` last fired (-100000 = never).
+func last_fire(kind_index: int) -> int:
+	var log: PackedInt32Array = fire_log.get(kind_index, PackedInt32Array())
+	return log[log.size() - 1] if not log.is_empty() else -100000
+
+
+## Index of the first gun of weapon kind `kind` (-1 = none).
+func gun_of(kind: String) -> int:
+	for i in guns.size():
+		if str(guns[i][0]) == kind:
+			return i
+	return -1
 
 
 ## Where each of `n` guns sits: hull rings 0 and 1, then the trailer's two rings (war rig), then the hull
@@ -197,7 +273,7 @@ func barrel(i: int) -> Array:
 		return [position, position, 0.0]
 	var g: Sprite2D = _guns[i]
 	var a: float = Gfx.frame_rotation(g.frame_coords.x, Gfx.VEHICLE_DIRS) - PI / 2.0
-	var length: float = float((RigArt.BARREL[str(guns[i][0])] as Array)[int(guns[i][1]) - 1])
+	var length: float = RigArt.barrel_length(guns[i])
 	var d := Vector2.from_angle(a)
 	return [g.position + d * length, g.position + d * 3.0, a]
 
@@ -212,10 +288,9 @@ func muzzle(kind_index: int, aim: float) -> Array:
 	if _guns.is_empty():
 		return [position, aim]
 	var g: Sprite2D = _guns[idx]
-	var kind: String = str(guns[idx][0])
 	var aim_frame: int = Gfx.frame_for_angle(aim, Gfx.VEHICLE_DIRS)
 	var a: float = Gfx.frame_rotation(aim_frame, Gfx.VEHICLE_DIRS) - PI / 2.0
-	var length: float = float((RigArt.BARREL[kind] as Array)[int(guns[idx][1]) - 1])
+	var length: float = RigArt.barrel_length(guns[idx])
 	return [g.position + Vector2.from_angle(a) * length, a]
 
 

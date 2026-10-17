@@ -195,8 +195,10 @@ def paint(cv, m, ramp, base=None, light=True, noise=0.0, seed=0, emissive=False,
 
 
 def outline(cv, color, skip_emissive=False):
+    """1px ring around the solid pixels; with skip_emissive, glowing pixels get no ring of their own."""
     m = cv.solid()
-    ring = (shift(m, 1, 0) | shift(m, -1, 0) | shift(m, 0, 1) | shift(m, 0, -1)) & ~m
+    src = m & ~cv.emit if skip_emissive else m
+    ring = (shift(src, 1, 0) | shift(src, -1, 0) | shift(src, 0, 1) | shift(src, 0, -1)) & ~m
     cv.put(ring, color)
 
 

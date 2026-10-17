@@ -201,6 +201,9 @@ static func probe_path(name_: String) -> Array:
 	return path
 
 
+const EVOLUTION_SCORE := 100.0
+
+
 static func _focus(weapon: String, desc: String) -> Dictionary:
 	var cards: Dictionary = {"steel_plates": 3.0, "reinforced_hull": 3.0, "regenerator": 2.0, "scrap_magnet": 2.0}
 	for w: String in Cards.WEAPON_KINDS:
@@ -450,6 +453,8 @@ func next_command(world: SimWorld, v: SimVehicle) -> Dictionary:
 ## Score of card `id` for vehicle `v` under this policy (higher = better; <= NEVER/2 = refuse).
 func card_score(v: SimVehicle, id: String) -> float:
 	var table: Dictionary = cfg.get("cards", {})
+	if Cards.is_evolution(id) and float(cfg.get("default_card", 1.0)) > NEVER / 2.0:
+		return EVOLUTION_SCORE  # every policy that picks cards at all takes a guaranteed evolution
 	var s: float = float(table.get(id, cfg.get("default_card", 1.0)))
 	if s <= NEVER / 2.0:
 		return s

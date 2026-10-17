@@ -19,8 +19,8 @@ const SPITTER := 2
 # Per-kind stats, indexed by enemy kind.
 const ENEMY_RADIUS: PackedFloat32Array = [6.0, 14.0, 8.0]
 const ENEMY_SPEED: PackedFloat32Array = [90.0, 35.0, 55.0]  # px/s
-const ENEMY_HP: PackedFloat32Array = [6.0, 80.0, 20.0]
-const ENEMY_CONTACT_DAMAGE: PackedFloat32Array = [0.35, 1.5, 0.6]  # per tick while touching
+const ENEMY_HP: PackedFloat32Array = [4.0, 80.0, 20.0]
+const ENEMY_CONTACT_DAMAGE: PackedFloat32Array = [0.15, 1.5, 0.6]  # per tick while touching
 const ENEMY_SCRAP: PackedInt32Array = [1, 5, 2]
 const MAX_ENEMY_RADIUS := 14.0
 
@@ -61,6 +61,11 @@ const ZONE_EMBER := 0
 const ZONE_OIL := 1
 const ZONE_SMOKE := 2
 const ZONE_FIRE := 3
+const EVO_FIRE_EVERY := 5  # Inferno Spout: one fire zone per this many shots (6 per second at the base rate)
+const EVO_FIRE_RADIUS := 16.0
+const EVO_FIRE_TICKS := 45  # 1.5 s
+const EVO_BURN_MULT := 2.0  # Inferno Spout burn dps = hit damage x this
+const EVO_FLAMER_IDX := 3  # Cards.weapon_kind_index("flamer")
 const MAX_ZONES := 64
 
 const MAX_ENEMIES := 2500
@@ -91,10 +96,24 @@ const PVP_PROTECT_TICKS := 60  # 2 s of third-party protection after a player ki
 const PVP_PROTECT_FACTOR := 0.5  # damage multiplier while protected
 const RETALIATE_TICKS := 60  # return fire: a vehicle shoots back at a player that hurt it for 2 s (any doctrine)
 
-const SPAWN_RATE_START := 1.5  # enemies / s
-const SPAWN_RATE_RAMP := 0.5  # added every SPAWN_RAMP_INTERVAL seconds of the combat phase
-const SPAWN_RAMP_INTERVAL := 10.0
-const SPAWN_RAMP_END_BEFORE := 15.0  # the in-round ramp stops this many seconds before the round ends (flat finish)
+const SPAWN_RATE_START := 3.0  # base enemies / s (round 1), multiplied by the wave curve and spawn_rate_mult(r)
+# Wave curve (fractions of the combat length, the lull is absolute): build-up, surge, lull, final surge.
+const WAVE_SURGE_START := 0.35
+const WAVE_SURGE_END := 0.5
+const WAVE_LULL_TICKS := 180  # 6 s
+const WAVE_BUILD_FROM := 0.8  # multiplier at the start of the round, rising to 1.0 at the first surge
+const WAVE_SURGE := 2.2
+const WAVE_LULL := 0.3
+const WAVE_FINAL_FROM := 2.0  # final surge ramps from this to WAVE_FINAL_TO until the round ends
+const WAVE_FINAL_TO := 2.8
+const SURGE_WARN_TICKS := 60  # a "surge" event this long before each surge starts
+const PACK_START := 3.0  # mites spawn in packs: 3 in round 1 ...
+const PACK_PER_ROUND := 0.6
+const PACK_MAX := 8  # ... up to 8
+const PACK_RADIUS := 24.0  # a pack clusters within this of one edge point
+const MITE_SCRAP_START := 0.22  # scrap per mite kill (fractional, carried): many more mites must not inflate the economy
+const MITE_SCRAP_PER_ROUND := 0.009
+const MITE_SCRAP_MIN := 0.06
 const BOULDER_CHANCE := 0.04  # round 1; reaches the old 0.4 cap in the same round (13) as before
 const SPAWN_INSET := 8.0
 # Alive caps: a spawn that would exceed the cap becomes a mite, so the field never snowballs.
@@ -130,12 +149,12 @@ const PHASE_COMBAT := 0
 const PHASE_WORKSHOP := 1
 const PHASE_GAME_OVER := 2
 
-const COMBAT_TICKS := 1800  # 60 s
-const COMBAT_TICKS_EARLY := 1200  # 40 s, rounds 1 and 2
+const COMBAT_TICKS := 2100  # 70 s
+const COMBAT_TICKS_EARLY := 1350  # 45 s, rounds 1 and 2
 const EARLY_ROUNDS := 2
-const WORKSHOP_TICKS := 2700  # 90 s (90 * TICK_RATE)
+const WORKSHOP_TICKS := 1350  # 45 s
 const FAST_COMBAT_TICKS := 120  # world.fast_rounds (tests, screenshots)
-const FAST_WORKSHOP_TICKS := 162  # scaled with the workshop: 45 * 90 / 25
+const FAST_WORKSHOP_TICKS := 81  # scaled with the workshop: 45 * 45 / 25
 
 const START_FUEL := 100
 const FUEL_LOSS := 20  # destroyed by aliens
@@ -147,16 +166,16 @@ const REROLL_COST_START := 6
 const RETREAT_EVENT_CAP := 150  # at most this many "retreat" events per round end
 
 # Per-round enemy scaling (round 1 = x1).
-const HP_SCALE_PER_ROUND := 0.20
-const HP_SCALE_QUAD := 0.0125  # late-game term: the hive outgrows a linear power curve
-const SPAWN_SCALE_PER_ROUND := 0.15
+const HP_SCALE_PER_ROUND := 0.09
+const HP_SCALE_QUAD := 0.005  # late-game term: the hive outgrows a linear power curve
+const SPAWN_SCALE_PER_ROUND := 0.35
 const BOULDER_CHANCE_PER_ROUND := 0.03
 const BOULDER_CHANCE_MAX := 0.4
-const DAMAGE_SCALE_PER_ROUND := 0.03
+const DAMAGE_SCALE_PER_ROUND := 0.06
 # Early-round easing (playtest: the first waves were too strong). Spawn rate and enemy damage start at this
 # share in round 1 and rise linearly to full strength in round EASE_END_ROUND; later rounds are unchanged.
 const EASE_END_ROUND := 7
-const SPAWN_EASE_START := 0.55
+const SPAWN_EASE_START := 1.0  # no spawn easing: early rounds are already mass, not hp
 const DAMAGE_EASE_START := 0.65
 
 # Armour: flat reduction per hit with a floor; per touching enemy per tick it counts for much less.
@@ -565,12 +584,39 @@ func workshop_duration() -> int:
 	return FAST_WORKSHOP_TICKS if fast_rounds else WORKSHOP_TICKS
 
 
-## Enemies per second `ticks_in` ticks into a combat of round `r`. The in-round ramp (+0.5/s per 10 s) stops
-## SPAWN_RAMP_END_BEFORE seconds before the round ends, so the last 15 s are flat (no end-of-round snowball).
+## Wave multiplier `ticks_in` ticks into a combat of `dur` ticks: build-up (0.8 -> 1.0), surge, a ~6 s lull
+## and a final surge that runs until the end-of-round retreat.
+static func wave_mult(ticks_in: int, dur: int) -> float:
+	var s1: int = int(WAVE_SURGE_START * float(dur))
+	var e1: int = int(WAVE_SURGE_END * float(dur))
+	var lull_end: int = e1 + WAVE_LULL_TICKS
+	if ticks_in < s1:
+		return lerpf(WAVE_BUILD_FROM, 1.0, float(ticks_in) / float(maxi(s1, 1)))
+	if ticks_in < e1:
+		return WAVE_SURGE
+	if ticks_in < lull_end:
+		return WAVE_LULL
+	return lerpf(WAVE_FINAL_FROM, WAVE_FINAL_TO, clampf(float(ticks_in - lull_end) / float(maxi(dur - lull_end, 1)), 0.0, 1.0))
+
+
+## Ticks (into the combat) at which the first and the final surge start.
+static func surge_starts(dur: int) -> PackedInt32Array:
+	return PackedInt32Array([int(WAVE_SURGE_START * float(dur)), int(WAVE_SURGE_END * float(dur)) + WAVE_LULL_TICKS])
+
+
+## Enemies per second `ticks_in` ticks into a combat of round `r`.
 func spawn_rate_at(r: int, ticks_in: int) -> float:
-	var total_secs: float = float(combat_duration(r)) * DT
-	var ramp_secs: float = minf(float(ticks_in) * DT, maxf(total_secs - SPAWN_RAMP_END_BEFORE, 0.0))
-	return (SPAWN_RATE_START + SPAWN_RATE_RAMP * floorf(ramp_secs / SPAWN_RAMP_INTERVAL)) * spawn_rate_mult(r)
+	return SPAWN_RATE_START * wave_mult(ticks_in, combat_duration(r)) * spawn_rate_mult(r)
+
+
+## Mites per pack in round `r`.
+static func pack_size(r: int) -> int:
+	return clampi(int(PACK_START + PACK_PER_ROUND * float(maxi(r - 1, 0))), 1, PACK_MAX)
+
+
+## Scrap per mite kill in round `r` (a fraction; see ENEMY_SCRAP for the others).
+static func mite_scrap(r: int) -> float:
+	return maxf(MITE_SCRAP_START + MITE_SCRAP_PER_ROUND * float(maxi(r - 1, 0)), MITE_SCRAP_MIN)
 
 
 ## Adds an enemy and returns its stable id (or -1 if the cap is reached).
@@ -1309,7 +1355,7 @@ func _hit_enemy(j: int, dmg: float, killer: int, by_ram: bool = false) -> void:
 		_queue_shards(enemy_pos[j], killer, kind)
 	if kv != null:
 		Abilities.on_kill(kv)
-		kv.scrap_frac += float(ENEMY_SCRAP[kind]) * kv.scrap_mult
+		kv.scrap_frac += (mite_scrap(round) if kind == MITE else float(ENEMY_SCRAP[kind])) * kv.scrap_mult
 		var whole: int = int(kv.scrap_frac)
 		kv.scrap += whole
 		kv.scrap_frac -= float(whole)
@@ -1368,7 +1414,15 @@ func _compact_enemies() -> void:
 func _spawn_tick() -> void:
 	if not spawning_enabled:
 		return
-	_spawn_accum += spawn_rate_at(round, combat_duration(round) - phase_ticks_left) * DT
+	var dur: int = combat_duration(round)
+	var ticks_in: int = dur - phase_ticks_left
+	var pack: int = pack_size(round)
+	var starts: PackedInt32Array = surge_starts(dur)
+	for si in starts.size():  # warn SURGE_WARN_TICKS before each surge
+		if ticks_in == starts[si] - SURGE_WARN_TICKS and ticks_in >= 0:
+			_emit("surge", _swarm_center(), -1, si, {"in_ticks": SURGE_WARN_TICKS, "index": si})
+	# the accumulator counts spawn events: a mite event is a pack, boulders and spitters are single
+	_spawn_accum += spawn_rate_at(round, ticks_in) * DT / float(pack)
 	if _spitter_gap > 0:
 		_spitter_gap -= 1
 	if _spawn_accum < 1.0:
@@ -1382,15 +1436,17 @@ func _spawn_tick() -> void:
 			n_boulder += 1
 		elif ek == SPITTER:
 			n_spitter += 1
+	var p_boulder: float = minf(boulder_chance(round) * float(pack), 0.5)  # per event, so packs do not dilute them
+	var p_spitter: float = minf(spitter_chance(round) * float(pack), 0.3) if round >= SPITTER_MIN_ROUND else 0.0
 	while _spawn_accum >= 1.0:
 		_spawn_accum -= 1.0
 		var side: int = rng.randi() % 4
 		var t: float = rng.randf()
 		var kind: int = MITE
-		if rng.randf() < boulder_chance(round):
+		if rng.randf() < p_boulder:
 			kind = BOULDER
-		elif round >= SPITTER_MIN_ROUND and rng.randf() < spitter_chance(round):
-			kind = SPITTER  # no extra rng draw before SPITTER_MIN_ROUND: early rounds are unchanged
+		elif round >= SPITTER_MIN_ROUND and rng.randf() < p_spitter:
+			kind = SPITTER
 		if kind == BOULDER:
 			if n_boulder >= boulder_cap(round):
 				kind = MITE
@@ -1405,7 +1461,28 @@ func _spawn_tick() -> void:
 				if side == _last_spitter_side:  # spread: never two spitters in a row from the same edge
 					side = (side + 1 + rng.randi() % 3) % 4
 				_last_spitter_side = side
-		spawn_enemy(kind, _edge_pos(area, side, t))
+		var at: Vector2 = _edge_pos(area, side, t)
+		var lo: Vector2 = area.position + Vector2(SPAWN_INSET, SPAWN_INSET)
+		var hi: Vector2 = area.end - Vector2(SPAWN_INSET, SPAWN_INSET)
+		if kind == MITE:
+			for k in pack:
+				var ang: float = rng.randf() * TAU
+				var rad: float = sqrt(rng.randf()) * PACK_RADIUS
+				var mp: Vector2 = at + Vector2(cos(ang), sin(ang)) * rad
+				spawn_enemy(MITE, Vector2(clampf(mp.x, lo.x, hi.x), clampf(mp.y, lo.y, hi.y)))
+		else:
+			spawn_enemy(kind, at)
+
+
+## Centre of the alive vehicles (where the "surge" warning points), the arena centre when none is alive.
+func _swarm_center() -> Vector2:
+	var sum := Vector2.ZERO
+	var n: int = 0
+	for v in vehicles:
+		if v.alive:
+			sum += v.pos
+			n += 1
+	return sum / float(n) if n > 0 else ARENA.get_center()
 
 
 ## Where aliens spawn: the bounding box of the alive vehicles grown by SPAWN_REACH, clipped to the
@@ -1766,6 +1843,9 @@ func _fire_weapons(v: SimVehicle) -> void:
 		var amask: int = Ammo.mask(v, kind_name)
 		if (amask & Ammo.AP_BIT) != 0:
 			pierce += 1
+		var evo: bool = bool(w.get("evo", false))
+		if evo:
+			amask |= Ammo.EVO_BIT
 		var ttl: float = float(w["range"]) / speed + 0.05
 		var muzzle: Vector2 = v.pos + Vector2.from_angle(ang) * MUZZLE_OFFSET
 		var spot: bool = kind_name == "cannon" and tk == 1 and ti >= 0 and ti < enemy_count and enemy_kind[ti] == SPITTER \
@@ -1783,6 +1863,12 @@ func _fire_weapons(v: SimVehicle) -> void:
 				for p in SCATTER_PELLETS:
 					var sdir: Vector2 = Vector2.from_angle(ang + rng.randf_range(-SCATTER_SPREAD, SCATTER_SPREAD))
 					spawn_projectile(muzzle, sdir * speed, ttl, dmg * SCATTER_DAMAGE, v.id, 0, 0.0, widx, amask)
+		if evo and kind_name == "flamer":  # Inferno Spout: a short fire zone along the stream every EVO_FIRE_EVERY shots
+			var fshots: int = int(w.get("zn", 0)) + 1
+			w["zn"] = fshots
+			if fshots % EVO_FIRE_EVERY == 0:
+				var reach: float = float(w["range"]) * (0.45 + 0.2 * float((fshots / EVO_FIRE_EVERY) % 3))
+				_add_zone(v.pos + Vector2.from_angle(ang) * reach, EVO_FIRE_RADIUS, ZONE_FIRE, EVO_FIRE_TICKS, v.id)
 		w["cooldown"] = cd + float(w["cooldown_ticks"])
 		_emit("fire", muzzle, v.id, widx)
 
@@ -1925,6 +2011,8 @@ func _update_projectiles() -> void:
 				_splash_damage(hit_pos, proj_splash[i], dmg * SPLASH_FRACTION, owner, hit_enemy)
 			_hit_ammo = 0
 			_hit_weapon = -1
+			if (amask & Ammo.EVO_BIT) != 0 and proj_weapon[i] == EVO_FLAMER_IDX and enemy_hp[hit_enemy] > 0.0:
+				_ignite(hit_enemy, dmg * EVO_BURN_MULT, owner)  # Inferno Spout burns hard (no ammo needed)
 			if (amask & Ammo.FIRE_BIT) != 0 and enemy_hp[hit_enemy] > 0.0:
 				_ignite(hit_enemy, dmg * BURN_FRACTION * ascale / (float(BURN_TICKS) * DT), owner)
 			if proj_pierce[i] > 0:

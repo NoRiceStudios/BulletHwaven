@@ -42,7 +42,7 @@
 ```
 ┌─ MATCH (8 players, ~20–25 min, ~14 rounds) ───────────────────────────┐
 │                                                                        │
-│  [ CONVOY PHASE ~75 s ]  ──►  [ WORKSHOP ~90 s ]  ──►  next round      │
+│  [ CONVOY PHASE 45–70 s ]  ──►  [ WORKSHOP ~45 s ]  ──►  next round    │
 │   AI drives & fights           Draft 1 of 3 cards (free)                │
 │   Collect scrap                Spend scrap: tech tree / rerolls         │
 │   Use 1–2 active abilities     Place modules on the chassis grid        │
@@ -55,6 +55,8 @@
         ▼
   META: base camp / garage (idle production, unlocks, drivers)
 ```
+
+**Pacing (horde pass):** combat is the reward, so the workshop is short (45 s) and combat is long and dense: 45 s in rounds 1–2, 70 s from round 3. Difficulty comes from mass, not sponges: mites arrive in packs (3 in round 1 rising to 8, clustered at one edge point), the alive count climbs to roughly 30–60 by mid round 1, 150 at the peak of round 5 and 300+ by round 10, while alien hp scales gently (+7 % per round plus a small quadratic term). Each combat follows a wave curve: build-up, a first surge at about 35 % of the round, a short lull (6 s), then a final surge that runs until the end-of-round retreat. The sim emits a `surge` event 2 s before each surge so the HUD can show a SWARM INCOMING banner. Mites pay a fraction of a scrap per kill so a bigger horde does not inflate the economy.
 
 **Workshop phases run simultaneously for everyone** (like TFT), so the multiplayer stays fair and synchronous. Vehicles stop in a safe spot during the workshop (story framing: "the convoy makes camp").
 
@@ -99,7 +101,12 @@ Two systems with clearly separate jobs:
   - *Vulture:* the AI targets damaged players, +damage vs. targets under 30% HP
   - *Circle of Death:* the AI circles enemies, side weapons +50%
 - **Duplicates level up** (2× = level 2, 3× = level 3, as in TFT/Brotato).
-- **Evolutions** (Vampire Survivors): a weapon plus a specific passive or module evolves at max level. Examples: flamethrower + fuel tank → *Inferno Spout*; MG + ammo crate ×2 → *Gatling Hell*; harpoon + V8 → *Chain Drag* (drags enemies behind you).
+- **Evolutions** (Vampire Survivors): a weapon at max level (3) plus a specific partner card (any level) evolves. **As built:** while eligible, the evolution card (category `evolution`, rarity legendary) replaces offer slot 0 in every draft, rerolls and bonus offers included, so you see it at once; picking it evolves the weapon in place (same slot, same kind, no extra slot) and it is never offered again. The card text names both ingredients and the result. Tech-tree multipliers still apply on top. Four evolutions are built (numbers replace the level 3 row; DPS vs a dense swarm roughly 2.1-2.7x level 3, single target 1.2-1.5x):
+  - *Gatling Hell* (Machine Gun + V8 Engine): double fire rate (30 shots/s), 4.5 damage, pierce 1, wider spread, range 275.
+  - *Meat Grinder* (Scatter Gun + Spiked Plating): 12 pellets, 4 damage, pierce 2, range 195.
+  - *Earthshaker* (Siege Cannon + Caterpillar Tracks): 56 damage, splash radius 38, pierce 3, range 345.
+  - *Inferno Spout* (Flamethrower + Nitro Injection): range 150, pierce 5, burns every target it hits, and drops short fire zones (1.5 s, one per five shots) along the stream.
+  - Not yet built: harpoon + V8 -> *Chain Drag* (drags enemies behind you). The visual pass (evolved turrets, projectiles, card style) is still to do; the sim exposes `evo` on each weapon and `EVO_BIT` on shots.
 - **Rarity:** common, rare, epic, legendary. Tech raises the chance.
 
 ### 5b. Tech tree v2.3 (per match, resets every match)
@@ -319,6 +326,7 @@ This explains the scrap economy (the wreck is the resource), the Mad Max look (i
   - Starter buggy: about 32×48 px. A fully built war rig with trailers: 100–250 px long, so the vehicle growth is visible on screen.
 - **Modules are drawn onto the vehicle.** Each module on the chassis grid is a visible sprite at its grid position (guns rotate, armour plates sit on the edge). From above, your build is readable at a glance, which also helps with scouting rivals.
   - *As built (draft cards, playtest round 1):* every card bolts something on. Each gun card has its own turret (MG, scatter gun, cannon, flamer) and its level shows (twin barrels, ammo drums, longer barrels, extra tanks); the second gun sits on the hood or flatbed, the third on the trailer. Steel plates add painted flank plates, reinforced hull adds girders, ablative scrap adds rusty slabs and tyres, spiked plating adds spikes that grow per level; V8 adds a blower, nitro adds bottles and exhaust flames while driving, tracks and off-road tyres swap the running gear; behaviour cards add a trophy or tool (magnet, horned skull, vulture skull, welding rig). The chassis follows the Engineering core (tech tree v2.3): buggy (with a welded frame once Engineering Frame is built), four-wheel pickup with a painted bed, six-wheel truck with a closed cab, and the war rig tractor with an articulated gun trailer. Tech bolt-ons show as well: dozer blade, roll cage, a sidecar carrying the last gun, jerrycans, a scrap pile, a repair drone circling the rig and the scrap baron's gold chain that grows with scrap. Paint covers the hood, the flanks and the plates so eight rigs stay apart; your own rig stands on a ring in its paint colour.
+  - *As built (weapon evolutions, section 5a):* an evolved gun swaps its turret for a bigger, absurd scrap piece readable from above: Gatling Hell is a rotary barrel cluster with brass clamps fed by an ammo belt (spins, spits a white-hot tracer stream and brass casings), Meat Grinder a drum-fed flared maw with saw teeth (heavy slugs with spark trails), Earthshaker a long artillery barrel on spades with recoil cylinders (a giant shell, a big blast with a light camera shake and a scorch mark), Inferno Spout a bell nozzle on twin fuel tanks with a pilot flame (a thicker, longer flame stream). All shots stay warm. The moment it evolves the rig bursts with a warm flash and a brass "EVOLVED: <NAME>" banner slams in; the workshop card is legendary (gunmetal tag, brass frame, both ingredients -> result).
 - **Damage is visible:** dented plates, smoke, fire, missing modules, alien goo on the bodywork.
 - **Scrap-built, never factory-new:** every vehicle is patched together from mismatched panels (bare steel, rust, faded olive paint) joined by visible weld seams. Standard wear: bullet holes, dents, scratches, rust streaks, chipped player paint. Rugged add-ons break up the silhouette: spiked ram bars and hubs, chains, barbed wire, sandbags, tarp-covered cargo, jerrycans, ammo belts, trophies.
 - **Organic ground, no repeating patterns:** dunes are built from irregular noise, never periodic stripes or tiles, and sand texture uses random grain instead of an ordered dither. Ordered (checkerboard) dithering is reserved for light and glow effects.
@@ -369,6 +377,14 @@ The aliens look like **plausible desert ecology**, not like classic sci-fi monst
 - **Nausicaä of the Valley of the Wind:** aliens as an ecosystem, not as evil
 - **Starship Troopers / The Riftbreaker:** alien hordes, nests, top-down horde chaos
 - **Death Stranding / Kenshi:** the feel of an empty, rough, beautiful world
+
+### 11h. Combat feedback: the kill is the reward
+The doctrine drives and the player watches, so watching has to feel good. Kill feedback scales with mass and stays readable in hordes of hundreds:
+- **Kill bursts:** a mite pops in a white-cyan splat with a few chitin bits and goo droplets; a boulder cracks into hopping shell plates with a dust ring and a light camera jolt; a spitter bursts in an acid spray. Alien bits glow cyan only for the instant of death and cool to dark teal; shell and dust stay in the desert ramps.
+- **Hits:** an alien that takes a hit flashes white for a frame (its dark outline stays). Cannon shells land with a hard white-hot star and kick at the muzzle (flare and a smoke puff).
+- **Scrap:** kills of your rig throw warm scrap sparkles that fly into the rig; the dock's scrap number ticks up with a short pulse and a floating "+N".
+- **Kill combo:** kills within 1.5 s chain; the counter ("x24") stands next to the rig, grows and warms from pale gold to deep fire, and calls out milestones in stencil: ROADKILL (10), SHREDDED (25), BUG BLENDER (50), HIVE BREAKER (100), WASTELAND LEGEND (200).
+- **Surges:** two seconds before a hive surge a SWARM INCOMING plate drops in under the clock with a faint cyan pulse on the screen edges (cyan = the hive).
 
 ---
 

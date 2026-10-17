@@ -19,6 +19,13 @@ var stun_pos: PackedVector2Array = PackedVector2Array()
 var warn_pos: PackedVector2Array = PackedVector2Array()
 var target_pos: PackedVector2Array = PackedVector2Array()  ## contract targets near the watched rig
 var flamer_pos: PackedVector2Array = PackedVector2Array()  ## flamer projectiles this frame
+## Evolved shots this frame (WorldView._evo_shot): Meat Grinder pellets and Inferno Spout flames, with
+## their flight directions.
+var grinder_pos: PackedVector2Array = PackedVector2Array()
+var grinder_dir: PackedVector2Array = PackedVector2Array()
+var inferno_pos: PackedVector2Array = PackedVector2Array()
+var inferno_dir: PackedVector2Array = PackedVector2Array()
+const CASING_TICKS := 16  ## a gatling casing flies, bounces and lies in the sand this long
 
 var _flames: SheetLayer
 var _smoke: SheetLayer
@@ -65,6 +72,10 @@ func begin_frame() -> void:
 	warn_pos.clear()
 	target_pos.clear()
 	flamer_pos.clear()
+	grinder_pos.clear()
+	grinder_dir.clear()
+	inferno_pos.clear()
+	inferno_dir.clear()
 
 
 # ---------------------------------------------------------------- ammo helpers (also used by WorldView)
@@ -102,7 +113,7 @@ static func ammo_rows(mask: int) -> PackedInt32Array:
 
 func update(world: SimWorld) -> void:
 	_tick = world.tick
-	_flames.begin(burn_pos.size() * 2 + flamer_pos.size() + world.zone_count * 8)
+	_flames.begin(burn_pos.size() * 2 + flamer_pos.size() + inferno_pos.size() * 2 + world.zone_count * 8)
 	_smoke.begin(world.zone_count * 6)
 	# burning aliens: flickering flames on their backs (boulders carry three), a tall flare when fresh
 	for i in burn_pos.size():
@@ -124,6 +135,10 @@ func update(world: SimWorld) -> void:
 			_flame(p + Vector2(0, 2), 2 if kind == SimWorld.BOULDER else 1, (_tick + id) % 8)
 	for i in flamer_pos.size():
 		_flame(flamer_pos[i] + Vector2(0, 3), 0 if i % 3 else 1, (_tick + i * 3) % 8)
+	for i in inferno_pos.size():  # Inferno Spout: a fat, tall stream, licking out to both sides
+		var side: Vector2 = inferno_dir[i].orthogonal() * (3.0 if (i + _tick / 2) % 2 == 0 else -3.0)
+		_flame(inferno_pos[i] + Vector2(0, 3), 2 if i % 3 == 1 else 1, (_tick + i * 3) % 8)
+		_flame(Gfx.snap(inferno_pos[i] + side - inferno_dir[i] * 4.0) + Vector2(0, 3), 0 if i % 2 else 1, (_tick + i * 5 + 2) % 8)
 	for zi in mini(world.zone_count, world.zone_pos.size()):
 		_zone(world, zi)
 	for v in world.vehicles:
@@ -321,6 +336,18 @@ func _draw_over() -> void:
 			_static(v, rv)
 		if RigArt.fx(v, "drone"):
 			_drone(v, rv)
+		if RigArt.evo_mask(v) & 1:  # Gatling Hell: brass casings spray out of the side
+			_casings(v, rv)
+	for v in w.vehicles:
+		var ea: int = view.evo_flash_age(v.id)
+		if ea >= 0:
+			_evolve_burst(v, ea)
+	for i in grinder_pos.size():  # Meat Grinder pellets shed sparks
+		var hs: int = (_tick * 7 + i * 13) & 255
+		var back: Vector2 = -grinder_dir[i]
+		_px(_over, grinder_pos[i] + back * float(4 + hs % 4) + grinder_dir[i].orthogonal() * float(hs % 3 - 1), Gfx.FIRE[5])
+		if hs % 3 == 0:
+			_px(_over, grinder_pos[i] + back * float(8 + hs % 5) + grinder_dir[i].orthogonal() * float((hs >> 3) % 5 - 2), Gfx.FIRE[3])
 	for sp in stun_pos:  # EMP / thunderclap stun: a warm-white crackle (never cyan)
 		for k in 3:
 			var hsh: int = (_tick * 13 + k * 7 + int(sp.x) * 3 + int(sp.y)) & 1023
@@ -336,6 +363,92 @@ func _draw_over() -> void:
 				var a: float = TAU * float(i) / float(n)
 				_px(_over, wp + Vector2(cos(a), sin(a) * 0.85) * 12.0, Gfx.UI_BAD if blink else Gfx.FIRE[4])
 	_contract_banners(w)
+
+
+## Gatling Hell: one brass casing per shot kicked out to the right of the gun; it arcs, bounces once and
+## lies in the sand until CASING_TICKS. Analytic in the recent fire ticks (RigView.fire_log), so screenshots
+## and every client show the same spray.
+func _casings(v: SimVehicle, rv: RigView) -> void:
+	var gi: int = rv.gun_of("mg")
+	if gi < 0:
+		return
+	var log: PackedInt32Array = rv.fire_log.get(Cards.weapon_kind_index("mg"), PackedInt32Array())
+	var b: Array = rv.barrel(gi)
+	var root: Vector2 = b[1]
+	var aim: float = b[2]
+	var side: Vector2 = Vector2.from_angle(aim + PI / 2.0)
+	var back: Vector2 = Vector2.from_angle(aim + PI)
+	for t0: int in log:
+		var a: int = _tick - t0
+		if a < 0 or a >= CASING_TICKS:
+			continue
+		var hs: int = (t0 * 2654435761) & 0xffff
+		var spread: float = float(hs % 9 - 4) * 0.13
+		var dir: Vector2 = (side.rotated(spread) + back * 0.35).normalized()
+		var reach: float = 17.0 + float(hs % 11)
+		var f: float = 1.0 - exp(-float(a) / 3.0)
+		var hop: float = 0.0
+		if a < 6:
+			hop = 7.0 * sin(PI * float(a) / 6.0)
+		elif a < 9:
+			hop = 1.5 * sin(PI * float(a - 6) / 3.0)
+		var at: Vector2 = Gfx.snap(root - v.vel * float(a) * SimWorld.DT + dir * reach * f + Vector2(0, -hop))
+		var flip: bool = (a + hs) % 2 == 0 and a < 9
+		var sz: Vector2 = Vector2(1, 2) if flip else Vector2(2, 1)
+		var lying: bool = a >= 9
+		if hop > 0.5:  # its shadow on the ground while it flies
+			_over.draw_rect(Rect2(at + Vector2(1, hop + 1.0).floor(), Vector2(2, 1)), Color(Gfx.SHADOW, 0.5))
+		_over.draw_rect(Rect2(at - Vector2.ONE, sz + Vector2(2, 2)), Color(Gfx.OUTLINE, 0.85 if not lying else 0.6))
+		_over.draw_rect(Rect2(at, sz), Gfx.BRASS[3] if not lying else Gfx.BRASS[2])
+		_px(_over, at, Gfx.FIRE[6] if a < 3 else (Gfx.FIRE[5] if not lying else Gfx.BRASS[3]))
+
+
+## The moment a weapon evolves: a white-hot core, a ring of brass and fire sparks bursting off the rig,
+## a second slower ring and embers rising off the new gun. Keyed on the flash's age in ticks.
+func _evolve_burst(v: SimVehicle, a: int) -> void:
+	var rv: RigView = view.rig_view(v.id)
+	if rv == null:
+		return
+	var p: Vector2 = view.display_pos(v)
+	var f: Array = view.evo_flash[v.id]
+	var gi: int = rv.gun_of(Cards.WEAPON_KINDS[int(f[1])])
+	var gp: Vector2 = rv.barrel(gi)[1] if gi >= 0 else p
+	var t: float = float(a) / float(WorldView.EVO_FLASH_TICKS)
+	for ring in 2:
+		var ra: float = float(a - ring * 5)
+		if ra < 0.0:
+			continue
+		var r: float = (RigArt.RADIUS[rv.foot] + 4.0) + ra * (3.2 - float(ring) * 1.2)
+		var n: int = int(r * 4.0)
+		for k in n:
+			if (k + ring) % 2 == 1 and ra > 12.0:
+				continue
+			var ang: float = TAU * float(k) / float(n) + float(ring) * 0.08
+			var c: Color = Gfx.FIRE[6] if ra < 3.0 else (Gfx.BRASS[3] if k % 3 == 0 else Gfx.FIRE[5 if ring == 0 else 3])
+			c.a = clampf(1.0 - ra / 26.0, 0.0, 1.0)
+			var dir := Vector2(cos(ang), sin(ang) * 0.85)
+			_px(_over, p + dir * r, c)
+			if ring == 0 and ra < 12.0:
+				_px(_over, p + dir * (r - 1.0), Color(Gfx.FIRE[3], c.a))
+	if a < 14:  # a starburst of light off the gun
+		for k in 12:
+			var ang2: float = TAU * float(k) / 12.0 + 0.13
+			var len: float = (18.0 if k % 2 == 0 else 9.0) * (1.0 - float(a) / 14.0) + 2.0
+			var r0: float = 5.0 + float(a) * 1.6
+			var rc: Color = Color(Gfx.FIRE[6] if k % 2 == 0 else Gfx.FIRE[5], 1.0 - float(a) / 14.0)
+			var d2 := Vector2(cos(ang2), sin(ang2))
+			for q in int(len):
+				_px(_over, gp + d2 * (r0 + float(q)), rc)
+	for k in 14:  # embers rising off the gun
+		var hs: int = (k * 97 + v.id * 31) & 1023
+		var life: float = float((a + hs % 10) % 20) / 20.0
+		var o := Vector2(float(hs % 17) - 8.0, -float((hs >> 4) % 4) - life * 22.0)
+		if t < 0.9:
+			_px(_over, gp + o, Gfx.FIRE[6] if life < 0.3 else (Gfx.FIRE[5] if life < 0.6 else Gfx.FIRE[3]))
+	if a < 6:  # the white-hot core on the gun
+		var cs: float = float(6 - a)
+		_over.draw_rect(Rect2(gp - Vector2(cs, 0.0), Vector2(cs * 2.0 + 1.0, 1.0)), Gfx.FIRE[6])
+		_over.draw_rect(Rect2(gp - Vector2(0.0, cs), Vector2(1.0, cs * 2.0 + 1.0)), Gfx.FIRE[6])
 
 
 ## Glowing barrels heat up red; a pause shows them white-hot. Hot loads jam: the barrel stutters (RigView)
@@ -560,3 +673,27 @@ func _draw_glow() -> void:
 			_halo(front, 1.6, Color(1, 0.55, 0.35, v.momentum / 100.0 * 0.8))
 	for sp in stun_pos:
 		_halo(sp, 0.5, Color(1, 0.95, 0.85, 0.35))
+	for i in inferno_pos.size():  # the Inferno Spout's stream lights the sand
+		if i % 2 == 0:
+			_halo(inferno_pos[i], 1.1, Color(1, 0.7, 0.4, 0.3))
+	for v in w.vehicles:
+		if not v.alive:
+			continue
+		var rv: RigView = view.rig_view(v.id)
+		if rv == null:
+			continue
+		var em: int = RigArt.evo_mask(v)
+		if em & 8:  # the inferno's pilot flame
+			var fi: int = rv.gun_of("flamer")
+			if fi >= 0:
+				_halo(rv.barrel(fi)[0], 0.45, Color(1, 0.7, 0.4, 0.35 + 0.15 * float((_tick / 2 + v.id) % 2)))
+		if em & 1:  # the gatling's barrels glow while it hoses
+			var gi: int = rv.gun_of("mg")
+			if gi >= 0 and _tick - rv.last_fire(0) <= 3:
+				_halo(rv.barrel(gi)[0], 0.6, Color(1, 0.6, 0.35, 0.5))
+		var ea: int = view.evo_flash_age(v.id)
+		if ea >= 0:  # the evolution flash: a big warm bloom that pulses out
+			var k: float = 1.0 - float(ea) / float(WorldView.EVO_FLASH_TICKS)
+			var s := Vector2(Gfx.TEX_HALO_WARM_BIG.get_size()) * (0.9 + float(ea) * 0.03)
+			var c: Vector2 = view.display_pos(v)
+			_glow.draw_texture_rect(Gfx.TEX_HALO_WARM_BIG, Rect2(c - s / 2.0, s), false, Color(1, 0.8, 0.55, (0.6 if ea < 4 else 0.3) * k))

@@ -98,6 +98,26 @@ static func draw_big(ci: CanvasItem, text: String, pos: Vector2, color: Color, s
 	return _put(ci, _big, BIG_SIZE * scale, CAP, text, pos, color, shadow)
 
 
+## Heading face at any `size` (units) with a dark rim on all four sides, for numbers drawn over the
+## busy battlefield (the kill combo). Returns the x after the last glyph.
+static func draw_big_rim(ci: CanvasItem, text: String, pos: Vector2, color: Color, rim: Color, size: int, title: bool = false) -> float:
+	_ensure()
+	var f: Font = _title if title else _big
+	var cap: float = TITLE_CAP if title else CAP
+	var t: String = text.to_upper()
+	var base := Vector2(floorf(pos.x), floorf(pos.y) + roundf(cap * float(size) * 3.0) / 3.0)
+	var o: float = SHADOW_OFFSET.x * maxf(1.0, float(size) / 14.0)
+	for d: Vector2 in [Vector2(-o, 0), Vector2(o, 0), Vector2(0, -o), Vector2(0, o), Vector2(o, o) * 1.5]:
+		ci.draw_string(f, base + d, t, HORIZONTAL_ALIGNMENT_LEFT, -1, size, rim)
+	ci.draw_string(f, base, t, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
+	return base.x + f.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+
+
+static func width_big_px(text: String, size: int, title: bool = false) -> int:
+	_ensure()
+	return ceili((_title if title else _big).get_string_size(text.to_upper(), HORIZONTAL_ALIGNMENT_LEFT, -1, size).x)
+
+
 ## Stencil display face at `size` units (screen titles).
 static func draw_title(ci: CanvasItem, text: String, pos: Vector2, color: Color, size: int, shadow: Color = Color(0, 0, 0, 0)) -> float:
 	_ensure()

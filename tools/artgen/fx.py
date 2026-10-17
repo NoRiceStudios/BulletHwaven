@@ -246,6 +246,49 @@ def muzzle_ammo(kind, ang, size=16):
     return cv
 
 
+EVO_TRACER_SIZE = 24
+EVO_TRACER_KINDS = ["gatling", "grinder", "shell"]  # tracer_evo.png rows (render: Gfx.EVO_*)
+
+
+def tracer_evo(kind, ang, size=EVO_TRACER_SIZE):
+    """Shots of the evolved weapons: bigger, brighter, still warm. Head at the cell centre, tail behind."""
+    cv = Canvas(size, size)
+    c = size / 2
+
+    def seg(d0, d1, col, w=1, off=0.0):
+        p0 = polar(*polar(c, c, ang + math.pi / 2, off), ang, -d0)
+        p1 = polar(*polar(c, c, ang + math.pi / 2, off), ang, -d1)
+        cv.put(line(size, size, [p0, p1], w), col, emissive=True)
+
+    if kind == "gatling":  # a long white-hot streak: the stream reads as one solid line of tracers
+        seg(11, 6, FIRE[2])
+        seg(6, 2, FIRE[4])
+        seg(3, 0, FIRE[5], 2)
+        seg(1.5, 0, FIRE[6])
+    elif kind == "grinder":  # a fat glowing slug shedding sparks
+        seg(4, 0, FIRE[4], 2)
+        seg(2, 0, FIRE[6], 2)
+        for d, s, col in ((5.5, 1.4, FIRE[5]), (7.5, -1.6, FIRE[4]), (9.5, 0.8, FIRE[3]), (11.0, -0.6, FIRE[2])):
+            _put(cv, [polar(*polar(c, c, ang, -d), ang + math.pi / 2, s)], col, emissive=True)
+    elif kind == "shell":  # a giant shell with a burning trail
+        seg(12, 7, FIRE[1], 2)
+        seg(9, 4, FIRE[2], 3)
+        seg(6, 3, FIRE[3], 2)
+        body = line(size, size, [polar(c, c, ang, -3.5), polar(c, c, ang, 1.5)], 3)
+        cv.put(body, STEEL[2])
+        cv.put(line(size, size, [polar(c, c, ang, -3.0), polar(c, c, ang, 0.5)], 1), STEEL[4])
+        cv.put(line(size, size, [polar(*polar(c, c, ang, -2.0), ang + math.pi / 2, -1.5),
+                                 polar(*polar(c, c, ang, -2.0), ang + math.pi / 2, 1.5)], 1), BRASS[3])
+        outline(cv, OUTLINE, skip_emissive=True)
+        _put(cv, [polar(c, c, ang, 1.8)], FIRE[6], emissive=True)  # the nose glows from the air friction
+        _put(cv, [polar(c, c, ang, 2.6)], FIRE[5], emissive=True)
+    return cv
+
+
+def tracer_evo_rows(fx_ang):
+    return [[tracer_evo(k, a) for a in fx_ang] for k in EVO_TRACER_KINDS]
+
+
 TRACER_KINDS = ["plain", "fire", "shrapnel", "ap", "shard"]
 MUZZLE_KINDS = ["plain", "fire", "shrapnel", "ap"]
 

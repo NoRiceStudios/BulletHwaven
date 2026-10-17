@@ -900,6 +900,205 @@ def gun(kind, level, ang, size=GUN_FRAME, seed=1):
     return cv
 
 
+# ---------------------------------------------------------------- evolved guns (design doc 5a, 11b)
+# The four legendary weapons replace the level 3 gun on the same mount: clearly bigger and more absurd,
+# still welded together from scrap. Drawn natively per angle (lit from the top-left) on a bigger frame.
+# Rows of gun_evo.png: kind (GUN_KINDS order) x phase (0, 1): the gatling's barrels turn, the grinder's
+# teeth chatter, the earthshaker's brace lamp blinks, the inferno's pilot flame flickers.
+
+GUN_EVO_FRAME = 56
+BARREL_EVO = {"mg": 21, "shotgun": 15, "cannon": 29, "flamer": 18}  # muzzle distance from the pivot (px)
+
+
+class _Local:
+    """Pen in gun coordinates: u along the barrel (forward), v to the right of it."""
+
+    def __init__(self, cv, cx, cy, ang):
+        self.cv, self.cx, self.cy = cv, cx, cy
+        self.f = (math.sin(ang), -math.cos(ang))
+        self.r = (math.cos(ang), math.sin(ang))
+
+    def p(self, u, v):
+        return (self.cx + self.f[0] * u + self.r[0] * v, self.cy + self.f[1] * u + self.r[1] * v)
+
+    def poly(self, pts):
+        return poly(self.cv.w, self.cv.h, [self.p(u, v) for u, v in pts])
+
+    def box(self, u0, u1, v0, v1):
+        return self.poly([(u0, v0), (u1, v0), (u1, v1), (u0, v1)])
+
+    def line(self, pts, width=1):
+        return line(self.cv.w, self.cv.h, [self.p(u, v) for u, v in pts], width)
+
+    def circle(self, u, v, r):
+        x, y = self.p(u, v)
+        return circle(self.cv.w, self.cv.h, x, y, r)
+
+    def dot(self, u, v):
+        x, y = self.p(u, v)
+        return pixels(self.cv.w, self.cv.h, [(math.floor(x), math.floor(y))])
+
+
+def _belt(cv, L, pts, phase):
+    """A brass ammo belt (two pixels wide: cartridges with dark links), feeding along pts."""
+    m = L.line(pts, 2)
+    ys, xs = np.mgrid[0:cv.h, 0:cv.w]
+    cv.put(m, BRASS[2])
+    cv.put(m & ((xs + ys + phase) % 3 == 0), BRASS[0])
+    cv.put(m & ((xs + ys + phase) % 3 == 1), BRASS[3])
+
+
+def gun_evo(kind, ang, phase=0, size=GUN_EVO_FRAME, seed=7):
+    """Evolved turret of `kind` (Gatling Hell, Meat Grinder, Earthshaker, Inferno Spout), aimed at ang."""
+    from pixel import outline
+    cv = Canvas(size, size)
+    W = H = size
+    cx, cy = size / 2 - 0.5, size / 2
+    L = _Local(cv, cx, cy, ang)
+    B = BARREL_EVO[kind]
+    late = []  # (mask, colour) drawn after the outline: lamps and flames stay crisp and unoutlined
+    if kind == "mg":  # GATLING HELL: rotary six-barrel cluster, motor housing, side ammo can and a belt
+        can = L.box(-6, 4, -12.5, -7)  # ammo can on the left, scrap khaki with a stencil stripe
+        paint(cv, can, KHAKI, base=2, noise=0.2, seed=seed)
+        cv.put(can & L.box(-1.5, -0.5, -12.5, -7), HAZARD)
+        cv.put(L.line([(-5, -11.5), (3, -11.5)]), KHAKI[4])
+        _belt(cv, L, [(2.5, -8.0), (5.0, -6.5), (5.5, -4.5)], phase)  # the belt arcs into the breech
+        _base(cv, cx, cy, 5.5, ang, STEEL, seed)
+        motor = L.box(-9, -2, -4, 4)  # motor housing behind the pivot, cooling fins
+        paint(cv, motor, RUST, base=2, noise=0.25, seed=seed + 1)
+        for u in (-8, -6, -4):
+            cv.put(L.line([(u, -3.5), (u, 3.5)]) & motor, STEEL[1])
+        cv.put(L.circle(-7.5, 2.5, 1.2), RUST[3])  # a mismatched rusty cap
+        body = L.box(0, B - 6, -3.8, 3.8)  # the barrel cluster
+        paint(cv, body, STEEL, base=3, light=True)
+        grooves = [-1.9, 1.9] if phase == 0 else [-2.8, 0.0, 2.8]  # the barrels roll round
+        for v in grooves:
+            cv.put(L.line([(1, v), (B - 6, v)]) & body, STEEL[0])
+        hi = -1.0 if phase == 0 else -1.7
+        cv.put(L.line([(1, hi), (B - 7, hi)]) & body, STEEL[5])
+        tips = (-2.6, 0.0, 2.6) if phase == 0 else (-1.4, 1.4)  # bare barrel ends past the front clamp
+        for v in tips:
+            cv.put(L.line([(B - 6, v), (B - 0.5, v)], 1), STEEL[4] if v < 0.5 else STEEL[3])
+            cv.put(L.dot(B - 0.8, v), OUTLINE)
+        for u in (2.5, 8.5, B - 6.5):  # brass clamp rings (a legendary gun wears its trophies)
+            cv.put(L.box(u - 0.6, u + 0.9, -4.6, 4.6), BRASS[3])
+            cv.put(L.line([(u + 0.9, -4.2), (u + 0.9, 4.2)]), BRASS[1])
+        cv.put(L.box(B - 2.6, B - 1.6, -3.4, 3.4), STEEL[2])  # muzzle spider
+        _shield(cv, cx, cy, 5.8, ang, STEEL, 1.0)
+        cv.put(L.dot(-1.0, -1.5), STEEL[5])
+        weld(cv, [L.p(-2, -4.3), L.p(-2, 4.3)])
+    elif kind == "shotgun":  # MEAT GRINDER: a drum-fed scatter maw ringed with saw teeth
+        drum = L.circle(-7.5, 0, 6.2)  # the drum magazine
+        paint(cv, drum, KHAKI, base=2, noise=0.25, seed=seed)
+        cv.put(drum & ~L.circle(-7.5, 0, 4.6), KHAKI[1])
+        for a in range(4):
+            aa = a * math.pi / 4 + phase * math.pi / 8
+            cv.put(L.line([(-7.5 + 4.4 * math.cos(aa), 4.4 * math.sin(aa)), (-7.5 - 4.4 * math.cos(aa), -4.4 * math.sin(aa))])
+                   & drum, KHAKI[3])
+        cv.put(L.circle(-7.5, 0, 1.4), RUST[2])
+        _base(cv, cx, cy, 4.5, ang, RUST, seed)
+        body = L.box(-2.5, 6, -5, 5)
+        paint(cv, body, RUST, base=3, noise=0.3, seed=seed + 2)
+        for v in (-5.5, 5.5):  # spiked side rails (the spiked plating, bolted on)
+            cv.put(L.line([(-1.5, v), (5.5, v)]), STEEL[3])
+            for u in (-0.5, 2.5, 5.0):
+                sgn = 1 if v > 0 else -1
+                cv.put(L.line([(u, v), (u - 1.0, v + sgn * 2.5)]), STEEL[5])
+        maw = L.poly([(5.5, -5.5), (B, -9.5), (B, 9.5), (5.5, 5.5)])  # the flared maw
+        paint(cv, maw, STEEL, base=2, light=True)
+        inner = L.poly([(6.5, -3.8), (B - 1.0, -7.5), (B - 1.0, 7.5), (6.5, 3.8)])
+        cv.put(inner, TYRE[0])
+        for v in (-4.5, -1.5, 1.5, 4.5):  # barrels deep in the throat
+            cv.put(L.line([(6.5, v * 0.6), (B - 3.0, v)]), STEEL[3])
+            cv.put(L.dot(B - 2.6, v), STEEL[5])
+        for k in range(10):  # saw teeth round the lip, chattering between frames
+            v = -9.0 + k * 2.0 + (1.0 if phase else 0.0)
+            if abs(v) > 9.5:
+                continue
+            tooth = L.poly([(B - 0.5, v - 0.9), (B + 2.6, v), (B - 0.5, v + 0.9)])
+            cv.put(tooth, STEEL[5] if k % 2 == 0 else STEEL[4])
+        for s in (-1, 1):  # teeth down the flanks of the maw
+            for t in (0.35, 0.7):
+                u = 5.5 + (B - 5.5) * t
+                v = s * (5.5 + 4.0 * t)
+                cv.put(L.poly([(u - 1.0, v), (u + 0.2, v + s * 2.4), (u + 1.0, v)]), STEEL[4])
+        cv.put(L.line([(B - 0.5, -9.5), (B - 0.5, 9.5)]), BRASS[3])
+        cv.put(L.line([(5.5, -5.5), (B, -9.5)]) | L.line([(5.5, 5.5), (B, 9.5)]), BRASS[2])
+        for u, v in ((0, -3.5), (0, 3.5), (4.5, -3.5), (4.5, 3.5)):
+            cv.put(L.dot(u, v), STEEL[5])
+    elif kind == "cannon":  # EARTHSHAKER: a huge long-barrelled siege piece on a braced cradle
+        for s in (-1, 1):  # recoil brace: struts back to dug-in spades (track pads)
+            cv.put(L.line([(-2, s * 4.5), (-12.5, s * 9.5)], 2), STEEL[2])
+            cv.put(L.line([(-2, s * 4.5), (-12.5, s * 9.5)]), STEEL[4])
+            spade = L.box(-15.5, -11.5, s * 7.5, s * 12.0)
+            paint(cv, spade, TYRE, base=2)
+            hazard_stripes(cv, spade & L.box(-12.8, -11.5, -12.5, 12.5))
+            for u in (-14.5, -13.5):
+                cv.put(L.line([(u, s * 7.8), (u, s * 11.7)]), TYRE[3])
+        _base(cv, cx, cy, 7.0, ang, KHAKI, seed)
+        breech = L.box(-9.5, -2, -3.5, 3.5)  # breech block and a shell rack
+        paint(cv, breech, STEEL, base=2, noise=0.2, seed=seed + 3)
+        for v in (-2.0, 0.0, 2.0):
+            cv.put(L.circle(-8.0, v, 0.9), BRASS[3])
+        cradle = L.box(-1, 11, -4.5, 4.5)  # the cradle sleeve
+        paint(cv, cradle, KHAKI, base=3, noise=0.25, seed=seed + 4)
+        barrel = L.box(10, B - 1, -2.4, 2.4)
+        paint(cv, barrel, STEEL, base=3)
+        for u in range(14, B - 4, 5):
+            cv.put(L.box(u - 0.5, u + 0.5, -2.8, 2.8), BRASS[3])
+        cv.put(L.line([(11, -1.0), (B - 4, -1.0)]), STEEL[5])
+        for s in (-1, 1):  # hydraulic recoil cylinders along the cradle
+            cyl = L.box(-1.5, 12.5, s * 4.0 - 0.9, s * 4.0 + 0.9)
+            cv.put(cyl, STEEL[5])
+            cv.put(L.line([(9.5, s * 4.0), (14.5, s * 4.0)]), STEEL[5])
+        brake = L.box(B - 4.5, B, -4.2, 4.2)  # a fat muzzle brake with vent slots
+        paint(cv, brake, STEEL, base=2)
+        for u in (B - 3.5, B - 1.5):
+            cv.put(L.line([(u, -4.0), (u, -2.0)]), OUTLINE)
+            cv.put(L.line([(u, 2.0), (u, 4.0)]), OUTLINE)
+        cv.put(L.dot(B - 0.5, 0.0), OUTLINE)
+        _shield(cv, cx, cy, 7.5, ang, KHAKI, 1.15)
+        weld(cv, [L.p(11, -4.5), L.p(11, 4.5)])
+        cv.put(L.dot(-1, -2.5), KHAKI[4])
+        late.append((L.dot(-5.0, 2.0), FIRE[5] if phase == 0 else RUST[2]))  # a lamp on the breech
+    elif kind == "flamer":  # INFERNO SPOUT: big bell nozzle, twin fuel tanks, hoses and a pilot flame
+        for s in (-1, 1):  # twin fuel tanks behind (capsules, hazard bands, brass caps)
+            tank = L.poly([(-15, s * 3.0), (-14, s * 1.6), (-2.5, s * 1.6), (-1.5, s * 3.0), (-1.5, s * 7.8),
+                           (-2.5, s * 9.2), (-14, s * 9.2), (-15, s * 7.8)])
+            paint(cv, tank, RUST, base=3, noise=0.25, seed=seed + 5 + s)
+            hazard_stripes(cv, tank & L.box(-9.5, -7.5, -10, 10))
+            cv.put(L.circle(-15.2, s * 5.4, 1.3), BRASS[3])
+            cv.put(L.line([(-13, s * 2.6), (-3, s * 2.6)]) & tank, RUST[5])
+        for s in (-1, 1):  # hoses from the tanks round to the pump
+            cv.put(L.line([(-2.0, s * 6.0), (1.5, s * 5.5), (3.0, s * 2.5)], 2), TYRE[2])
+            cv.put(L.line([(-2.0, s * 6.0), (1.5, s * 5.5)]), TYRE[3])
+        _base(cv, cx, cy, 4.5, ang, STEEL, seed)
+        pump = L.box(-2.5, 6, -3.2, 3.2)
+        paint(cv, pump, STEEL, base=2, noise=0.2, seed=seed + 6)
+        cv.put(L.circle(1.5, 0, 1.6), BRASS[2])
+        pipe = L.box(5, B - 5, -1.8, 1.8)
+        paint(cv, pipe, STEEL, base=2)
+        cv.put(L.box(8.5, 9.5, -2.4, 2.4), BRASS[2])
+        bell = L.poly([(B - 5.5, -2.0), (B, -5.2), (B, 5.2), (B - 5.5, 2.0)])
+        paint(cv, bell, BRASS, base=2)
+        cv.put(L.line([(B - 0.5, -5.0), (B - 0.5, 5.0)]), BRASS[1])
+        cv.put(L.poly([(B - 2.5, -2.4), (B - 0.3, -3.8), (B - 0.3, 3.8), (B - 2.5, 2.4)]), RUST[0])
+        weld(cv, [L.p(5, -2.6), L.p(5, 2.6)])
+        f0 = [FIRE[5], FIRE[4]][phase]  # the pilot flame, licking out of the bell
+        late.append((L.line([(B + 0.5, -1.0), (B + 2.5 + phase, 0.0)]) | L.line([(B + 0.5, 1.0), (B + 2.0, 0.5)]), FIRE[3]))
+        late.append((L.dot(B + 0.8, 0.0) | L.dot(B + 1.6, -0.4 + phase * 0.8), f0))
+        late.append((L.dot(B + 0.2, 0.0), FIRE[6]))
+    outline(cv, OUTLINE)
+    for m, col in late:
+        cv.put(m, col, emissive=True)
+    return cv
+
+
+def gun_evo_rows(v_ang):
+    """gun_evo.png rows: kind x phase."""
+    return [[gun_evo(k, a, ph) for a in v_ang] for k in GUN_KINDS for ph in (0, 1)]
+
+
 # ---------------------------------------------------------------- nitro flame (native per angle)
 
 def nitro_flame(ang, level, phase, size=FLAME_FRAME):

@@ -71,7 +71,25 @@ const DEFS: Array = [
 	{"id": "berserker", "name": "Berserker Doctrine", "category": "behavior", "rarity": "rare", "weight": 6, "fx": {"contact": 0.8, "ram": 0.4, "creduce": 0.12}},
 	{"id": "vulture", "name": "Vulture", "category": "behavior", "rarity": "rare", "weight": 6, "fx": {"vulture": 0.25}},
 	{"id": "regenerator", "name": "Regenerator", "category": "behavior", "rarity": "rare", "weight": 7, "fx": {"regen": 2.5}},
+	# evolutions (section 5a): never drawn from the pool, offered only through `eligible_evolutions`. `weapon` is the
+	# weapon card (at MAX_LEVEL), `partner` the card that must be owned (any level). Owning the card (level 1) evolves the weapon.
+	{"id": "evo_gatling", "name": "Gatling Hell", "category": "evolution", "rarity": "legendary", "weight": 1, "fx": {},
+		"weapon": "mg", "partner": "v8_engine", "text": "MACHINE GUN L3 + V8 ENGINE: DOUBLE FIRE RATE, PIERCE 1, WIDER SPREAD"},
+	{"id": "evo_grinder", "name": "Meat Grinder", "category": "evolution", "rarity": "legendary", "weight": 1, "fx": {},
+		"weapon": "shotgun", "partner": "spiked_plating", "text": "SCATTER GUN L3 + SPIKED PLATING: 12 PELLETS, PIERCE 2, MORE RANGE"},
+	{"id": "evo_earthshaker", "name": "Earthshaker", "category": "evolution", "rarity": "legendary", "weight": 1, "fx": {},
+		"weapon": "cannon", "partner": "caterpillar_tracks", "text": "SIEGE CANNON L3 + CATERPILLAR TRACKS: HUGE DAMAGE AND SPLASH, PIERCE 3"},
+	{"id": "evo_inferno", "name": "Inferno Spout", "category": "evolution", "rarity": "legendary", "weight": 1, "fx": {},
+		"weapon": "flamer", "partner": "nitro", "text": "FLAMETHROWER L3 + NITRO INJECTION: LONGER RANGE, PIERCE 6, HARD BURN, FIRE ON THE GROUND"},
 ]
+
+## Evolved weapon stats (replace the level 3 row; tech multipliers still apply on top). Keyed by weapon kind.
+const EVOLVED := {
+	"mg": {"damage": 4.5, "cooldown": 1.0, "range": 275.0, "pellets": 1, "pierce": 1, "splash": 0.0, "spread": 0.07},
+	"shotgun": {"damage": 4.0, "cooldown": 12.0, "range": 195.0, "pellets": 12, "pierce": 2, "splash": 0.0, "spread": 0.32},
+	"cannon": {"damage": 56.0, "cooldown": 20.0, "range": 345.0, "pellets": 1, "pierce": 3, "splash": 38.0, "spread": 0.02},
+	"flamer": {"damage": 3.2, "cooldown": 2.0, "range": 150.0, "pellets": 1, "pierce": 5, "splash": 0.0, "spread": 0.24},
+}
 
 static var _index: Dictionary = {}
 
@@ -112,6 +130,33 @@ static func is_weapon(id: String) -> bool:
 	return WEAPONS.has(id)
 
 
+static func is_evolution(id: String) -> bool:
+	return str(def(id).get("category", "")) == "evolution"
+
+
+## Evolution card ids the vehicle may be offered now: weapon at MAX_LEVEL, partner owned (any level), card not owned.
+static func eligible_evolutions(v: SimVehicle) -> Array[String]:
+	var out: Array[String] = []
+	for d: Dictionary in DEFS:
+		if str(d["category"]) != "evolution":
+			continue
+		var id: String = d["id"]
+		if int(v.cards.get(id, 0)) == 0 and int(v.cards.get(str(d["weapon"]), 0)) >= MAX_LEVEL \
+				and int(v.cards.get(str(d["partner"]), 0)) >= 1:
+			out.append(id)
+	return out
+
+
+## True if the weapon card `kind` is evolved: its evolution card is owned and the weapon is still at MAX_LEVEL.
+static func is_evolved(v: SimVehicle, kind: String) -> bool:
+	if int(v.cards.get(kind, 0)) < MAX_LEVEL:
+		return false
+	for d: Dictionary in DEFS:
+		if str(d["category"]) == "evolution" and str(d["weapon"]) == kind and int(v.cards.get(str(d["id"]), 0)) > 0:
+			return true
+	return false
+
+
 ## Index of a weapon kind in WEAPON_KINDS (the "kind" of a "fire" event); 0 if unknown.
 static func weapon_kind_index(kind: String) -> int:
 	return maxi(WEAPON_KINDS.find(kind), 0)
@@ -131,6 +176,8 @@ static func weapon_cards_owned(v: SimVehicle) -> int:
 static func is_offerable(v: SimVehicle, id: String) -> bool:
 	if not has(id):
 		return false
+	if is_evolution(id):
+		return eligible_evolutions(v).has(id)
 	var lvl: int = int(v.cards.get(id, 0))
 	if lvl >= MAX_LEVEL:
 		return false
@@ -152,7 +199,7 @@ static func roll_offers(rng: RandomNumberGenerator, v: SimVehicle, count: int = 
 	var weights: Array[int] = []
 	for d: Dictionary in DEFS:
 		var id: String = d["id"]
-		if is_offerable(v, id) and not exclude.has(id):
+		if str(d["category"]) != "evolution" and is_offerable(v, id) and not exclude.has(id):
 			pool.append(id)
 			weights.append(_offer_weight(v, d, round_no))
 	if pool.size() < count:  # not enough fresh cards: allow repeats of the previous offer
@@ -160,7 +207,7 @@ static func roll_offers(rng: RandomNumberGenerator, v: SimVehicle, count: int = 
 		weights.clear()
 		for d: Dictionary in DEFS:
 			var id2: String = d["id"]
-			if is_offerable(v, id2):
+			if str(d["category"]) != "evolution" and is_offerable(v, id2):
 				pool.append(id2)
 				weights.append(_offer_weight(v, d, round_no))
 	var out: Array[String] = []
@@ -198,6 +245,15 @@ static func roll_offers(rng: RandomNumberGenerator, v: SimVehicle, count: int = 
 		var tmp: String = out[k]
 		out[k] = out[m]
 		out[m] = tmp
+	# Evolutions: an eligible evolution card replaces offer slot 0 (more than one: slots 0, 1, ...; never all slots).
+	var evos: Array[String] = eligible_evolutions(v)
+	for e in mini(evos.size(), maxi(count - 1, 1)):
+		var at: int = out.find(evos[e])
+		if at >= 0:
+			out.remove_at(at)
+		elif out.size() >= count:
+			out.remove_at(e)
+		out.insert(e, evos[e])
 	return out
 
 
@@ -234,7 +290,7 @@ static func grant(v: SimVehicle, id: String) -> bool:
 	if not has(id):
 		return false
 	var lvl: int = int(v.cards.get(id, 0))
-	if lvl >= MAX_LEVEL:
+	if lvl >= MAX_LEVEL or (lvl >= 1 and is_evolution(id)):
 		return false
 	v.cards[id] = lvl + 1
 	recompute(v)
@@ -328,17 +384,20 @@ static func _rebuild_weapons(v: SimVehicle, st: Dictionary) -> void:
 		var dmg_mult: float = 1.0 + float(st.get("dmg", 0.0)) + float(st.get("dmg_" + id, 0.0))
 		var range_mult: float = maxf(1.0 + float(st.get("range", 0.0)) + float(st.get("range_" + id, 0.0)), 0.3)
 		var rate_mult: float = maxf(1.0 + float(st.get("rate", 0.0)) + float(st.get("rate_" + id, 0.0)), 0.3)
-		var base_splash: float = float((b["splash"] as Array)[li])
+		var evo: bool = is_evolved(v, id)
+		var ev: Dictionary = EVOLVED[id] if evo else {}
+		var base_splash: float = float(ev["splash"]) if evo else float((b["splash"] as Array)[li])
 		fresh.append({
 			"kind": id,
-			"damage": float((b["damage"] as Array)[li]) * dmg_mult,
-			"range": float((b["range"] as Array)[li]) * range_mult,
-			"cooldown_ticks": maxf(1.0, float((b["cooldown"] as Array)[li]) / rate_mult),
+			"evo": evo,
+			"damage": (float(ev["damage"]) if evo else float((b["damage"] as Array)[li])) * dmg_mult,
+			"range": (float(ev["range"]) if evo else float((b["range"] as Array)[li])) * range_mult,
+			"cooldown_ticks": maxf(1.0, (float(ev["cooldown"]) if evo else float((b["cooldown"] as Array)[li])) / rate_mult),
 			"cooldown": float(prev.get("cooldown", 0.0)),
 			"aim": float(prev.get("aim", 0.0)),
-			"pellets": int((b["pellets"] as Array)[li]) + int(st.get("pellets_" + id, 0.0)),
-			"spread": float(b["spread"]),
-			"pierce": int((b["pierce"] as Array)[li]) + int(st.get("pierce", 0.0)),
+			"pellets": (int(ev["pellets"]) if evo else int((b["pellets"] as Array)[li])) + int(st.get("pellets_" + id, 0.0)),
+			"spread": float(ev["spread"]) if evo else float(b["spread"]),
+			"pierce": (int(ev["pierce"]) if evo else int((b["pierce"] as Array)[li])) + int(st.get("pierce", 0.0)),
 			"splash": base_splash + float(st.get("splash_" + id, 0.0)),
 			"speed": float(b["speed"]),
 			"heat": int(prev.get("heat", 0)),

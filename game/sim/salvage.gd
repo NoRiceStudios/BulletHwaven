@@ -247,7 +247,7 @@ static func scrap_card(v: SimVehicle, id: String) -> bool:
 	if float(v.tech_fx.get("scrap_press", 0.0)) <= 0.0 or not v.cards.has(id):
 		return false
 	var lvl: int = int(v.cards[id])
-	if lvl < 1:
+	if lvl < 1 or Cards.is_evolution(id):
 		return false
 	if Cards.is_weapon(id) and lvl <= 1 and Cards.weapon_cards_owned(v) <= 1:
 		return false

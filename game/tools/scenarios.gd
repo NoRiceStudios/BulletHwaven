@@ -58,6 +58,23 @@ extends RefCounted
 ## - "fx_ram"       (about 60 ticks)  ramming builds: full momentum sparks, nitro jet, war machine
 ##                  shockwaves and thunderclap chains, a juggernaut glow, a phantom decoy, a dodge.
 ##
+## Combat juice (KillFx, JuiceState, HUD combo / scrap / surge; docs/architecture.md "Combat visuals"):
+## - "juice"        (about 150 ticks) a cannon / scattergun / MG pickup mowing through a dense mite horde
+##                  with boulders and spitters: kill bursts, scrap sparkles, cannon impacts, the kill combo.
+## - "juice_surge"  the same with a faked "surge" warning at tick JUICE_SURGE_TICK (appended to that tick's
+##                  events like a scenario cue): SWARM INCOMING; shoot about 20 ticks later.
+##
+## Weapon evolutions (design doc 5a; RigView, WorldView, CombatFx, the HUD's EVOLVED banner, the legendary card):
+## - "evo_combat"   (about 120 ticks) four rigs, one per evolved gun, holding a firing line in a horde: the local
+##                  Gatling Hell (casings, tracer stream), a Meat Grinder, an Earthshaker (blasts, scorch) and an
+##                  Inferno Spout.
+## - "evo_flip"     evo_combat, but the local rig's machine gun evolves at tick EVO_FLIP_TICK (a scenario cue):
+##                  the flash on the rig and the EVOLVED: GATLING HELL banner; shoot about 6 to 20 ticks later.
+## - "evo_workshop" (about 380 ticks) the round 3 workshop with a Gatling Hell offer (machine gun L3 + V8).
+## - "evo_moment"   evo_workshop, the evolution picked EVO_PICK_DELAY ticks after the workshop opens: the card
+##                  stamped EVOLVED, the rig bursting and the banner over the panels; the pick lands at about tick 392, shoot
+##                  about 4 to 30 ticks later.
+##
 ## UI scenarios (main.gd also builds the menu from ui_state()):
 ## - "menu"     the attract battlefield (eight rigs, one per paint) behind the main menu.
 ## - "join"     the join screen with two fake discovered hosts (one in a match).
@@ -70,7 +87,10 @@ const NAMES: PackedStringArray = ["skirmish", "horde", "workshop", "tech_tree", 
 	"menu", "join", "lobby", "pause", "rematch", "waiting", "rig_growth", "late_round", "pvp_on", "rig_kill",
 	"recap", "recap_pvp", "scouting", "combat_feed", "pvp_grace", "spectator", "spectator_ws", "awards",
 	"tech_mid", "tech_swap", "workshop_mid", "tech_beginner", "fx_firebrand", "fx_fortress", "fx_scrapper",
-	"fx_chassis", "fx_ram"]
+	"fx_chassis", "fx_ram", "juice", "juice_surge", "evo_combat", "evo_flip", "evo_workshop", "evo_moment"]
+const EVO_FLIP_TICK := 90
+const EVO_PICK_DELAY := 30
+const JUICE_SURGE_TICK := 100
 ## Info-UI line-up: [name, paint, GROWTH_BUILDS index, drive, target, extra tech].
 const LAN_NIGHT: Array = [
 	["MAD MAREK", 0, 6, "circle", "nearest", ["ballistics_ammo_bench"]],
@@ -143,6 +163,14 @@ static func build(name: String, p_seed: int) -> SimWorld:
 			return _rig_kill(p_seed)
 		"fx_firebrand", "fx_fortress", "fx_scrapper", "fx_chassis", "fx_ram":
 			return _fx_world(name, p_seed)
+		"juice", "juice_surge":
+			return _juice_world(p_seed)
+		"evo_combat", "evo_flip":
+			return _evo_world(name, p_seed)
+		"evo_workshop", "evo_moment":
+			var we: SimWorld = _skirmish(p_seed)
+			we.fast_rounds = true
+			return we
 		"recap", "recap_pvp", "scouting":
 			var c: Vector2 = SimWorld.ARENA.get_center()
 			var w5: SimWorld = _lan_night(p_seed, [c, c + Vector2(260, -150), c + Vector2(-300, 160), c + Vector2(330, 200), c + Vector2(-380, -170)])
@@ -235,6 +263,15 @@ static func step(name: String, w: SimWorld) -> void:
 		return
 	if name.begins_with("fx_"):
 		_fx_step(name, w)
+		return
+	if name.begins_with("juice"):
+		_juice_step(name, w)
+		return
+	if name == "evo_combat" or name == "evo_flip":
+		_evo_step(name, w)
+		return
+	if name == "evo_workshop" or name == "evo_moment":
+		_evo_workshop_step(name, w)
 		return
 	if name == "pvp_on" and w.round >= SimWorld.PVP_START_ROUND and w.phase == SimWorld.PHASE_COMBAT:
 		w.step()
@@ -612,6 +649,122 @@ static func _fx_cues(name: String, w: SimWorld, me: SimVehicle) -> void:
 				w.apply_command(1, {"type": "use_ability", "value": "nitro"})
 			if w.tick % 60 == 30:
 				w.apply_command(2, {"type": "use_ability", "value": "nitro"})
+
+
+# ================================================================ combat juice
+
+static func _juice_world(p_seed: int) -> SimWorld:
+	var w := SimWorld.new(p_seed)
+	w.round = 5
+	w.phase_ticks_left = 99999
+	var c: Vector2 = SimWorld.ARENA.get_center()
+	var me: SimVehicle = w.add_vehicle(1, c, "MAD MAREK", 0)
+	_tech_up(w, me, ["engineering_frame", "engineering_welder", "engineering_pickup", "ballistics_ammo_bench"],
+			{"cannon": 2, "shotgun": 3, "mg": 3})
+	w.apply_command(1, {"type": "set_drive", "value": "circle"})
+	var rv: SimVehicle = w.add_vehicle(2, c + Vector2(260, 120), "DUNE RAT", 2)
+	_tech_up(w, rv, [], {"mg": 2})
+	w.apply_command(2, {"type": "set_drive", "value": "kite"})
+	_scatter(w, 300, 0.05, 0.04, 120.0, 460.0)
+	for v in w.vehicles:
+		v.invuln_ticks = 0
+	return w
+
+
+static func _juice_step(name: String, w: SimWorld) -> void:
+	w.step()
+	w.phase_ticks_left = 99999
+	var me: SimVehicle = w.vehicles[0]
+	me.hp = maxf(me.hp, me.max_hp * 0.6)
+	if w.enemy_count < 240:
+		_scatter(w, 30, 0.05, 0.04, 170.0, 380.0)
+	if w.tick % 9 == 0:  # soften the nearest boulder and spitter so their kill bursts show up often
+		for kind: int in [SimWorld.BOULDER, SimWorld.SPITTER]:
+			var best: int = -1
+			var best_d: float = 170.0 * 170.0
+			for j in w.enemy_count:
+				var d: float = w.enemy_pos[j].distance_squared_to(me.pos)
+				if w.enemy_kind[j] == kind and d < best_d:
+					best_d = d
+					best = j
+			if best >= 0:
+				w.enemy_hp[best] = minf(w.enemy_hp[best], 2.0)
+	if name == "juice_surge" and w.tick == JUICE_SURGE_TICK:  # faked: the sim's own surge warning lands later
+		w.events.append({"type": "surge", "pos": me.pos, "owner": -1, "kind": -1, "in_ticks": 60})
+
+
+# ================================================================ weapon evolutions
+
+## [name, paint, chassis tier, cards (weapon card levels as grants: a weapon starts at 1 only for the mg),
+## offset from the centre]. The evolution card comes last, after its weapon (L3) and its partner.
+const EVO_LINE: Array = [
+	["MAD MAREK", 0, 2, {"mg": 2, "v8_engine": 2, "steel_plates": 1, "evo_gatling": 1}, Vector2(0, 0)],
+	["DUNE RAT", 2, 1, {"shotgun": 3, "spiked_plating": 2, "evo_grinder": 1}, Vector2(-150, -48)],
+	["SANDY", 3, 3, {"cannon": 3, "caterpillar_tracks": 1, "reinforced_hull": 1, "evo_earthshaker": 1}, Vector2(150, -40)],
+	["NIGHTCRAWLER", 5, 2, {"flamer": 3, "nitro": 2, "spiked_plating": 1, "evo_inferno": 1}, Vector2(-30, 82)],
+]
+
+
+static func _evo_world(name: String, p_seed: int) -> SimWorld:
+	var w := SimWorld.new(p_seed)
+	w.round = 3  # spitters, but no PvP: every gun works the horde
+	w.phase_ticks_left = 99999
+	var c: Vector2 = SimWorld.ARENA.get_center()
+	for i in EVO_LINE.size():
+		var e: Array = EVO_LINE[i]
+		var v: SimVehicle = w.add_vehicle(i + 1, c + (e[4] as Vector2), e[0], e[1])
+		var cards: Dictionary = (e[3] as Dictionary).duplicate()
+		if name == "evo_flip" and i == 0:
+			cards.erase("evo_gatling")  # granted on cue
+		_outfit(v, e[2], cards)
+		v.heading = -PI / 2.0 + 0.3 * float(i % 2) - 0.15
+		v.invuln_ticks = 0
+		w.set_meta("anchor_%d" % i, v.pos)
+	_scatter(w, 300, 0.035, 0.04, 100.0, 380.0)
+	return w
+
+
+## The line holds (each rig pinned to its spot, turning as its AI likes), the horde is topped up, and in
+## "evo_flip" the local machine gun evolves on cue (like the workshop pick would).
+static func _evo_step(name: String, w: SimWorld) -> void:
+	w.step()
+	w.phase_ticks_left = 99999
+	for i in w.vehicles.size():
+		var v: SimVehicle = w.vehicles[i]
+		v.pos = w.get_meta("anchor_%d" % i, v.pos)
+		v.vel = Vector2.ZERO  # parked: casings and tracks stay where the rig is
+		v.hp = maxf(v.hp, v.max_hp * 0.8)
+	if w.enemy_count < 200:
+		_scatter(w, 40, 0.035, 0.04, 200.0, 380.0)
+	if name == "evo_flip" and w.tick == EVO_FLIP_TICK:
+		Cards.grant(w.vehicles[0], "evo_gatling")
+
+
+## Round-3 workshop staging with an evolution on offer; "evo_moment" picks it after EVO_PICK_DELAY ticks.
+static func _evo_workshop_step(name: String, w: SimWorld) -> void:
+	w.step()
+	if w.phase != SimWorld.PHASE_WORKSHOP:
+		return
+	if w.round < WORKSHOP_ROUND:
+		_ready_all(w)
+		return
+	var red: SimVehicle = w.vehicles[0]
+	if not w.has_meta("staged"):
+		w.set_meta("staged", w.tick)
+		w.phase_ticks_left = 41 * SimWorld.TICK_RATE + 12
+		for id: String in ["mg", "mg", "v8_engine", "shotgun", "shotgun", "steel_plates"]:
+			Cards.grant(red, id)
+		red.offers = Cards.roll_offers(w.rng, red, Cards.OFFER_COUNT, w.round)
+		red.scrap = 132
+		red.fuel = 72
+		for id: String in ["ballistics_ammo_bench", "engineering_frame"]:
+			w.apply_command(red.peer_id, {"type": "buy_tech", "value": id})
+		var mag: SimVehicle = w.vehicles[1]
+		w.apply_command(mag.peer_id, {"type": "pick_card", "value": 0})
+		w.apply_command(mag.peer_id, {"type": "ready"})
+	elif name == "evo_moment" and w.tick == int(w.get_meta("staged")) + EVO_PICK_DELAY:
+		var at: int = red.offers.find("evo_gatling")
+		w.apply_command(red.peer_id, {"type": "pick_card", "value": maxi(at, 0)})
 
 
 # ================================================================ playtest session replay

@@ -42,7 +42,7 @@ func _respawn_wait(w: SimWorld, v: SimVehicle) -> void:
 # ---------------------------------------------------------------- data tables
 
 func test_card_and_tech_tables() -> void:
-	assert_eq(Cards.count(), 16, "16 cards")
+	assert_eq(Cards.count(), 20, "16 pool cards + 4 evolutions")
 	var cats := {}
 	var seen := {}
 	for i in Cards.count():
@@ -54,7 +54,7 @@ func test_card_and_tech_tables() -> void:
 		assert_eq(Cards.id_at(i), id)
 		assert_gt(float(d["weight"]), 0.0)
 		cats[d["category"]] = int(cats.get(d["category"], 0)) + 1
-	for c in ["weapon", "armor", "mobility", "behavior"]:
+	for c in ["weapon", "armor", "mobility", "behavior", "evolution"]:
 		assert_eq(int(cats.get(c, 0)), 4, "4 cards in " + c)
 	for id in ["mg", "shotgun", "cannon", "flamer", "scrap_magnet", "berserker", "vulture", "regenerator"]:
 		assert_true(Cards.has(id), id)
@@ -330,7 +330,7 @@ func test_offers_are_seeded_and_weighted() -> void:
 	for i in 200:
 		for id in Cards.roll_offers(r, a.vehicles[0]):
 			seen[id] = int(seen.get(id, 0)) + 1
-	assert_eq(seen.size(), Cards.count(), "every card shows up")
+	assert_eq(seen.size(), Cards.count() - 4, "every pool card shows up (evolutions only when eligible)")
 
 
 func test_reroll() -> void:
@@ -575,7 +575,8 @@ func test_scrap_magnet_pays_more() -> void:
 		var id: int = w.spawn_enemy(SimWorld.MITE, Vector2(1000, 600))
 		assert_true(id >= 0)
 		w._hit_enemy(w.enemy_count - 1, 100.0, v.id)
-	assert_true(v.scrap >= 144 and v.scrap <= 145, "100 mites x 1.45 (got %d)" % v.scrap)
+	var expect: float = 100.0 * SimWorld.mite_scrap(w.round) * 1.45
+	assert_true(absf(float(v.scrap) + v.scrap_frac - expect) < 0.01, "100 mites x scrap x 1.45 (got %d)" % v.scrap)
 	assert_eq(v.kills, 100)
 
 
@@ -772,7 +773,7 @@ func test_enemy_scaling_per_round() -> void:
 	w.round = 6
 	w.spawn_enemy(SimWorld.BOULDER, Vector2(20, 20))
 	assert_eq(w.enemy_hp[0], SimWorld.ENEMY_HP[SimWorld.BOULDER])
-	assert_eq(w.enemy_hp[1], SimWorld.ENEMY_HP[SimWorld.BOULDER] * SimWorld.enemy_hp_mult(6))
+	assert_true(absf(w.enemy_hp[1] - SimWorld.ENEMY_HP[SimWorld.BOULDER] * SimWorld.enemy_hp_mult(6)) < 0.01)
 	# More enemies spawn in a later round.
 	var counts: Array[int] = []
 	for r in [1, 8]:
@@ -780,7 +781,7 @@ func test_enemy_scaling_per_round() -> void:
 		s.round = r
 		s.phase_ticks_left = s.combat_duration(r)
 		var made: int = 0
-		for i in 600:
+		for i in s.combat_duration(r) / 2:  # same share of the round
 			s.step()
 			made = s.next_enemy_id
 		counts.append(made)

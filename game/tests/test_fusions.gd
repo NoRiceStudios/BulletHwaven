@@ -189,12 +189,13 @@ func test_barbed_wire_contact_kills_pay_scrap_up_to_the_cap() -> void:
 		var i: int = _enemy(w, SimWorld.MITE, 50.0, 1.0)
 		w._hit_enemy(i, 10.0, v.id, true)
 	assert_eq(v.barbed_scrap, 45, "capped at 45 per round")
-	assert_eq(v.scrap, 20 + 45, "20 mites + 15 x 3 barbed scrap")
+	var ms: float = SimWorld.mite_scrap(w.round)
+	assert_true(absf(float(v.scrap) + v.scrap_frac - (20.0 * ms + 45.0)) < 0.01, "20 mites + 15 x 3 barbed scrap")
 	# a shot kill pays no barbed scrap
 	var j: int = _enemy(w, SimWorld.MITE, 50.0, 1.0)
-	var s0: int = v.scrap
+	var s0: float = float(v.scrap) + v.scrap_frac
 	w._hit_enemy(j, 10.0, v.id)
-	assert_eq(v.scrap, s0 + 1)
+	assert_true(absf(float(v.scrap) + v.scrap_frac - s0 - ms) < 0.01)
 	assert_eq(v.barbed_scrap, 45)
 	# the cap resets every round
 	w.phase_ticks_left = 1
@@ -418,7 +419,7 @@ func test_scrap_storm_splash_kills_throw_shards_and_scrap() -> void:
 	w.events.clear()
 	w._splash_damage(v.pos + Vector2(65.0, 0.0), 30.0, 50.0, v.id, -1)
 	assert_eq(v.storm_count, 2)
-	assert_eq(v.scrap, 2 + 2, "two kills (1 each) plus 1 scrap per burst")
+	assert_true(absf(float(v.scrap) + v.scrap_frac - (2.0 * SimWorld.mite_scrap(w.round) + 2.0)) < 0.01, "two kills plus 1 scrap per burst")
 	assert_eq(w._pending_proj.size(), 6, "3 shards per burst")
 	var burn_shards: int = 0
 	for e: Array in w._pending_proj:
@@ -505,7 +506,7 @@ func test_junkyard_drone_hits_about_once_a_second() -> void:
 	assert_ne(k, -1)
 	for t in 40:
 		w3.step()
-	assert_true(w3.vehicles[0].scrap >= 1 and w3.vehicles[0].kills >= 1)
+	assert_true(w3.vehicles[0].kills >= 1 and w3.vehicles[0].scrap_frac + float(w3.vehicles[0].scrap) > 0.0)
 
 
 # ---------------------------------------------------------------- thunderclap
