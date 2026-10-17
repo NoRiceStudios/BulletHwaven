@@ -18,7 +18,7 @@ const SPITTER := 2
 
 # Per-kind stats, indexed by enemy kind.
 const ENEMY_RADIUS: PackedFloat32Array = [6.0, 14.0, 8.0]
-const ENEMY_SPEED: PackedFloat32Array = [90.0, 35.0, 55.0]  # px/s
+const ENEMY_SPEED: PackedFloat32Array = [78.0, 35.0, 55.0]  # px/s
 const ENEMY_HP: PackedFloat32Array = [4.0, 80.0, 20.0]
 const ENEMY_CONTACT_DAMAGE: PackedFloat32Array = [0.15, 1.5, 0.6]  # per tick while touching
 const ENEMY_SCRAP: PackedInt32Array = [1, 5, 2]
@@ -114,7 +114,7 @@ const PACK_RADIUS := 24.0  # a pack clusters within this of one edge point
 const MITE_SCRAP_START := 0.22  # scrap per mite kill (fractional, carried): many more mites must not inflate the economy
 const MITE_SCRAP_PER_ROUND := 0.009
 const MITE_SCRAP_MIN := 0.06
-const BOULDER_CHANCE := 0.04  # round 1; reaches the old 0.4 cap in the same round (13) as before
+const BOULDER_CHANCE := 0.02  # round 1 (per spawned alien; the horde spawns ~2-3x as fast as before, so this is lower)
 const SPAWN_INSET := 8.0
 # Alive caps: a spawn that would exceed the cap becomes a mite, so the field never snowballs.
 const BOULDER_CAP_BASE := 8
@@ -169,8 +169,8 @@ const RETREAT_EVENT_CAP := 150  # at most this many "retreat" events per round e
 const HP_SCALE_PER_ROUND := 0.09
 const HP_SCALE_QUAD := 0.005  # late-game term: the hive outgrows a linear power curve
 const SPAWN_SCALE_PER_ROUND := 0.35
-const BOULDER_CHANCE_PER_ROUND := 0.03
-const BOULDER_CHANCE_MAX := 0.4
+const BOULDER_CHANCE_PER_ROUND := 0.013
+const BOULDER_CHANCE_MAX := 0.2
 const DAMAGE_SCALE_PER_ROUND := 0.06
 # Early-round easing (playtest: the first waves were too strong). Spawn rate and enemy damage start at this
 # share in round 1 and rise linearly to full strength in round EASE_END_ROUND; later rounds are unchanged.
