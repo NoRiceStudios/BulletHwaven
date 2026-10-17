@@ -25,7 +25,7 @@ const RIVAL_RADIUS := 380.0  ## "rivals": rival rigs within this many px (only w
 
 ## Index tables for the binary form. Only append.
 const COND_IDS: PackedStringArray = ["hp", "swarm", "rivals", "t_dist", "t_hp", "t_player", "t_boulder", "t_spitter", "pvp", "has_target",
-	"boulders", "fuel", "rival_weaker", "ability_ready", "t_leader"]
+	"boulders", "fuel", "rival_weaker", "ability_ready", "t_leader", "boss_active", "shrieker_near"]
 const OPS: PackedStringArray = ["<", ">", "="]
 const ACTIONS: PackedStringArray = [
 	"drive:circle", "drive:kite", "drive:charge", "drive:flee", "drive:hold",
@@ -33,6 +33,7 @@ const ACTIONS: PackedStringArray = [
 	"target:spitters", "target:follow", "fire:hold", "fire:free",
 	"ammo:fire", "ammo:shrapnel", "ammo:ap",
 	"fire:focus", "ability:nitro", "ability:emp", "ability:smoke", "ability:salvo",
+	"target:boss", "target:shriekers",
 ]
 
 ## Condition metadata: numeric ones take "<" / ">" and a value in [min, max] (UI step `step`);
@@ -53,6 +54,8 @@ const CONDS := {
 	"rival_weaker": {"flag": true, "def": 1},
 	"ability_ready": {"flag": true, "def": 1},
 	"t_leader": {"flag": true, "def": 1},
+	"boss_active": {"flag": true, "def": 1},
+	"shrieker_near": {"flag": true, "def": 1},
 }
 ## Conditions the tech tree unlocks: condition id -> tech fx key (anything else is always available).
 const COND_FX := {
@@ -62,8 +65,8 @@ const COND_FX := {
 
 const DRIVES: PackedStringArray = ["circle", "kite", "charge", "flee", "hold"]
 const BASE_DRIVES: PackedStringArray = ["circle", "kite", "charge"]  ## base doctrine (set_drive)
-const RIG_TARGETS: PackedStringArray = ["nearest", "strongest", "weakest", "players_first", "boulders", "spitters"]
-const WEAPON_TARGETS: PackedStringArray = ["follow", "nearest", "strongest", "weakest", "players_first", "boulders", "spitters"]
+const RIG_TARGETS: PackedStringArray = ["nearest", "strongest", "weakest", "players_first", "boulders", "spitters", "boss", "shriekers"]
+const WEAPON_TARGETS: PackedStringArray = ["follow", "nearest", "strongest", "weakest", "players_first", "boulders", "spitters", "boss", "shriekers"]
 
 
 ## Rule slots of a list for this vehicle: BASE_SLOTS plus the `rule_slots` of the active tech.
@@ -438,6 +441,12 @@ static func _value(w: SimWorld, v: SimVehicle, id: String, tk: int, ti: int, tid
 			return 1.0 if w.pvp_enabled() else 0.0
 		"has_target":
 			return 1.0 if tk != 0 else 0.0
+		"boss_active":
+			return 1.0 if w.boss_state == Bosses.ST_ACTIVE else 0.0
+		"shrieker_near":
+			if not ctx.has("shrieker_near"):
+				ctx["shrieker_near"] = Species.shrieker_near(w, v)
+			return 1.0 if ctx["shrieker_near"] else 0.0
 	if tk == 0:
 		return NAN
 	match id:
@@ -447,7 +456,7 @@ static func _value(w: SimWorld, v: SimVehicle, id: String, tk: int, ti: int, tid
 			if tk == 1:
 				if ti < 0 or ti >= w.enemy_count:
 					return NAN
-				return 100.0 * w.enemy_hp[ti] / maxf(SimWorld.enemy_max_hp(w.enemy_kind[ti], w.round), 1.0)
+				return 100.0 * w.enemy_hp[ti] / maxf(w.enemy_max_hp_of(ti), 1.0)
 			var t: SimVehicle = w.vehicles[tid]
 			return 100.0 * t.hp / maxf(t.max_hp, 1.0)
 		"t_player":

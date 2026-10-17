@@ -37,7 +37,7 @@ const TABS: PackedStringArray = ["parts", "tech", "rules"]
 const TAB_LABELS := {"parts": "PARTS", "tech": "TECH", "rules": "RULES"}
 const TAB_KEYS := {"parts": "", "tech": "T", "rules": "P"}
 const TARGET_LABELS := {"nearest": "NEAREST", "strongest": "STRONGEST", "players_first": "PLAYERS 1ST", "weakest": "WEAKEST",
-	"boulders": "BOULDERS", "spitters": "SPITTERS"}
+	"boulders": "BOULDERS", "spitters": "SPITTERS", "boss": "BOSS", "shriekers": "SHRIEKERS"}
 const TOAST_SECS := 1.6
 const DRAIN_NOTICE_TICKS := 150  ## the "-N FUEL DRAIN" tape flashes this long after the drain
 
@@ -401,17 +401,53 @@ func _draw() -> void:
 			_draw_cards(v, vs)
 			_draw_contracts(v, vs)
 			_draw_recap(v)
+			_draw_hive()
 			_draw_convoy(v)
 			var scout: SimVehicle = _scout_target()
 			if scout != null:
 				_draw_dossier(scout, Rect2(RIGHT_X - COL_W - 6.0, BODY_Y, COL_W, 226), _scout_pin == scout.id)
 			UiKit.footer(self, "1 2 3  PICK      R  REROLL      T  TECH      P  RULES      SPACE  READY", vs)
 	_draw_bar(v, vs)
+	if _tab == "parts":
+		_draw_next_boss()
 	_draw_toast(vs)
 	if view != null and _tab == "parts":  # a weapon just evolved: the banner over the panels, between the columns
 		var gap_cx: float = floorf((LEFT_X + COL_W + RIGHT_X - 108.0) / 2.0)  # between the rig and tech panels
 		Hud.draw_evolved_banner(self, view.juice, world.tick, gap_cx, BAR.end.y + 22.0, true)
 	TechTreeView.draw_gloss(self)
+
+
+## A compact plate hanging under the top bar, over the gap between the rig panel and the tech column:
+## "NEXT BOSS  ROUND 8  SHARD COLOSSUS" (Bosses.next_boss). When the boss comes in the very next round it
+## gets a hazard edge and blinks "NEXT ROUND"; an enraged one carries an ENRAGED tag.
+func _draw_next_boss() -> void:
+	var nb: Dictionary = Bosses.next_boss(world)
+	if int(nb.get("kind", -1)) < 0:
+		return
+	var r_n: int = int(nb["round"])
+	var soon: bool = r_n == world.round + 1
+	var name_s: String = str(nb["name"])
+	var lead: String = "NEXT ROUND" if soon else "ROUND %d" % r_n
+	var enr: bool = bool(nb["enraged"])
+	var w: float = UiFont.width_small("NEXT BOSS") + UiFont.width(lead) + UiFont.width_title(name_s, 10) + 30.0
+	if enr:
+		w += UiFont.width_small("ENRAGED") + 12.0
+	var cx: float = floorf((LEFT_X + COL_W + RIGHT_X - 108.0) / 2.0)
+	var r := Rect2(floorf(cx - w / 2.0), BAR.end.y + 3.0, w, 15)
+	UiKit.panel(self, r)
+	if soon:
+		UiKit.hazard_band(self, Rect2(r.position.x + 1, r.end.y - 3, r.size.x - 2, 2))
+	_hits.append([r, "none", null])
+	var y: float = r.position.y + 4.0
+	var x: float = UiFont.draw_small(self, "NEXT BOSS", Vector2(r.position.x + 6, y + 1), Gfx.UI_DIM) + 6.0
+	var hot: bool = soon and fmod(_blink, 1.0) < 0.6
+	x = UiFont.draw(self, lead, Vector2(x, y), Gfx.UI_BAD if hot else Gfx.FIRE[4], Gfx.UI_SHADOW) + 6.0
+	x = UiFont.draw_title(self, name_s, Vector2(x, y - 1), Gfx.GLOW[4] if soon else Gfx.GLOW[3], 10, Gfx.OUTLINE) + 6.0
+	if enr:
+		var tr := Rect2(x, y - 2, UiFont.width_small("ENRAGED") + 6.0, 9)
+		draw_rect(tr, Gfx.OUTLINE)
+		draw_rect(tr.grow(-1.0), Gfx.UI_BAD)
+		UiFont.draw_small(self, "ENRAGED", tr.position + Vector2(3, 2), Gfx.BONE_LIGHT)
 
 
 func _draw_toast(vs: Vector2) -> void:
@@ -1026,6 +1062,18 @@ func _scrap_pip(p: Vector2) -> void:
 
 
 # ---------------------------------------------------------------- convoy (right, bottom)
+
+## The hive signature (this match's species, the next boss) stacked above the convoy panel.
+func _draw_hive() -> void:
+	var bottom: float = BODY_BOTTOM - 4.0
+	var n: int = world.vehicles.size()
+	if n >= 2:
+		bottom -= 18.0 + n * 10.0 + 4.0
+	var h: float = HivePanel.height(world, COL_W)
+	var r := Rect2(RIGHT_X, bottom - h, COL_W, h)
+	HivePanel.draw(self, world, r)
+	_hits.append([r, "none", null])
+
 
 func _draw_convoy(v: SimVehicle) -> void:
 	var n: int = world.vehicles.size()

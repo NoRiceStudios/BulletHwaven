@@ -499,12 +499,13 @@ const WEAPON_SHORT: PackedStringArray = ["MG", "SCATTER", "CANNON", "FLAMER", "R
 ## Damage sources of `round_stats.taken` in display order, with labels and bar colours: camouflaged
 ## mites and boulders in their desert tones, spitters and their acid in the hive's glow (the only
 ## cold colour, as in the art); rivals use their paint.
-const TAKEN_KEYS: PackedStringArray = ["boulder", "mite", "spitter", "acid"]
-const TAKEN_LABELS := {"boulder": "BOULDER RAMS", "mite": "MITE BITES", "spitter": "SPITTER BITES", "acid": "ACID"}
-const TAKEN_SHORT := {"boulder": "BOULDERS", "mite": "MITES", "spitter": "SPITTERS", "acid": "ACID"}
-const TAKEN_COLORS := {"boulder": Color("#c99c6b"), "mite": Color("#8e6145"), "spitter": Color("#1fa3a3"), "acid": Color("#4fe0d4")}
+const TAKEN_KEYS: PackedStringArray = ["boulder", "mite", "spitter", "acid", "glass", "brood", "shrieker"]
+const TAKEN_LABELS := {"boulder": "BOULDER RAMS", "mite": "MITE BITES", "spitter": "SPITTER BITES", "acid": "ACID", "glass": "WING DIVES", "brood": "BROOD BITES", "shrieker": "SHRIEKER BITES"}
+const TAKEN_SHORT := {"boulder": "BOULDERS", "mite": "MITES", "spitter": "SPITTERS", "acid": "ACID", "glass": "WINGS", "brood": "BROOD", "shrieker": "SHRIEKERS"}
+const TAKEN_COLORS := {"boulder": Color("#c99c6b"), "mite": Color("#8e6145"), "spitter": Color("#1fa3a3"), "acid": Color("#4fe0d4"),
+	"glass": Color("#e0bd8c"), "brood": Color("#ad7d55"), "shrieker": Color("#f0d9b0")}
 ## Death cause (SimWorld.SRC_NAMES) -> "WRECKED BY ..." wording.
-const CAUSE_TEXT := {"mite": "MITES", "boulder": "A BOULDER", "spitter": "A SPITTER", "acid": "ACID", "ram": "A RAM", "player": "A RIVAL"}
+const CAUSE_TEXT := {"mite": "MITES", "boulder": "A BOULDER", "spitter": "A SPITTER", "glass": "GLASS WINGS", "brood": "A BROOD CARRIER", "shrieker": "A SHRIEKER", "acid": "ACID", "ram": "A RAM", "player": "A RIVAL"}
 
 
 static func weapon_short(kind: int) -> String:

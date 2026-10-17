@@ -102,6 +102,7 @@ var contract_prog: float = 0.0  ## progress towards contract_need; -1 = failed (
 var loan_debt: int = 0  ## scrap still owed to the loan shark
 var loan_left: int = 0  ## scheduled instalments left (the last one takes whatever is owed)
 var reserved_card: String = ""  ## haggler: this card is added to the next workshop's offers
+var boss_rare: bool = false  ## host only: the next draft has a guaranteed rare-or-better card (boss kill)
 var bonus_offers: int = 0  ## lucky strike: extra card offers at the next workshop
 var lucky_round: int = -10  ## round of the last lucky-strike bonus offer
 var saws: int = 0  ## scrapped cards waiting to fly off as saw blades at the next combat start

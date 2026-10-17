@@ -18,6 +18,7 @@ import os
 
 import numpy as np
 
+import aliens
 import fx
 import rig
 import sprites
@@ -476,6 +477,48 @@ def export_fx(save, fx_ang):
     save(sheet([[fx.drone(a, ph) for a in d_ang] for ph in (0, 1)]), "rig_drone.png")
 
 
+# ---------------------------------------------------------------- bosses and late species (tools/artgen/aliens.py)
+
+def export_aliens(save):
+    """Layouts are documented in docs/architecture.md ("Alien sprite sheets"). Directional sheets: 16
+    columns (frame k = k * 360 / 16 degrees clockwise from north), one row per animation frame (the
+    *_ROWS tuples in aliens.py); every sheet has a matching *_glow sheet in the same grid."""
+    def directional(make, rows, frame, name, glow):
+        grid = [strip(make(r), frame, ENEMY_DIRS) for r in rows]
+        save(sheet(grid), f"{name}.png")
+        save(glow_sheet(grid, **glow), f"{name}_glow.png")
+        return grid
+
+    boss_glow = {"radius": 3, "gain": 1.8, "strength": 0.45}
+    small_glow = {"radius": 2, "gain": 2.0, "strength": 0.4}
+    directional(aliens.tripod_queen, aliens.TRIPOD_ROWS, aliens.TRIPOD_FRAME, "tripod_queen", boss_glow)
+    directional(aliens.shard_colossus, aliens.COLOSSUS_ROWS, aliens.COLOSSUS_FRAME, "shard_colossus", boss_glow)
+    directional(aliens.shard_minion, aliens.SHARD_ROWS, aliens.SHARD_FRAME, "shard_minion", small_glow)
+    wings = directional(aliens.glass_wings, aliens.WING_ROWS, aliens.WING_FRAME, "glass_wings",
+                        {"radius": 1, "gain": 2.5, "strength": 0.35})
+    save(sheet([[aliens.soft_shadow(f) for f in row] for row in wings]), "glass_wings_shadow.png")
+    directional(aliens.brood_carrier, aliens.BROOD_ROWS, aliens.BROOD_FRAME, "brood_carrier", small_glow)
+    directional(aliens.shrieker, aliens.SHRIEKER_ROWS, aliens.SHRIEKER_FRAME, "shrieker", small_glow)
+
+    fx_ang = [k * 2 * math.pi / FX_DIRS for k in range(FX_DIRS)]
+    proj_glow = {"radius": 2, "gain": 2.5, "strength": 0.45}
+    for name, fn in (("tripod_shell", aliens.tripod_shell), ("crystal_shard", aliens.crystal_shard)):
+        rows = [[fn(a) for a in fx_ang]]
+        save(sheet(rows), f"{name}.png")
+        save(glow_sheet(rows, **proj_glow), f"{name}_glow.png")
+    # drawn 1:1 in game at the shell's reach for a rig centre (Bosses.SHELL_RADIUS 56 + half a rig 7 = R 63)
+    tele = [[aliens.tripod_telegraph(i, size=aliens.TELEGRAPH_GAME_FRAME) for i in range(aliens.TELEGRAPH_FRAMES)]]
+    save(sheet(tele), "tripod_telegraph.png")
+    save(glow_sheet(tele, radius=2, gain=1.5, strength=0.3), "tripod_telegraph_glow.png")
+    save(sheet([[aliens.shrieker_ring(i) for i in range(aliens.RING_FRAMES)]]), "shrieker_ring.png")
+
+    # carcass decals (bleached like decal_carcass): columns = variants
+    for name, fn, n in (("tripod", aliens.carcass_tripod, 1), ("colossus", aliens.carcass_colossus, 1),
+                        ("shard", aliens.carcass_shard, 2), ("wings", aliens.carcass_wings, 2),
+                        ("brood", aliens.carcass_brood, 2), ("shrieker", aliens.carcass_shrieker, 2)):
+        save(sheet([[fn(seed=i * 7 + 1) for i in range(n)]]), f"decal_carcass_{name}.png")
+
+
 # ---------------------------------------------------------------- main
 
 def export(out=OUT):
@@ -505,6 +548,7 @@ def export(out=OUT):
                            ("spitter", spitters, {"radius": 2, "gain": 2.0, "strength": 0.4})):
         save(sheet(rows), f"{name}.png")
         save(glow_sheet(rows, **kw), f"{name}_glow.png")
+    export_aliens(save)
 
     # projectiles and muzzle flash
     # tracer rows: plain, fire, shrapnel, AP, shard, saw (fx.TRACER_KINDS + saw); muzzle rows: fx.MUZZLE_KINDS

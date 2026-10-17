@@ -99,6 +99,10 @@ static func find_target(w: SimWorld, v: SimVehicle, mode: String, reach: float) 
 			idx = _nearest_enemy(w, v.pos, -1, SimWorld.BOULDER, reach)
 		"spitters":
 			idx = _nearest_enemy(w, v.pos, -1, SimWorld.SPITTER, reach)
+		"boss":
+			idx = _nearest_boss(w, v.pos, reach)
+		"shriekers":
+			idx = _nearest_enemy(w, v.pos, -1, SimWorld.SHRIEKER, reach)
 	if idx < 0:
 		# Charge without berserker does not ram boulders: prefer anything else if it is around.
 		var skip: int = SimWorld.BOULDER if reach <= 0.0 and _avoids_boulders(v) else -1
@@ -165,6 +169,22 @@ static func _extreme_in_range(w: SimWorld, p: Vector2, r: float, most: bool) -> 
 			continue
 		if best < 0 or (most and hp > best_hp) or (not most and hp < best_hp):
 			best_hp = hp
+			best = j
+	return best
+
+
+## Nearest living boss body (a Colossus shard counts) within `max_r` of p (0 = anywhere), or -1.
+static func _nearest_boss(w: SimWorld, p: Vector2, max_r: float) -> int:
+	if w.boss_state != Bosses.ST_ACTIVE:
+		return -1
+	var best: int = -1
+	var best_d2: float = INF if max_r <= 0.0 else max_r * max_r
+	for j in w.enemy_count:
+		if w.enemy_kind[j] < SimWorld.BOSS_A or w.enemy_hp[j] <= 0.0:
+			continue
+		var d2: float = p.distance_squared_to(w.enemy_pos[j])
+		if d2 <= best_d2:
+			best_d2 = d2
 			best = j
 	return best
 
