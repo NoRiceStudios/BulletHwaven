@@ -28,7 +28,7 @@ const MARK_SHELL := 0  ## circle at pos, radius r: a shell lands when `left` rea
 const MARK_RING := 1  ## glow around pos (the boss), radius r: a ring of shards is released when `left` reaches 0
 const MARK_CHARGE := 2  ## line from pos to pos2, width r: the boss charges along it when `left` reaches 0
 
-const NAMES: Dictionary = {3: "TRIPOD QUEEN", 4: "SHARD COLOSSUS", 5: "CRYSTAL SHARD"}
+const NAMES: Dictionary = {SimWorld.BOSS_A: "TRIPOD QUEEN", SimWorld.BOSS_B: "SHARD COLOSSUS", SimWorld.BOSS_SHARD: "CRYSTAL SHARD"}
 
 # --- balance
 const HP_BASE := 450.0  ## x (1 + HP_PER_ROUND per boss round index) x (1 + HP_PER_EXTRA_VEHICLE per extra alive vehicle)
@@ -62,11 +62,11 @@ const VOLLEY_TICKS_P3 := 110
 const BROOD_TICKS := 130
 const BROOD_PACK := 4
 const BROOD_MAX_MITES := 120
-const TRIPOD_STANDOFF_MIN := 170.0
-const TRIPOD_STANDOFF_MAX := 290.0
+const TRIPOD_STANDOFF_MIN := 90.0
+const TRIPOD_STANDOFF_MAX := 150.0
 const TRIPOD_ENTRY_DIST := 480.0
-const TRIPOD_HP_MULT := 0.8  ## relative to HP_BASE (she is the harder one to reach)
-const COLOSSUS_HP_MULT := 1.1
+const TRIPOD_HP_MULT := 0.38  ## relative to HP_BASE (she is the harder one to reach)
+const COLOSSUS_HP_MULT := 1.0
 const TRIPOD_ENTRY_SPEED := 2.4
 const TRIPOD_P3_SPEED := 1.4
 

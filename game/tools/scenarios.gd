@@ -87,7 +87,7 @@ const NAMES: PackedStringArray = ["skirmish", "horde", "workshop", "tech_tree", 
 	"menu", "join", "lobby", "pause", "rematch", "waiting", "rig_growth", "late_round", "pvp_on", "rig_kill",
 	"recap", "recap_pvp", "scouting", "combat_feed", "pvp_grace", "spectator", "spectator_ws", "awards",
 	"tech_mid", "tech_swap", "workshop_mid", "tech_beginner", "fx_firebrand", "fx_fortress", "fx_scrapper",
-	"fx_chassis", "fx_ram", "juice", "juice_surge", "evo_combat", "evo_flip", "evo_workshop", "evo_moment", "boss_tripod", "boss_colossus", "boss_shards"]
+	"fx_chassis", "fx_ram", "juice", "juice_surge", "evo_combat", "evo_flip", "evo_workshop", "evo_moment", "boss_tripod", "boss_colossus", "boss_shards", "species", "hive"]
 const EVO_FLIP_TICK := 90
 const EVO_PICK_DELAY := 30
 const JUICE_SURGE_TICK := 100
@@ -169,6 +169,12 @@ static func build(name: String, p_seed: int) -> SimWorld:
 			return _evo_world(name, p_seed)
 		"boss_tripod", "boss_colossus", "boss_shards":
 			return _boss_world(name, p_seed)
+		"species":
+			return _species_world(p_seed)
+		"hive":
+			var wh: SimWorld = _skirmish(p_seed)
+			wh.fast_rounds = true
+			return wh
 		"evo_workshop", "evo_moment":
 			var we: SimWorld = _skirmish(p_seed)
 			we.fast_rounds = true
@@ -262,6 +268,15 @@ static func step(name: String, w: SimWorld) -> void:
 		return
 	if name.begins_with("boss_"):
 		_boss_step(name, w)
+		return
+	if name == "species":
+		_species_step(w)
+		return
+	if name == "hive":  # the first workshop, held (round 1 is over: the panel lists this match's species and the next boss)
+		if w.phase == SimWorld.PHASE_COMBAT:
+			w.step()
+		else:
+			w.tick += 1
 		return
 	if name == "rig_growth" or name == "fx_chassis":
 		w.tick += 1  # parked: only the clock runs (nitro flicker, ring)
@@ -502,6 +517,62 @@ static func _boss_step(name: String, w: SimWorld) -> void:
 			if first:
 				var frac: float = {"boss_tripod": 0.5, "boss_colossus": 0.55, "boss_shards": 0.2}[name]
 				w.enemy_hp[i] = w.boss_max_hp * frac
+
+
+## "species": round 6 with all three hive-signature species in one fight (the signature is forced to all three): a
+## glass wing flock circling and diving, brood carriers (one bursts at SPECIES_BURST_TICK), two shriekers pulsing behind
+## a mite horde. Two tough rigs; red targets shriekers first. About 120..220 ticks; the pulse rings and a dive show up at
+## different ticks, so try a few.
+static func _species_world(p_seed: int) -> SimWorld:
+	var w := SimWorld.new(p_seed)
+	w.round = 6
+	w.hive_first = PackedInt32Array([3, 3, 3])
+	w.spawning_enabled = false
+	var c: Vector2 = SimWorld.ARENA.get_center()
+	var builds: Array = [GROWTH_BUILDS[6], GROWTH_BUILDS[3]]
+	var spots: Array = [c, c + Vector2(-90, 60)]
+	for i in 2:
+		var v: SimVehicle = w.add_vehicle(i + 1, spots[i], ATTRACT_NAMES[i * 2], [0, 2][i])
+		_outfit(v, builds[i][0], builds[i][1])
+		v.max_hp *= 12.0
+		v.hp = v.max_hp
+		v.fuel = 100
+	w.apply_command(1, {"type": "set_drive", "value": "circle"})
+	w.apply_command(1, {"type": "set_target", "value": "shriekers"})
+	w.phase_ticks_left = w.combat_duration(6) - 400
+	_scatter(w, 70, 0.04, 0.03, 110.0, 460.0)
+	for k in 5:
+		w.spawn_enemy(SimWorld.GLASS, c + Vector2(190 + k * 9, -110 + k * 13))
+	var broods: Array = [Vector2(-150, 40), Vector2(120, 100), Vector2(-40, -140)]
+	for b: Vector2 in broods:
+		w.spawn_enemy(SimWorld.BROOD, c + b)
+	var shriekers: Array = [Vector2(260, 60), Vector2(-250, -70)]
+	for s: Vector2 in shriekers:
+		w.spawn_enemy(SimWorld.SHRIEKER, c + s)
+		for k in 6:  # the horde around them
+			var a: float = w.rng.randf() * TAU
+			w.spawn_enemy(SimWorld.MITE, c + s + Vector2.from_angle(a) * (20.0 + w.rng.randf() * 60.0))
+	return w
+
+
+const SPECIES_BURST_TICK := 40
+
+
+static func _species_step(w: SimWorld) -> void:
+	w.step()
+	var burst: int = -1
+	var best: float = INF
+	for i in w.enemy_count:
+		var k: int = w.enemy_kind[i]
+		if k >= SimWorld.GLASS and k <= SimWorld.SHRIEKER:
+			w.enemy_hp[i] = w.enemy_max_hp_of(i)  # the show goes on: the guns cannot finish the specimens
+			if k == SimWorld.BROOD and w.tick == SPECIES_BURST_TICK:
+				var d: float = w.enemy_pos[i].distance_squared_to(w.vehicles[0].pos)
+				if d < best:
+					best = d
+					burst = i
+	if burst >= 0:  # the brood carrier nearest to the rig is shot dead: burst frame, then the mites
+		w._hit_enemy(burst, 1000.0, 0)
 
 
 ## Two rigs (red: circle / nearest, magenta: kite / players_first) in a running horde.

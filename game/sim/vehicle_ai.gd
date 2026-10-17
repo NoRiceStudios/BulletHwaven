@@ -101,6 +101,8 @@ static func find_target(w: SimWorld, v: SimVehicle, mode: String, reach: float) 
 			idx = _nearest_enemy(w, v.pos, -1, SimWorld.SPITTER, reach)
 		"boss":
 			idx = _nearest_boss(w, v.pos, reach)
+		"shriekers":
+			idx = _nearest_enemy(w, v.pos, -1, SimWorld.SHRIEKER, reach)
 	if idx < 0:
 		# Charge without berserker does not ram boulders: prefer anything else if it is around.
 		var skip: int = SimWorld.BOULDER if reach <= 0.0 and _avoids_boulders(v) else -1

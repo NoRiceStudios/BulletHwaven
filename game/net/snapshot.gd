@@ -5,7 +5,7 @@ extends RefCounted
 ## Layout (little endian):
 ##   header   38 B  version, flags, tick, next_enemy_id, counts, enemy id base,
 ##                   phase, round, phase_ticks_left, winner_peer, leader_peer, pvp_grace_ticks, fuel_drain, zone count
-##   (header ends with u8 boss_first)
+##   (header ends with u8 boss_first, u16 hive signature: 3 bits first round per species, Glass Wings lowest)
 ##   zones    u8 count, per zone 9 B: x, y u16 (1/16 px, offset), radius u8 (px), kind u8, ttl u16, owner i8
 ##   vehicles variable (about 160 B each: doctrine strings, weapons (with heat, jam, switch pause, loaded ammo), doctrine rules, fuel / flags,
 ##                   offers, cards, tech (+ purchase rounds, dormant fusions, respecs), player name and colour index). Rules are binary: u8 count,
@@ -15,12 +15,12 @@ extends RefCounted
 ##                      top bit (EVENT_EXTRA_BIT) adds 2 signed bytes: kill = victim, weapon;
 ##                      vehicle_destroyed = cause (SimWorld.SRC_*), killer
 ##   enemies  8 B each  id offset u16, x u16, y u16 (1/16 px), packed u16:
-##                      kind 2 bits | hp 4 bits (1..15 of max) | speed 3 bits (0..7 of kind speed) | heading 7 bits
+##                      kind 3 bits (0..5 = SimWorld kinds, 6 = a boss body) | hp 4 bits (1..15 of max) | speed 3 bits (0..7 of kind speed) | heading 6 bits
 ##   projs   13 B each  x u16, y u16 (1/16 px, offset), vx i16, vy i16 (px/s), owner i8, ttl u8 (1/100 s), damage u8 (1/4)
 ##   burning ceil(enemies / 8) B (only with FLAG_BURNING): bit i set = enemy i burns (burn dps and owner are host-side)
 ##   stunned ceil(enemies / 8) B (only with FLAG_STUNNED): bit i set = enemy i is EMP-stunned
 ##   boss     (only with FLAG_BOSS) u8 kind, u8 state, u8 phase, u8 flags (bit 0 enraged), u32 max hp, u16 hp fraction (1/1000), u16 warn ticks,
-##            u16 x, y spawn point (1/16 px, offset), u8 bodies: per body u16 enemy index, u8 real kind (the enemy table sends 3 for every
+##            u16 x, y spawn point (1/16 px, offset), u8 bodies: per body u16 enemy index, u8 real kind (the enemy table sends 6 for every
 ##            boss kind), u32 hp; u8 markers: per marker u8 kind (Bosses.MARK_*), u16 x, y, x2, y2 (1/16 px, offset), u8 radius, u8 ticks left, u8 total
 ##
 ## Vehicle extras since version 10 (right after scrap_frac): a flags byte and the groups it names, see _put_extras() (bit 64: salvage, version 11).
@@ -30,7 +30,7 @@ extends RefCounted
 ## current round, SimWorld.enemy_max_hp). Card and tech ids are table indices (Cards.DEFS / Tech.DEFS).
 ## Projectile pierce / splash are not sent: the client world is passive.
 
-const VERSION := 13  # 13: boss rounds (header boss_first, FLAG_BOSS tail block, boss enemy kinds, boss events); 12: event surge; 11: salvage (contract offers and progress, loan debt, reserved card, bonus offers), events contract_done / saw / shockwave / chain / jerry_blast; 10: momentum, abilities (slots, cooldowns, effect timers, decoy), swarm mark, jam flags, stunned bitset; 9: ammo / heat per weapon, ground zones, burning bitset, float cooldowns; 8: tech v2.3 (dormant fusions, respecs, purchase rounds); 7: doctrine rules (rig + per weapon); 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
+const VERSION := 14  # 14: hive signature (header u16), species kinds 3..5 (enemy kind 3 bits, heading 6 bits), taken stats glass / brood / shrieker, events shriek / brood; 13: boss rounds (header boss_first, FLAG_BOSS tail block, boss enemy kinds, boss events); 12: event surge; 11: salvage (contract offers and progress, loan debt, reserved card, bonus offers), events contract_done / saw / shockwave / chain / jerry_blast; 10: momentum, abilities (slots, cooldowns, effect timers, decoy), swarm mark, jam flags, stunned bitset; 9: ammo / heat per weapon, ground zones, burning bitset, float cooldowns; 8: tech v2.3 (dormant fusions, respecs, purchase rounds); 7: doctrine rules (rig + per weapon); 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
 const FLAG_WIDE_IDS := 1  ## enemy ids spread over more than 65535: ids are sent as u32 deltas from 0
 const FLAG_STATS := 2  ## vehicles carry round_stats and match_stats (sent outside combat only)
 const FLAG_BURNING := 4  ## a burning bitset follows the projectiles (only sent while something burns)
@@ -38,6 +38,7 @@ const FLAG_BOSS := 16  ## a boss block follows the stunned bitset (while Bosses 
 const FLAG_STUNNED := 8  ## a stunned bitset follows the burning one (only sent while an EMP holds something)
 const EVENT_EXTRA_BIT := 0x80
 const EVENT_EXTRAS := {"kill": ["victim", "weapon"], "vehicle_destroyed": ["cause", "killer"], "surge": ["in_ticks", "index"], "boss": ["in_ticks", "enraged"]}
+const TAKEN_KEYS: PackedStringArray = ["mite", "boulder", "spitter", "acid", "rival", "glass", "brood", "shrieker"]
 const MAX_DEATHS := 16
 const MAX_ROUND_PLAYERS := 16
 
@@ -46,17 +47,17 @@ const POS_SCALE := 16.0  ## u16 / 16 covers 4096 px: the arena plus POS_ORIGIN m
 const POS_ORIGIN := 64.0  ## added to projectile/event coordinates (they may leave the arena slightly)
 const POS_ERROR := 1.0 / 32.0
 
-const HEADER_BYTES := 39  # includes the zone count; the zone entries follow it
+const HEADER_BYTES := 41  # includes the zone count; the zone entries follow it
 const ENEMY_BYTES := 8
 const WIDE_ENEMY_BYTES := 10
 const PROJ_BYTES := 13
 const EVENT_BYTES := 7
 
 const MAX_VEHICLES := 64  ## vehicle ids travel as u8 / i8 owners, keep well below 127
-const EVENT_TYPES: PackedStringArray = ["fire", "hit", "kill", "vehicle_destroyed", "retreat", "respawn", "spit", "pvp_on", "bounty", "drain", "shrapnel", "jam", "overheat", "execute", "nitro", "emp", "smoke", "salvo", "dodge", "sparks", "boom", "shed", "contract_done", "saw", "shockwave", "chain", "jerry_blast", "surge", "boss", "boss_spawn", "boss_phase", "boss_kill", "boss_retreat", "boss_shell", "boss_blast", "boss_ring", "boss_charge", "boss_brood", "boss_split"]
+const EVENT_TYPES: PackedStringArray = ["fire", "hit", "kill", "vehicle_destroyed", "retreat", "respawn", "spit", "pvp_on", "bounty", "drain", "shrapnel", "jam", "overheat", "execute", "nitro", "emp", "smoke", "salvo", "dodge", "sparks", "boom", "shed", "contract_done", "saw", "shockwave", "chain", "jerry_blast", "surge", "boss", "boss_spawn", "boss_phase", "boss_kill", "boss_retreat", "boss_shell", "boss_blast", "boss_ring", "boss_charge", "boss_brood", "boss_split", "shriek", "brood"]
 const MAX_ROUND := 65535
 const SPEED_STEPS := 7
-const HEADING_STEPS := 128
+const HEADING_STEPS := 64
 const HP_STEPS := 15
 const TTL_SCALE := 100.0  # u8: up to 2.55 s (acid lives about 1.8 s)
 const DAMAGE_SCALE := 4.0
@@ -125,6 +126,7 @@ static func encode(world: SimWorld, p_events: Array[Dictionary] = []) -> PackedB
 	sp.put_u16(clampi(world.pvp_grace_ticks, 0, 65535))
 	sp.put_u8(clampi(world.fuel_drain, 0, 255))
 	sp.put_u8(world.boss_first & 1)
+	sp.put_u16((world.hive_first[0] & 7) | ((world.hive_first[1] & 7) << 3) | ((world.hive_first[2] & 7) << 6))
 
 	var n_zone: int = mini(world.zone_count, mini(world.zone_pos.size(), SimWorld.MAX_ZONES))
 	sp.put_u8(n_zone)
@@ -173,7 +175,7 @@ static func encode(world: SimWorld, p_events: Array[Dictionary] = []) -> PackedB
 		if spd > 0:
 			ang = roundi(vel.angle() / TAU * HEADING_STEPS) & (HEADING_STEPS - 1)
 		var hpl: int = clampi(ceili(world.enemy_hp[i] / maxf(world.enemy_max_hp_of(i), 1.0) * HP_STEPS), 1, HP_STEPS)
-		var packed: int = (mini(kind, 3) & 3) | (hpl << 2) | (spd << 6) | (ang << 9)
+		var packed: int = (mini(kind, SimWorld.BOSS_A) & 7) | (hpl << 3) | (spd << 7) | (ang << 10)
 		if wide:
 			out.encode_u32(o, world.enemy_id[i])
 			o += 4
@@ -270,6 +272,7 @@ static func apply(world: SimWorld, bytes: PackedByteArray) -> bool:
 	var grace: int = r.u16()
 	var drain: int = r.u8()
 	var boss_first: int = r.u8() & 1
+	var hive_bits: int = r.u16()
 	var with_stats: bool = (flags & FLAG_STATS) != 0
 	if not r.ok or n_veh > MAX_VEHICLES or phase > SimWorld.PHASE_GAME_OVER or round_n < 1:
 		return false
@@ -350,12 +353,12 @@ static func apply(world: SimWorld, bytes: PackedByteArray) -> bool:
 		var py: float = float(data.decode_u16(o + 2)) / POS_SCALE
 		var packed: int = data.decode_u16(o + 4)
 		o += 6
-		var kind: int = packed & 3
+		var kind: int = packed & 7
 		if kind > SimWorld.BOSS_A:
 			return false
-		var hpl: int = (packed >> 2) & 15
-		var spd: int = (packed >> 6) & 7
-		var ang: int = (packed >> 9) & 127
+		var hpl: int = (packed >> 3) & 15
+		var spd: int = (packed >> 7) & 7
+		var ang: int = (packed >> 10) & 63
 		e_kind[i] = kind
 		e_pos[i] = Vector2(px, py)
 		if spd > 0:
@@ -451,6 +454,7 @@ static func apply(world: SimWorld, bytes: PackedByteArray) -> bool:
 
 	# Commit.
 	world.boss_first = boss_first
+	world.hive_first = PackedInt32Array([hive_bits & 7, (hive_bits >> 3) & 7, (hive_bits >> 6) & 7])
 	world.boss_round = round_n
 	world.boss_kind = b_kind
 	world.boss_state = b_state
@@ -770,7 +774,7 @@ static func _put_stats(sp: StreamPeerBuffer, v: SimVehicle) -> void:
 	var rs: Dictionary = v.round_stats
 	var tk: Dictionary = rs.get("taken", {})
 	sp.put_u16(clampi(int(rs.get("round", 0)), 0, 65535))
-	for key in ["mite", "boulder", "spitter", "acid", "rival"]:
+	for key in TAKEN_KEYS:
 		sp.put_u16(clampi(roundi(float(tk.get(key, 0.0))), 0, 65535))
 	var tp: Dictionary = rs.get("taken_players", {})
 	var tp_ids: Array = tp.keys()
@@ -815,7 +819,7 @@ static func _put_stats(sp: StreamPeerBuffer, v: SimVehicle) -> void:
 static func _get_stats(r: _Reader, v: SimVehicle) -> void:
 	var rs := SimWorld.new_round_stats(r.u16())
 	var tk: Dictionary = rs["taken"]
-	for key in ["mite", "boulder", "spitter", "acid", "rival"]:
+	for key in TAKEN_KEYS:
 		tk[key] = float(r.u16())
 	var ntp: int = r.u8()
 	if ntp > MAX_ROUND_PLAYERS:
