@@ -26,7 +26,7 @@ The "after PR 9" run with 4 seeds is noisy (balanced median was 20.8, mean 17.4)
 1. **Boulders scale with the spawn rate.** The boulder roll is per spawn event, and PR 9 raised the spawn rate about 3.5x at round 10 (base 3.0 instead of 1.5, 0.35 instead of 0.15 per round, surges x2.2 / x2.8). The alive cap (8 + 3r) was unchanged, so the boulder cap was reached much sooner and boulders were ~75-90 % of vehicle losses for every low-damage build. Tank and speedster have few kills, so they cannot thin boulders.
 2. **Armour no longer matters against mites.** Mite contact (0.15 per tick) was already at the 25 % armour floor, so armour only helps against boulders, which got more frequent. I tested `CONTACT_ARMOR_FACTOR` 0.12: tank went to 20.6 while speedster did not move, so it was reverted to 0.08 (kept as the original).
 3. **Mites are as fast as a kiting rig.** Mite speed 90 versus `SPEED_KITE` 96: packs catch a kiting rig whenever it turns, and the speed cards (+10 to +30 %) were wasted. Slower mites helped speedster and tank at once.
-4. **FFA stalls.** Fewer deaths (easier alien phase, bots rarely hunt each other), and the fuel drain never eliminates by itself (floor 1), so 5-player-free-for-all matches ran to the cap.
+4. **FFA stalls.** Fewer deaths (easier alien phase, bots rarely hunt each other), and the fuel drain never eliminates by itself (floor 1), so 4-player matches ran to the cap.
 5. The `WAVE_BUILD_FROM 0.5 -> 0.8` tweak was included in every "after" measurement here (no regression found).
 
 ## Changes
