@@ -31,7 +31,8 @@ const MARK_CHARGE := 2  ## line from pos to pos2, width r: the boss charges alon
 const NAMES: Dictionary = {3: "TRIPOD QUEEN", 4: "SHARD COLOSSUS", 5: "CRYSTAL SHARD"}
 
 # --- balance
-const HP_BASE := 1500.0  ## x enemy_hp_mult(round) x (1 + HP_PER_EXTRA_VEHICLE per extra alive vehicle)
+const HP_BASE := 450.0  ## x (1 + HP_PER_ROUND per boss round index) x (1 + HP_PER_EXTRA_VEHICLE per extra alive vehicle)
+const HP_PER_ROUND := 0.1  ## per round after round 4 (rigs grow faster than the hive's hp curve, so bosses scale gently)
 const HP_PER_EXTRA_VEHICLE := 0.8
 const PHASE2_FRAC := 0.66
 const PHASE3_FRAC := 0.33
@@ -61,9 +62,11 @@ const VOLLEY_TICKS_P3 := 110
 const BROOD_TICKS := 130
 const BROOD_PACK := 4
 const BROOD_MAX_MITES := 120
-const TRIPOD_STANDOFF_MIN := 260.0
-const TRIPOD_STANDOFF_MAX := 430.0
-const TRIPOD_ENTRY_DIST := 650.0
+const TRIPOD_STANDOFF_MIN := 170.0
+const TRIPOD_STANDOFF_MAX := 290.0
+const TRIPOD_ENTRY_DIST := 480.0
+const TRIPOD_HP_MULT := 0.8  ## relative to HP_BASE (she is the harder one to reach)
+const COLOSSUS_HP_MULT := 1.1
 const TRIPOD_ENTRY_SPEED := 2.4
 const TRIPOD_P3_SPEED := 1.4
 
@@ -133,8 +136,9 @@ static func next_boss(w: SimWorld) -> Dictionary:
 	return {"round": r, "kind": k, "enraged": enraged_in(r), "name": boss_name(k)}
 
 
-static func max_hp_for(r: int, vehicles_alive: int) -> float:
-	return HP_BASE * SimWorld.enemy_hp_mult(r) * (1.0 + HP_PER_EXTRA_VEHICLE * float(maxi(vehicles_alive - 1, 0)))
+static func max_hp_for(r: int, vehicles_alive: int, kind: int = -1) -> float:
+	var km: float = TRIPOD_HP_MULT if kind == SimWorld.BOSS_A else (COLOSSUS_HP_MULT if kind == SimWorld.BOSS_B else 1.0)
+	return HP_BASE * km * (1.0 + HP_PER_ROUND * float(maxi(r - FIRST_ROUND, 0))) * (1.0 + HP_PER_EXTRA_VEHICLE * float(maxi(vehicles_alive - 1, 0)))
 
 
 static func speed_of(w: SimWorld, kind: int, phase: int) -> float:
@@ -261,7 +265,7 @@ static func _spawn(w: SimWorld) -> void:
 	for v in w.vehicles:
 		if v.alive and not v.eliminated:
 			alive += 1
-	w.boss_max_hp = max_hp_for(w.round, maxi(alive, 1))
+	w.boss_max_hp = max_hp_for(w.round, maxi(alive, 1), w.boss_kind)
 	var id: int = w.spawn_enemy(w.boss_kind, w.boss_spawn_pos)
 	if id < 0:
 		return

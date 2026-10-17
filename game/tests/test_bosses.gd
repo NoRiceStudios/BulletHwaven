@@ -157,7 +157,7 @@ func test_hp_scales_with_round_and_vehicles() -> void:
 	var w := _duel()
 	w.add_vehicle(2, Vector2(900, 700))
 	_step_until_active(w)
-	assert_eq(w.boss_max_hp, Bosses.max_hp_for(4, 2))
+	assert_eq(w.boss_max_hp, Bosses.max_hp_for(4, 2, w.boss_kind))
 	assert_eq(w.enemy_hp[_boss_index(w)], w.boss_max_hp)
 
 

@@ -146,6 +146,7 @@ func _draw() -> void:
 		elif me != null and not me.eliminated:
 			_draw_drain_warning(me, vs)
 		_draw_feed(vs)
+		_draw_boss(vs)
 		_draw_grace(vs, watching)
 		if v != null and (watching or not (me != null and me.eliminated)):
 			_draw_rival_arrows(vs, v)
@@ -528,6 +529,51 @@ func _clear_of_panels(p: Vector2, bounds: Rect2) -> Vector2:
 	return p
 
 
+const BOSS_BAR_W := 230.0
+const BOSS_NOTE_TICKS := 90  ## "BOSS DOWN" / "BOSS RETREATS" stays this long
+
+
+## Height the boss bar takes under the top plate (other top banners move down by it).
+func _boss_offset() -> float:
+	if world.boss_state == Bosses.ST_ACTIVE or world.boss_state == Bosses.ST_WARNED:
+		return 27.0
+	if view != null and world.tick - view.boss_end_tick < BOSS_NOTE_TICKS and world.boss_state >= Bosses.ST_KILLED:
+		return 27.0
+	return 0.0
+
+
+## PLACEHOLDER boss bar under the top plate: name, enraged tag, phase pips and an hp bar; a warning plate
+## before the spawn and a short "BOSS DOWN" / "BOSS RETREATS" note after. Driven by world.boss_* only.
+func _draw_boss(vs: Vector2) -> void:
+	if world.phase != SimWorld.PHASE_COMBAT or _boss_offset() <= 0.0:
+		return
+	var cx: float = floorf(vs.x / 2.0)
+	var r := Rect2(cx - BOSS_BAR_W / 2.0, 37.0, BOSS_BAR_W, 24)
+	UiKit.panel(self, r)
+	_panels.append(r)
+	var name_s: String = Bosses.boss_name(world.boss_kind)
+	if world.boss_state == Bosses.ST_WARNED:
+		UiKit.hazard_frame(self, r.grow(-2.0), 2.0)
+		var secs: int = ceili(float(world.boss_warn_left) / float(SimWorld.TICK_RATE))
+		var hot: bool = (world.tick / 5) % 2 == 0
+		UiKit.center_big(self, "BOSS INCOMING", cx, r.position.y + 3, Gfx.UI_BAD if hot else Gfx.FIRE[4], Gfx.OUTLINE)
+		UiKit.center_text(self, "%s%s IN %d" % [name_s, " (ENRAGED)" if world.boss_enraged else "", secs], cx, r.position.y + 14, Gfx.UI_DIM, Gfx.UI_SHADOW)
+		return
+	if world.boss_state != Bosses.ST_ACTIVE:
+		var down: bool = world.boss_state == Bosses.ST_KILLED
+		UiKit.center_big(self, "BOSS DOWN" if down else "BOSS RETREATS", cx, r.position.y + 3, Gfx.FIRE[5] if down else Gfx.UI_DIM, Gfx.OUTLINE)
+		UiKit.center_text(self, name_s, cx, r.position.y + 14, Gfx.UI_DIM, Gfx.UI_SHADOW)
+		return
+	UiFont.draw(self, name_s, Vector2(r.position.x + 6, r.position.y + 3), Gfx.UI_TEXT, Gfx.OUTLINE)
+	if world.boss_enraged:
+		var ew: float = UiFont.width("ENRAGED")
+		UiFont.draw(self, "ENRAGED", Vector2(r.end.x - ew - 6, r.position.y + 3), Gfx.UI_BAD if (world.tick / 8) % 2 == 0 else Gfx.FIRE[4], Gfx.OUTLINE)
+	var bar := Rect2(r.position.x + 6, r.position.y + 14, r.size.x - 12, 6)
+	UiKit.bar(self, bar, world.boss_hp_frac, Gfx.GLOW[3] if world.boss_phase < 3 else Gfx.GLOW[4])
+	for tfrac in [Bosses.PHASE2_FRAC, Bosses.PHASE3_FRAC]:
+		draw_rect(Rect2(bar.position.x + floorf((bar.size.x - 2.0) * tfrac) + 1.0, bar.position.y, 1, bar.size.y), Color(Gfx.OUTLINE, 0.9))
+
+
 ## PvP grace (round PVP_START_ROUND): a hazard-framed countdown at the top until rivals may shoot.
 func _draw_grace(vs: Vector2, below: bool) -> void:
 	if world.phase != SimWorld.PHASE_COMBAT or world.pvp_grace_ticks <= 0:
@@ -535,7 +581,7 @@ func _draw_grace(vs: Vector2, below: bool) -> void:
 	var cx: float = floorf(vs.x / 2.0)
 	var secs: int = ceili(float(world.pvp_grace_ticks) / float(SimWorld.TICK_RATE))
 	var title := "PVP IN %d" % secs
-	var r := Rect2(cx - 60, 66.0 if below else 37.0, 120, 27)
+	var r := Rect2(cx - 60, (66.0 if below else 37.0) + _boss_offset(), 120, 27)
 	UiKit.panel(self, r)
 	UiKit.hazard_frame(self, r.grow(-2.0), 2.0)
 	var hot: bool = secs <= 3 and (world.tick / 5) % 2 == 0
@@ -750,7 +796,7 @@ func _draw_surge(vs: Vector2, below: bool) -> void:
 	var el: int = world.tick - j.surge_tick
 	var left: int = j.surge_left(world.tick)
 	var cx: float = floorf(vs.x / 2.0)
-	var y: float = 37.0 + (29.0 if below else 0.0) + (31.0 if world.pvp_grace_ticks > 0 else 0.0)
+	var y: float = 37.0 + (29.0 if below else 0.0) + (31.0 if world.pvp_grace_ticks > 0 else 0.0) + _boss_offset()
 	y -= floorf(clampf(1.0 - float(el) / 5.0, 0.0, 1.0) * 30.0)  # drops in from under the top plate
 	if left <= 0 and -left > JuiceState.SURGE_HOLD - 8 and (el / 2) % 2 == 0:
 		return

@@ -42,6 +42,10 @@ var _tracers: SheetLayer
 var _evo_tracers: SheetLayer  ## shots of evolved weapons (Ammo.EVO_BIT): gatling streaks, grinder slugs, giant shells
 var _acid: SheetLayer
 var _halos: Node2D
+var _boss_view: BossView
+var boss_warn_tick: int = -100000  ## tick the "boss" warning arrived (HUD)
+var boss_end_tick: int = -100000  ## tick of the last boss_kill / boss_retreat (HUD)
+var boss_end_kill: bool = false
 var _combat: CombatFx
 var _kill_fx: KillFx
 ## Kill combo of the watched rig and the hive surge warning (read by the HUD).
@@ -160,6 +164,10 @@ func _ready() -> void:
 	_effects = EffectsLayer.new()
 	_effects.frozen = frozen
 	add_child(_effects)
+
+	_boss_view = BossView.new()
+	_boss_view.view = self
+	add_child(_boss_view)
 
 	_combat = CombatFx.new()
 	_combat.view = self
@@ -778,9 +786,36 @@ func _consume_events(events: Array, age: float, transient: bool, tick: int = -1,
 						if kind >= 0 and not frozen and hits < HITS_PER_TICK:
 							hits += 1
 							_register_hit(pos)
+			"boss":  # a boss arrives in `in_ticks` (HUD warning)
+				boss_warn_tick = tick if tick >= 0 else world.tick
+			"boss_spawn", "boss_split":
+				if transient and _on_screen(pos):
+					_effects.spawn(EffectsLayer.Kind.SHOCK, pos, 0.0, age, 0, 60.0)
+					_effects.spawn(EffectsLayer.Kind.DUST, pos, 0.0, age, h, 40.0)
+					if not frozen:
+						_shake = maxf(_shake, 0.5)
+			"boss_blast":  # a shell lands (kind = radius)
+				if transient:
+					_effects.spawn(EffectsLayer.Kind.EXPLOSION_BIG, pos, 0.0, age, h, 0.0)
+					_effects.spawn(EffectsLayer.Kind.SHOCK, pos, 0.0, age, 0, float(kind))
+					if not frozen and _on_screen(pos):
+						_shake = maxf(_shake, 0.45)
+			"boss_phase":
+				if transient and not frozen:
+					_shake = maxf(_shake, 0.6)
+			"boss_kill", "boss_retreat":
+				boss_end_tick = tick if tick >= 0 else world.tick
+				boss_end_kill = type == "boss_kill"
+				if transient and type == "boss_kill":
+					_effects.spawn(EffectsLayer.Kind.EXPLOSION_BIG, pos, 0.0, age, h, 0.0)
+					_effects.spawn(EffectsLayer.Kind.SHOCK, pos, 0.0, age, 0, 90.0)
+					if not frozen:
+						_shake = maxf(_shake, 0.8)
 			"surge":  # the hive surges in `in_ticks`: the HUD's SWARM INCOMING banner
 				juice.on_surge(tick if tick >= 0 else world.tick, int(e.get("in_ticks", JuiceState.SURGE_DEFAULT_TICKS)))
 			"kill":
+				if kind >= SimWorld.BOSS_A:
+					continue  # boss bodies have their own events
 				if kind < 0:
 					continue  # player kill: the wreck comes from "vehicle_destroyed", no alien goo
 				_kill_decal(pos, kind, h)

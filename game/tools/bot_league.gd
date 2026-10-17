@@ -17,7 +17,7 @@ extends SceneTree
 
 const LANDMARK := 5
 const FFA_POS: Array = [Vector2(-240, -100), Vector2(240, -100), Vector2(240, 100), Vector2(-240, 100)]  ## offsets from the arena centre
-const KIND_NAMES: PackedStringArray = ["mite", "boulder", "spitter"]
+const KIND_NAMES: PackedStringArray = ["mite", "boulder", "spitter", "boss", "boss", "boss"]
 const FUEL_COLS: Array = [2, 4, 6, 8, 10, 12, 15, 20]
 
 var args: Dictionary = {}
@@ -153,11 +153,14 @@ func _play(kind: String, p_seed: int, pols: Array) -> Dictionary:
 				var vi: int = int(e["owner"])
 				var vd: SimVehicle = w.vehicles[vi]
 				var src: int = int(e.get("cause", -1))  # SimWorld.SRC_*: 0 mite, 1 boulder, 2 spitter, 3 acid, 4 ram, 5 shots
-				var cause: String = _cause(w, vd) if src < 0 else ["mite", "boulder", "spitter", "acid", "pvp", "pvp"][mini(src, 5)]
+				var cause: String = _cause(w, vd) if src < 0 else ["mite", "boulder", "spitter", "acid", "pvp", "pvp", "boss"][mini(src, 6)]
 				(stats[vi]["deaths"] as Array).append([w.tick, w.round, cause])
 		for i in n:
 			last_fuel[i] = w.vehicles[i].fuel
 
+	if w.boss_state == Bosses.ST_ACTIVE:  # the match ended with a boss on the field
+		w.boss_log.append({"round": w.round, "kind": w.boss_kind, "what": "lost", "tick": w.boss_ticks, "hp": w.boss_hp_frac, "killer": -1,
+			"taken": w.boss_dmg_taken, "dealt": {}, "alive": 0, "phase": w.boss_phase})
 	# placements: survivors by fuel then kills, then eliminated in reverse elimination order
 	var survivors: Array[int] = []
 	for i in n:
@@ -189,7 +192,7 @@ func _play(kind: String, p_seed: int, pols: Array) -> Dictionary:
 		players.append(s)
 	return {
 		"kind": kind, "seed": p_seed, "ticks": w.tick, "rounds": w.round, "capped": capped,
-		"gameover": w.phase == SimWorld.PHASE_GAME_OVER, "players": players,
+		"gameover": w.phase == SimWorld.PHASE_GAME_OVER, "players": players, "bosses": w.boss_log,
 	}
 
 
@@ -219,7 +222,7 @@ func _do_workshop(w: SimWorld, v: SimVehicle, bot: BotPolicy, st: Dictionary) ->
 
 
 func _cause(w: SimWorld, v: SimVehicle) -> String:
-	var weight: Array[float] = [0.0, 0.0, 0.0]
+	var weight: Array[float] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 	for j in w.enemy_count:
 		if w.enemy_pos[j].distance_squared_to(v.pos) < 40.0 * 40.0:
 			var k: int = w.enemy_kind[j]
@@ -227,8 +230,9 @@ func _cause(w: SimWorld, v: SimVehicle) -> String:
 	var bi: int = 0
 	if weight[1] > weight[bi]:
 		bi = 1
-	if weight[2] > weight[bi]:
-		bi = 2
+	for bk in range(2, 6):
+		if weight[bk] > weight[bi]:
+			bi = bk
 	if weight[bi] > 0.0:
 		return KIND_NAMES[bi]
 	for p in w.proj_count:
@@ -571,6 +575,8 @@ func _report() -> void:
 	md.append_array(_table(["policy", "scrap income / round", "scrap spent / round", "rerolls / round", "unspent at end"], econ_rows))
 	md.append("")
 
+	md.append_array(_boss_section(recs))
+
 	# ---- findings
 	finds.append_array(_findings(solo_stat, ffa_stat, card_info, tech_info, solo, ffa, ffa_matches))
 	md.insert(7, "## Findings")
@@ -589,6 +595,131 @@ func _report() -> void:
 	ff.store_string("\n".join(finds) + "\n")
 	ff.close()
 	print("report written to " + out_dir.path_join("report.md"))
+
+
+## Boss encounters: one row per (match, boss round) from the sim's boss_log.
+func _boss_section(recs: Array[Dictionary]) -> PackedStringArray:
+	var enc: Array[Dictionary] = []
+	var boss_deaths: Dictionary = {}  # round -> deaths caused by a boss
+	for r in recs:
+		var logs: Array = r.get("bosses", [])
+		var by: Dictionary = {}
+		for row: Dictionary in logs:
+			var rk: int = int(row["round"])
+			if not by.has(rk):
+				by[rk] = []
+			(by[rk] as Array).append(row)
+		for rk2 in by.keys():
+			var rows: Array = by[rk2]
+			var outcome: String = "lost"
+			var ticks: int = 0
+			var hp_left: float = 1.0
+			var taken: float = 0.0
+			var spawned: bool = false
+			var kind: int = 3
+			var alive: int = 0
+			for row2: Dictionary in rows:
+				var what: String = str(row2["what"])
+				kind = int(row2["kind"])
+				if what == "spawn":
+					spawned = true
+					alive = int(row2["alive"])
+				taken = float(row2["taken"])
+				if what == "kill":
+					outcome = "killed"
+					ticks = int(row2["tick"])
+					hp_left = 0.0
+				elif what == "retreat" and outcome != "killed":
+					outcome = "retreated"
+					hp_left = float(row2["hp"])
+					ticks = int(row2["tick"])
+				elif what == "lost" and outcome != "killed":
+					hp_left = float(row2["hp"])
+					ticks = int(row2["tick"])
+			if not spawned:
+				continue
+			var pol: String = str((r["players"] as Array)[0]["policy"]) if str(r["kind"]) == "solo" else "ffa"
+			enc.append({"policy": pol, "round": int(rk2), "kind": kind, "outcome": outcome, "ticks": ticks, "hp_left": hp_left, "taken": taken, "alive": alive, "mode": str(r["kind"])})
+		for p: Dictionary in r["players"]:
+			for d: Array in p["deaths"]:
+				if str(d[2]) == "boss":
+					boss_deaths[int(d[1])] = int(boss_deaths.get(int(d[1]), 0)) + 1
+	var out := PackedStringArray()
+	out.append("## Bosses")
+	out.append("")
+	if enc.is_empty():
+		out.append("No boss encounters in this run.")
+		out.append("")
+		return out
+	out.append("One row per boss spawn. `kill%` = boss dead before the round ended, `retreat%` = round timer ended with the boss alive, `lost%` = the match ended with it on the field. `taken` = damage the boss's own attacks did to rigs (shells, charges, shards, contact).")
+	out.append("")
+	var heads: Array = ["", "n", "kill%", "retreat%", "lost%", "mean kill time s", "hp left (not killed)", "taken / enc", "rigs/spawn", "boss deaths"]
+	for mode in ["solo", "ffa"]:
+		var rows3: Array = []
+		for rk3 in range(4, 41, 4):
+			var es: Array = enc.filter(func(e: Dictionary) -> bool: return int(e["round"]) == rk3 and str(e["mode"]) == mode)
+			if es.is_empty():
+				continue
+			rows3.append(_boss_row("R%d" % rk3, es, int(boss_deaths.get(rk3, 0))))
+		if not rows3.is_empty():
+			out.append("### %s, by round" % mode)
+			out.append("")
+			heads[0] = "round"
+			out.append_array(_table(heads, rows3))
+			out.append("")
+	var pols: Array = []
+	for e in enc:
+		if str(e["mode"]) == "solo" and not pols.has(str(e["policy"])):
+			pols.append(str(e["policy"]))
+	pols.sort()
+	var prow: Array = []
+	for pn in pols:
+		var es2: Array = enc.filter(func(e: Dictionary) -> bool: return str(e["policy"]) == pn and str(e["mode"]) == "solo")
+		prow.append(_boss_row(str(pn), es2, 0))
+	if not prow.is_empty():
+		out.append("### solo, by policy (all boss rounds)")
+		out.append("")
+		heads[0] = "policy"
+		out.append_array(_table(heads, prow))
+		out.append("")
+	var kinds: Array = []
+	for kk in [3, 4]:
+		var es3: Array = enc.filter(func(e: Dictionary) -> bool: return int(e["kind"]) == kk)
+		if not es3.is_empty():
+			kinds.append(_boss_row(Bosses.boss_name(kk), es3, 0))
+	if not kinds.is_empty():
+		out.append("### by boss")
+		out.append("")
+		heads[0] = "boss"
+		out.append_array(_table(heads, kinds))
+		out.append("")
+	return out
+
+
+func _boss_row(label: String, es: Array, deaths: int) -> Array:
+	var n: int = es.size()
+	var k: int = 0
+	var rt: int = 0
+	var ls: int = 0
+	var kt: Array = []
+	var hl: Array = []
+	var tk: Array = []
+	var al: Array = []
+	for e: Dictionary in es:
+		match str(e["outcome"]):
+			"killed":
+				k += 1
+				kt.append(float(e["ticks"]) / 30.0)
+			"retreated":
+				rt += 1
+				hl.append(float(e["hp_left"]))
+			_:
+				ls += 1
+				hl.append(float(e["hp_left"]))
+		tk.append(float(e["taken"]))
+		al.append(float(e["alive"]))
+	return [label, n, _f(100.0 * k / n, 0), _f(100.0 * rt / n, 0), _f(100.0 * ls / n, 0), _f(_mean(kt), 1) if not kt.is_empty() else "-",
+		_f(100.0 * _mean(hl), 0) + "%" if not hl.is_empty() else "-", _f(_mean(tk), 0), _f(_mean(al), 1), deaths if deaths > 0 else "-"]
 
 
 func _findings(solo_stat: Dictionary, ffa_stat: Dictionary, card_info: Dictionary, tech_info: Dictionary,
