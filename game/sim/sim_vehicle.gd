@@ -139,6 +139,7 @@ var orbit_dir: float = 1.0
 var eff_drive: String = "circle"  ## doctrine after the rules ran this tick (Doctrine.apply_rig)
 var eff_target: String = "nearest"
 var acquired_mode: String = ""  ## eff_target the current target was picked with (a rule switch retargets at once)
+var rule_conds: int = 0  ## bit i * Doctrine.MAX_CONDS + j: condition j of rig rule i holds (synced, live rule view)
 var rule_live: int = 0  ## bit i: rig rule i matched this tick (synced, for the rule editor)
 var retaliate_id: int = -1  ## vehicle id of the last player that hurt this one (return fire), -1 = none
 var retaliate_ticks: int = 0  ## ticks left for the return-fire memory

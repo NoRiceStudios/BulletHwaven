@@ -163,6 +163,8 @@ This answers R2 (agency). Inspired by the **Gambit system from Final Fantasy XII
 - **Target mark (right-click):** during combat the player right-clicks an alien or (with PvP on) a rival rig. For 6 s every gun and the rig's targeting focus it (the drive mode is unchanged); the order then cools down for 15 s, counted from the cast. A miss costs nothing, and the mark ends at once when the target dies. Rules can react with the condition `MARK ACTIVE` (e.g. charge while a mark is on). Bots never use it.
 - **Radio commands (Z X C V or the radio panel):** 3 radio charges per round. FALL BACK, ALL IN, HOLD and BOSS override all rules and the base setting for 5 s (fall back = flee, all in = charge with all guns on the rig target, hold = stand still, boss = target the boss, or the nearest alien without one); a short lock between two calls prevents wasted double presses. Rules can react with the condition `RADIO ACTIVE`. Bots never use it.
 
+- **Live rule monitor:** a panel on the right edge lists the rig's and every gun's rules during combat, lights each condition while it holds and marks which rule WINS right now (L hides it).
+
 **Layer 3: active abilities (1–2 slots, optional)**
 - Nitro, EMP, smoke, oil slick, overcharge. They have cooldowns and can be set to **auto-cast** (idle players) or triggered by hand (active players get a slight advantage through timing).
 

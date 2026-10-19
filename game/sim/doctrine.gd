@@ -287,6 +287,7 @@ static func apply_rig(w: SimWorld, v: SimVehicle) -> void:
 	var drive: String = str(v.doctrine.get("drive", "circle"))
 	var target: String = str(v.doctrine.get("target", "nearest"))
 	var live: int = 0
+	var clive: int = 0
 	var got_drive: bool = false
 	var got_target: bool = false
 	var got_focus: bool = false
@@ -305,7 +306,9 @@ static func apply_rig(w: SimWorld, v: SimVehicle) -> void:
 		if grp == "ability":
 			abit = 1 << Abilities.index_of(action_value(a))
 			ab_any |= abit
-		if not _holds(w, v, r["if"], v.target_kind, v.target_index, v.target_id, v.target_pos, ctx):
+		var cm: int = _cond_mask(w, v, r["if"], v.target_kind, v.target_index, v.target_id, v.target_pos, ctx)
+		clive |= cm << (i * MAX_CONDS)
+		if cm != (1 << (r["if"] as Array).size()) - 1:
 			continue
 		live |= 1 << i
 		if grp == "drive" and not got_drive:
@@ -330,6 +333,7 @@ static func apply_rig(w: SimWorld, v: SimVehicle) -> void:
 	v.ab_rule_any = ab_any
 	v.ab_rule_hit = ab_hit
 	v.rule_live = live
+	v.rule_conds = clive
 
 
 ## Runs a weapon's rules. Returns [target mode, hold fire?, wanted ammo id or ""] and stores the match
@@ -342,6 +346,7 @@ static func apply_weapon(w: SimWorld, v: SimVehicle, wp: Dictionary) -> Array:
 	var ammo: String = ""
 	var rules: Array = d["rules"]
 	var live: int = 0
+	var clive: int = 0
 	if not rules.is_empty():
 		var tk: int = int(wp.get("tk", 0))
 		var ti: int = int(wp.get("ti", -1))
@@ -359,7 +364,9 @@ static func apply_weapon(w: SimWorld, v: SimVehicle, wp: Dictionary) -> Array:
 		var n: int = mini(rules.size(), active_slots(v))
 		for i in n:
 			var r: Dictionary = rules[i]
-			if not _holds(w, v, r["if"], tk, ti, tid, tp, ctx):
+			var cm: int = _cond_mask(w, v, r["if"], tk, ti, tid, tp, ctx)
+			clive |= cm << (i * MAX_CONDS)
+			if cm != (1 << (r["if"] as Array).size()) - 1:
 				continue
 			live |= 1 << i
 			var a: String = r["do"]
@@ -373,27 +380,35 @@ static func apply_weapon(w: SimWorld, v: SimVehicle, wp: Dictionary) -> Array:
 				ammo = action_value(a)
 				got_ammo = true
 	wp["live"] = live
+	wp["clive"] = clive
 	return [mode, hold, ammo]
 
 
 static func _holds(w: SimWorld, v: SimVehicle, conds: Array, tk: int, ti: int, tid: int, tp: Vector2, ctx: Dictionary) -> bool:
+	return _cond_mask(w, v, conds, tk, ti, tid, tp, ctx) == (1 << conds.size()) - 1
+
+
+## Evaluates every condition of a rule (no short-circuit, pure: no rng, no state): bit j = condition j holds.
+## The rule matches when all of its bits are set. `ctx` caches the world queries per tick.
+static func _cond_mask(w: SimWorld, v: SimVehicle, conds: Array, tk: int, ti: int, tid: int, tp: Vector2, ctx: Dictionary) -> int:
+	var mask: int = 0
+	var j: int = 0
 	for c: Array in conds:
-		var id: String = c[0]
-		var x: float = _value(w, v, id, tk, ti, tid, tp, ctx)
-		if is_nan(x):
-			return false  # a target condition without a target never holds
-		var val: float = float(c[2])
-		match str(c[1]):
-			"<":
-				if not x < val:
-					return false
-			">":
-				if not x > val:
-					return false
-			_:
-				if x != val:
-					return false
-	return true
+		var x: float = _value(w, v, c[0], tk, ti, tid, tp, ctx)
+		if not is_nan(x):  # a target condition without a target never holds
+			var val: float = float(c[2])
+			var ok: bool
+			match str(c[1]):
+				"<":
+					ok = x < val
+				">":
+					ok = x > val
+				_:
+					ok = x == val
+			if ok:
+				mask |= 1 << j
+		j += 1
+	return mask
 
 
 ## The current value of condition `id` (NAN when it needs a target and there is none).

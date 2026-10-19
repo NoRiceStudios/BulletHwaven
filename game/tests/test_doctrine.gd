@@ -224,3 +224,30 @@ func test_editor_edits_through_commands() -> void:
 	assert_eq(DoctrineEditor.sentence(Doctrine.parse("hp<30&t_player=0|drive:flee", "rig")[0], "rig"),
 		"IF OWN HP IS BELOW 30% AND THE TARGET IS NOT A RIVAL: THE RIG FLEES.")
 	ed.free()
+
+
+func test_condition_masks_rig_weapon_snapshot() -> void:
+	var w := _world()
+	var v: SimVehicle = w.vehicles[0]
+	_rules(w, "rig", "hp<50&swarm>3|drive:flee;swarm>0|target:weakest")
+	_rules(w, "mg", "t_boulder=0&t_player=1|fire:hold;t_boulder=0|target:weakest")
+	v.hp = v.max_hp * 0.4
+	w.spawn_enemy(SimWorld.MITE, v.pos + Vector2(60, 0))
+	w.step()
+	w.step()
+	var m: int = Doctrine.MAX_CONDS
+	assert_eq(v.rule_conds & 15, 1, "rule 0: hp<50 holds, swarm>3 not")
+	assert_eq((v.rule_conds >> m) & 15, 1, "rule 1: swarm>0 holds")
+	assert_eq(v.rule_live, 2, "rule 0 not live, rule 1 live")
+	var wp: Dictionary = v.weapons[0]
+	assert_eq(int(wp["clive"]) & 15, 1, "weapon rule 0: only t_boulder=0")
+	assert_eq((int(wp["clive"]) >> m) & 15, 1, "weapon rule 1")
+	var client := SimWorld.new(0)
+	assert_true(Snapshot.apply(client, Snapshot.encode(w)))
+	assert_eq(client.vehicles[0].rule_conds, v.rule_conds, "rule_conds synced")
+	assert_eq(int(client.vehicles[0].weapons[0]["clive"]), int(wp["clive"]), "clive synced")
+	v.rules_off_ticks = 30
+	w.step()
+	assert_eq(v.rule_conds, 0, "EMP: no bits")
+	assert_eq(v.rule_live, 0)
+	assert_eq(int(v.weapons[0]["clive"]), 0, "EMP: weapon rules off too")

@@ -30,7 +30,7 @@ extends RefCounted
 ## current round, SimWorld.enemy_max_hp). Card and tech ids are table indices (Cards.DEFS / Tech.DEFS).
 ## Projectile pierce / splash are not sent: the client world is passive.
 
-const VERSION := 16  # 16: radio commands (vehicle extras byte 2, bit 1: charges / ticks / cmd / lock), event radio; 15: live order "target mark" (vehicle extras flag 128: mark_order ticks / cooldown / kind / id), event mark; 14: hive signature (header u16), species kinds 3..5 (enemy kind 3 bits, heading 6 bits), taken stats glass / brood / shrieker, events shriek / brood; 13: boss rounds (header boss_first, FLAG_BOSS tail block, boss enemy kinds, boss events); 12: event surge; 11: salvage (contract offers and progress, loan debt, reserved card, bonus offers), events contract_done / saw / shockwave / chain / jerry_blast; 10: momentum, abilities (slots, cooldowns, effect timers, decoy), swarm mark, jam flags, stunned bitset; 9: ammo / heat per weapon, ground zones, burning bitset, float cooldowns; 8: tech v2.3 (dormant fusions, respecs, purchase rounds); 7: doctrine rules (rig + per weapon); 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
+const VERSION := 17  # 17: live condition masks (vehicle rule_conds u32, weapon clive u32); 16: radio commands (vehicle extras byte 2, bit 1: charges / ticks / cmd / lock), event radio; 15: live order "target mark" (vehicle extras flag 128: mark_order ticks / cooldown / kind / id), event mark; 14: hive signature (header u16), species kinds 3..5 (enemy kind 3 bits, heading 6 bits), taken stats glass / brood / shrieker, events shriek / brood; 13: boss rounds (header boss_first, FLAG_BOSS tail block, boss enemy kinds, boss events); 12: event surge; 11: salvage (contract offers and progress, loan debt, reserved card, bonus offers), events contract_done / saw / shockwave / chain / jerry_blast; 10: momentum, abilities (slots, cooldowns, effect timers, decoy), swarm mark, jam flags, stunned bitset; 9: ammo / heat per weapon, ground zones, burning bitset, float cooldowns; 8: tech v2.3 (dormant fusions, respecs, purchase rounds); 7: doctrine rules (rig + per weapon); 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
 const FLAG_WIDE_IDS := 1  ## enemy ids spread over more than 65535: ids are sent as u32 deltas from 0
 const FLAG_STATS := 2  ## vehicles carry round_stats and match_stats (sent outside combat only)
 const FLAG_BURNING := 4  ## a burning bitset follows the projectiles (only sent while something burns)
@@ -567,6 +567,7 @@ static func _put_vehicle(sp: StreamPeerBuffer, v: SimVehicle, with_stats: bool =
 		sp.put_float(float(w.get("splash", 0.0)))
 		sp.put_float(float(w.get("speed", 0.0)))
 		sp.put_u8(clampi(int(w.get("live", 0)), 0, 255))
+		sp.put_u32(int(w.get("clive", 0)) & 0xFFFFFF)
 		sp.put_u8(clampi(int(w.get("heat", 0)), 0, 255))
 		sp.put_u8(clampi(int(w.get("jam", 0)), 0, 255))
 		sp.put_u8(clampi(int(w.get("sw", 0)), 0, 255))
@@ -575,6 +576,7 @@ static func _put_vehicle(sp: StreamPeerBuffer, v: SimVehicle, with_stats: bool =
 			sp.put_u8(Ammo.IDS.find(str(wammo[ai])) if ai < wammo.size() else 255)
 		wn += 1
 	sp.put_u8(clampi(v.rule_live, 0, 255))
+	sp.put_u32(v.rule_conds & 0xFFFFFF)
 	_put_rules(sp, v.rules)
 	var kinds: Array = []
 	for k: String in v.weapon_doctrine:
@@ -945,6 +947,7 @@ static func _get_vehicle(r: _Reader, with_stats: bool = false) -> SimVehicle:
 		var splash: float = r.f32()
 		var wspeed: float = r.f32()
 		var wlive: int = r.u8()
+		var wclive: int = r.u32()
 		var wheat: int = r.u8()
 		var wjam: int = r.u8()
 		var wsw: int = r.u8()
@@ -959,9 +962,10 @@ static func _get_vehicle(r: _Reader, with_stats: bool = false) -> SimVehicle:
 		v.weapons.append({
 			"kind": kind, "damage": dmg, "range": rng, "cooldown_ticks": cdt, "cooldown": cd, "aim": aim,
 			"pellets": pellets, "spread": spread, "pierce": pierce, "splash": splash, "speed": wspeed,
-			"live": wlive, "heat": wheat, "jam": wjam, "sw": wsw, "shots": 0,
+			"live": wlive, "clive": wclive, "heat": wheat, "jam": wjam, "sw": wsw, "shots": 0,
 		})
 	v.rule_live = r.u8()
+	v.rule_conds = r.u32()
 	v.rules = _get_rules(r, Doctrine.SCOPE_RIG)
 	v.weapon_doctrine = {}
 	var nwd: int = r.u8()
@@ -1061,6 +1065,7 @@ static func _commit_vehicles(world: SimWorld, fresh: Array[SimVehicle]) -> void:
 			dst.rules = src.rules
 			dst.weapon_doctrine = src.weapon_doctrine
 			dst.rule_live = src.rule_live
+			dst.rule_conds = src.rule_conds
 			dst.weapons = src.weapons
 			dst.ammo = src.ammo
 			dst.target_kind = src.target_kind

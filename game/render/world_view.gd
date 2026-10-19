@@ -53,6 +53,7 @@ var juice: JuiceState = JuiceState.new()
 var _labels: Node2D
 var _camera: Camera2D
 var _hud: Hud
+var rules_live: RulesLive  ## live rule monitor on the right edge (combat, L toggles)
 var minimap: Minimap
 var _hud_layer: CanvasLayer
 var workshop: WorkshopUi
@@ -216,6 +217,9 @@ func _ready() -> void:
 	minimap = Minimap.new()
 	minimap.view = self
 	hud_layer.add_child(minimap)
+	rules_live = RulesLive.new()
+	rules_live.view = self
+	hud_layer.add_child(rules_live)
 	workshop = WorkshopUi.new()
 	workshop.view = self
 	hud_layer.add_child(workshop)
