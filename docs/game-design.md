@@ -157,6 +157,10 @@ This answers R2 (agency). Inspired by the **Gambit system from Final Fantasy XII
 - Slots: 2 per list to start, +1 per Electronics tier (so 5 with the full branch); rules beyond the slots stay saved but locked.
 - The editor (key **P**, or PROGRAM RULES on the workshop's nav-comp) works in the workshop and during combat. Each rule is also shown as a plain sentence, a lamp lights while a rule matches, and quick-add templates cover the common cases (retreat below 30% HP, kite when swarmed, save ammo on boulders, ...). The HUD shows which rig rules are firing.
 
+**Live control (as built, after playtest feedback "I want to adjust my rig's behaviour during the round and set it once before round 1"):**
+- **Deploy phase before round 1** (30 s, ends early when everyone is ready): every player picks a starting doctrine from four presets (Orbiter, Long Gun, Brawler, Headhunter: base drive, base target and two rules each, all usable by a fresh rig) and can tune it in the rule editor next to them.
+- **Behaviour picker in combat:** a click on the dock's DRIVE / TARGET block opens a strip above the dock to switch the base drive and base target with one click; it shows the keys (1 2 3 drive, Q W E target) and which rule overrides the base right now. The full editor stays on **P**.
+
 **Layer 3: active abilities (1–2 slots, optional)**
 - Nitro, EMP, smoke, oil slick, overcharge. They have cooldowns and can be set to **auto-cast** (idle players) or triggered by hand (active players get a slight advantage through timing).
 

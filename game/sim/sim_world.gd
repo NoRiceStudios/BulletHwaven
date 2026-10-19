@@ -160,11 +160,14 @@ const PLATE_TTL := 0.5
 const PHASE_COMBAT := 0
 const PHASE_WORKSHOP := 1
 const PHASE_GAME_OVER := 2
+const PHASE_DEPLOY := 3  # pre-match doctrine setup (begin_deploy); ends in round 1 combat
 
 const COMBAT_TICKS := 2100  # 70 s
 const COMBAT_TICKS_EARLY := 1350  # 45 s, rounds 1 and 2
 const EARLY_ROUNDS := 2
 const WORKSHOP_TICKS := 1350  # 45 s
+const DEPLOY_TICKS := 900  # 30 s
+const FAST_DEPLOY_TICKS := 60
 const FAST_COMBAT_TICKS := 120  # world.fast_rounds (tests, screenshots)
 const FAST_WORKSHOP_TICKS := 81  # scaled with the workshop: 45 * 45 / 25
 
@@ -223,8 +226,11 @@ var fuel_drain: int = 0
 var fast_rounds: bool = false:
 	set(value):
 		fast_rounds = value
-		if tick == 0 and phase == PHASE_COMBAT and round == 1:
-			phase_ticks_left = combat_duration(1)
+		if tick == 0 and round == 1:
+			if phase == PHASE_COMBAT:
+				phase_ticks_left = combat_duration(1)
+			elif phase == PHASE_DEPLOY:
+				phase_ticks_left = deploy_duration()
 
 var enemy_count: int = 0
 var enemy_id: PackedInt32Array = PackedInt32Array()
@@ -418,7 +424,7 @@ func apply_command(peer_id: int, cmd: Dictionary) -> void:
 			if _can_shop(v):
 				Salvage.scrap_card(v, str(cmd.get("value", "")))
 		"ready":
-			if _can_shop(v):
+			if _can_shop(v) or (phase == PHASE_DEPLOY and not v.eliminated):
 				v.ready = true
 
 
@@ -631,6 +637,21 @@ func combat_duration(r: int) -> int:
 	return COMBAT_TICKS_EARLY if r <= EARLY_ROUNDS else COMBAT_TICKS
 
 
+func deploy_duration() -> int:
+	return FAST_DEPLOY_TICKS if fast_rounds else DEPLOY_TICKS
+
+
+## Starts the pre-match deploy phase (doctrine setup, ends in round 1 combat). Only valid at tick 0 of
+## round 1, before anything stepped. `ticks` < 0 = the default duration. A plain SimWorld starts in combat.
+func begin_deploy(ticks: int = -1) -> void:
+	if tick != 0 or round != 1:
+		return
+	phase = PHASE_DEPLOY
+	phase_ticks_left = ticks if ticks >= 0 else deploy_duration()
+	for v in vehicles:
+		v.ready = false
+
+
 func workshop_duration() -> int:
 	return FAST_WORKSHOP_TICKS if fast_rounds else WORKSHOP_TICKS
 
@@ -719,6 +740,8 @@ func step() -> void:
 			_step_combat()
 		PHASE_WORKSHOP:
 			_step_workshop()
+		PHASE_DEPLOY:
+			_step_deploy()
 	tick += 1
 
 
@@ -760,6 +783,26 @@ func _step_workshop() -> void:
 			ready_n += 1
 	if phase_ticks_left <= 0 or (need > 0 and ready_n == need):
 		_begin_combat()
+
+
+## Deploy -> round 1 combat (same state as a world that started in combat; no "round" change, no events).
+func _step_deploy() -> void:
+	if _check_game_over():
+		return
+	phase_ticks_left -= 1
+	var need: int = 0
+	var ready_n: int = 0
+	for v in vehicles:
+		if v.eliminated:
+			continue
+		need += 1
+		if v.ready:
+			ready_n += 1
+	if phase_ticks_left <= 0 or (need > 0 and ready_n == need):
+		phase = PHASE_COMBAT
+		phase_ticks_left = combat_duration(1)
+		for v in vehicles:
+			v.ready = false
 
 
 func checksum() -> int:

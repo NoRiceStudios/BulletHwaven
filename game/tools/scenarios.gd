@@ -82,13 +82,15 @@ extends RefCounted
 ## - "pause"    skirmish with the pause / menu overlay (LAN wording: the fight goes on).
 ## - "rematch"  gameover_mp seen by the host: REMATCH and LEAVE TO MENU.
 ## - "waiting"  gameover_mp seen by the loser (a client): waiting for the host's rematch.
+## - "picker"   the programmed rig of "rules" in combat with the dock's behaviour picker open (--hover a chip).
+## - "deploy"   the deploy screen before round 1 (three rigs, one ready; --click a preset). Under 900 ticks.
 
 const NAMES: PackedStringArray = ["skirmish", "horde", "workshop", "tech_tree", "gameover", "gameover_mp", "eliminated",
 	"menu", "join", "lobby", "pause", "rematch", "waiting", "rig_growth", "late_round", "pvp_on", "rig_kill",
 	"recap", "recap_pvp", "scouting", "combat_feed", "pvp_grace", "spectator", "spectator_ws", "awards",
 	"tech_mid", "tech_swap", "workshop_mid", "tech_beginner", "fx_firebrand", "fx_fortress", "fx_scrapper",
 	"fx_chassis", "fx_ram", "juice", "juice_surge", "evo_combat", "evo_flip", "evo_workshop", "evo_moment", "boss_tripod", "boss_colossus", "boss_shards",
-	"boss_warning", "boss_enraged", "boss_spawn", "boss_phase", "boss_kill", "boss_kill_colossus", "boss_retreat", "species", "hive"]
+	"boss_warning", "boss_enraged", "boss_spawn", "boss_phase", "boss_kill", "boss_kill_colossus", "boss_retreat", "species", "hive", "picker", "deploy"]
 const EVO_FLIP_TICK := 90
 const EVO_PICK_DELAY := 30
 const JUICE_SURGE_TICK := 100
@@ -150,8 +152,10 @@ static func build(name: String, p_seed: int) -> SimWorld:
 			return _skirmish(p_seed)
 		"rematch", "waiting":
 			return build("gameover_mp", p_seed)
-		"rules", "rules_weapon":
+		"rules", "rules_weapon", "picker":
 			return _programmed(p_seed)
+		"deploy":
+			return _deploy(p_seed)
 		"rig_growth":
 			return _rig_growth(p_seed)
 		"late_round":
@@ -255,6 +259,8 @@ static func ui_state(name: String) -> Dictionary:
 			return {"rules": "rig"}
 		"rules_weapon":
 			return {"rules": "cannon"}
+		"picker":
+			return {"picker": true}
 		"rematch", "awards":
 			return {"game_over": "host"}
 		"waiting":
@@ -625,6 +631,17 @@ static func _species_step(w: SimWorld) -> void:
 
 
 ## Two rigs (red: circle / nearest, magenta: kite / players_first) in a running horde.
+## Three fresh rigs in the deploy phase before round 1; the second one is already ready.
+static func _deploy(p_seed: int) -> SimWorld:
+	var w := SimWorld.new(p_seed)
+	w.add_vehicle(1, _old_arena(Vector2(560, 380)), "MAD MAREK")
+	w.add_vehicle(2, _old_arena(Vector2(760, 330)), "DUNE RAT", 2)
+	w.add_vehicle(3, _old_arena(Vector2(700, 470)), "SANDY", 3)
+	w.begin_deploy()
+	w.apply_command(2, {"type": "ready"})
+	return w
+
+
 static func _skirmish(p_seed: int) -> SimWorld:
 	var w := SimWorld.new(p_seed)
 	w.add_vehicle(1, _old_arena(Vector2(420, 420)), "MAD MAREK")

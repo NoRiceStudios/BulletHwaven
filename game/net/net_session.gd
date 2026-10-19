@@ -668,6 +668,7 @@ func _begin_match() -> void:
 	for i in lobby_players.size():
 		var e: Dictionary = lobby_players[i]
 		world.add_vehicle(int(e["peer_id"]), spawn_position(i), e["name"], int(e["color_index"]))
+	world.begin_deploy()
 	state = State.MATCH
 	_ended = false
 	if _mode == Mode.HOST and _net_ready():

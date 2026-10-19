@@ -503,6 +503,9 @@ func _run_shot(args: Dictionary) -> void:
 	_view.rules.use_real_pointer = false
 	_view.rules.pointer_override = hover
 	_menu.pointer_override = hover
+	_view.hud().pointer_override = hover
+	if ui.has("picker"):
+		_view.hud().picker_open = true
 	if ui.has("rules"):
 		_view.rules.open(str(ui["rules"]))
 	if ui.has("workshop_tab"):
@@ -521,6 +524,8 @@ func _run_shot(args: Dictionary) -> void:
 				ok = _view.workshop.click_at(p)  # forwards to the embedded rule editor in the RULES view
 			elif _view.rules.is_open:
 				ok = _view.rules.click_at(p)
+			else:
+				ok = _view.hud().click_at(p)
 			print("SHOT_CLICK %s -> %s" % [spec, "hit" if ok else "miss"])
 			await get_tree().process_frame
 			await get_tree().process_frame
@@ -622,6 +627,7 @@ func _replay_frame(w: SimWorld, history: Array, f: Dictionary) -> bool:
 	_view.workshop.use_real_pointer = false
 	_menu.use_real_pointer = false
 	_view.workshop.pointer_override = Vector2(-1, -1)
+	_view.hud().pointer_override = Vector2(-1, -1)
 	_menu.pointer_override = Vector2(-1, -1)
 	for i in 4:
 		await get_tree().process_frame

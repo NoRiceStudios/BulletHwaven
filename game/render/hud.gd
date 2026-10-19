@@ -43,6 +43,21 @@ var world: SimWorld = null
 var local_peer: int = 1
 var view: WorldView = null
 
+## Behaviour picker (live doctrine control): a click on the dock's DRIVE / TARGET block opens a CRT strip above the
+## dock to switch the base drive and target with one click (keys 1/2/3 and Q/W/E do the same without it).
+## A change flashes the dock line. Screenshots set `pointer_override` and `picker_open` directly.
+const DRIVE_KEY_LABELS := {"circle": "1", "kite": "2", "charge": "3"}
+const TARGET_KEY_LABELS := {"nearest": "Q", "strongest": "W", "players_first": "E"}
+const PICKER_IDLE_S := 6.0  ## the strip closes itself after this long without the pointer on it
+const FLASH_S := 0.6
+var picker_open: bool = false
+var pointer_override: Vector2 = Vector2(-1, -1)
+var _picker_idle: float = 0.0
+var _hits: Array = []  ## [Rect2, action, arg] drawn this frame (dock block and picker chips)
+var _hover: Array = []  ## the hit under the pointer, from the previous frame's hits
+var _doc_seen: Dictionary = {}  ## the base doctrine last drawn, to flash a change
+var _flash: Dictionary = {"drive": 0.0, "target": 0.0}
+
 
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -52,6 +67,7 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	_tick_juice(delta)
+	_tick_picker(delta)
 	_tick_boss_lag(delta, view == null or view.frozen)
 	queue_redraw()
 
@@ -88,8 +104,14 @@ func _tick_juice(delta: float) -> void:
 	_combo_seen = n
 
 
-## Spectator keys: Tab / Right next rig, Shift+Tab / Left previous, Home or A back to auto.
+## Spectator keys: Tab / Right next rig, Shift+Tab / Left previous, Home or A back to auto. Left clicks go to
+## the behaviour picker.
 func _unhandled_input(event: InputEvent) -> void:
+	var mb := event as InputEventMouseButton
+	if mb != null:
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and click_at(mb.position):
+			get_viewport().set_input_as_handled()
+		return
 	if view == null or not view.spectating() or not (event is InputEventKey) or not event.is_pressed() or event.is_echo():
 		return
 	var k := event as InputEventKey
@@ -141,6 +163,8 @@ func _draw() -> void:
 			_surge_edge(vs)
 		_draw_rival_tags()  # under the panels
 		_draw_top(vs)
+		_hover = _hover_hit()
+		_hits.clear()
 		_draw_dock(v, vs)
 		var watching: bool = spec and not elim_recent
 		if world.vehicles.size() > 1:
@@ -162,6 +186,8 @@ func _draw() -> void:
 			_draw_eliminated(vs)
 		elif dead:
 			_draw_respawn(me, vs)
+		if picker_open and _picker_usable(me):
+			_draw_picker(me, vs)
 	var pv: int = world.tick - view.pvp_on_tick if view != null and view.pvp_on_tick >= 0 else -1
 	if world.phase == SimWorld.PHASE_COMBAT and pv >= 0 and pv < PVP_BANNER_TICKS:
 		_pvp_banner(vs, pv)
@@ -249,15 +275,28 @@ func _draw_dock(v: SimVehicle, vs: Vector2) -> void:
 	# doctrine: what the rig is doing, and which rules fire right now
 	var dx: float = r.position.x + 7.0
 	var lx: float = dx + 30.0
+	var own: bool = v.peer_id == local_peer and not v.eliminated
+	if own:
+		_note_doctrine(v)
+		var blk := Rect2(r.position.x + 3, r.position.y + 3, 85, r.size.y - 6)
+		var hov: bool = _is_hover("picker")
+		if hov or picker_open:
+			draw_rect(blk, Color(Gfx.CRT_TEXT, 0.16 if hov else 0.1))
+			UiKit.outline_rect(self, blk, Color(Gfx.CRT_TEXT, 0.7 if hov else 0.45))
+		_caret(Vector2(blk.end.x - 6, blk.position.y + 3), picker_open)
+		_hits.append([blk, "picker", null])
 	UiFont.draw_small(self, "DRIVE", Vector2(dx, y1 + 1), Gfx.UI_DIM)
 	var drive: String = _effective(v, "drive")
-	UiFont.draw(self, drive.to_upper(), Vector2(lx, y1), Gfx.CRT_HI if drive != str(v.doctrine["drive"]) else Gfx.CRT_TEXT, Gfx.UI_SHADOW)
+	UiFont.draw(self, drive.to_upper(), Vector2(lx, y1), _doc_col(v, "drive", drive), Gfx.UI_SHADOW)
 	UiFont.draw_small(self, "TARGET", Vector2(dx, y2 + 1), Gfx.UI_DIM)
 	var tgt: String = _effective(v, "target")
-	UiFont.draw(self, str(WorkshopUi.TARGET_LABELS.get(tgt, tgt.to_upper())), Vector2(lx, y2),
-		Gfx.CRT_HI if tgt != str(v.doctrine["target"]) else Gfx.CRT_TEXT, Gfx.UI_SHADOW)
+	UiFont.draw(self, str(WorkshopUi.TARGET_LABELS.get(tgt, tgt.to_upper())), Vector2(lx, y2), _doc_col(v, "target", tgt), Gfx.UI_SHADOW)
 	_rule_lamps(v, Vector2(r.position.x + 91.0, y1 + 1.0))
-	UiFont.draw_small(self, "P RULES", Vector2(r.position.x + 91.0, y2 + 1), Gfx.UI_DIM)
+	var pr := Rect2(r.position.x + 89.0, y2 - 1, UiFont.width_small("P RULES") + 4.0, 9)
+	var phov: bool = own and _is_hover("rules")
+	UiFont.draw_small(self, "P RULES", Vector2(r.position.x + 91.0, y2 + 1), Gfx.CRT_HI if phov else Gfx.UI_DIM)
+	if own:
+		_hits.append([pr, "rules", null])
 	var s1: float = r.position.x + 122.0
 	draw_rect(Rect2(s1, r.position.y + 4, 1, r.size.y - 8), Color(UiKit.PANEL_EDGE, 0.8))
 	# hp and fuel
@@ -340,6 +379,181 @@ func _draw_mobility(v: SimVehicle, dock: Rect2) -> void:
 			label += " %d" % ceili(float(cd) / float(SimWorld.TICK_RATE))
 		UiFont.draw_small(self, label, Vector2(x, y), col, Gfx.UI_SHADOW)
 		x += UiFont.width_small(label) + 10.0
+
+
+# ---------------------------------------------------------------- behaviour picker
+
+func _tick_picker(delta: float) -> void:
+	for k: String in _flash:
+		_flash[k] = maxf(0.0, float(_flash[k]) - delta / FLASH_S)
+	if not picker_open:
+		return
+	var me: SimVehicle = world.get_vehicle_for_peer(local_peer) if world != null else null
+	if not _picker_usable(me):
+		picker_open = false
+		return
+	if pointer_override.x >= 0.0:
+		return  # screenshots: keep it open
+	_picker_idle = 0.0 if not _hover.is_empty() else _picker_idle + delta
+	if _picker_idle > PICKER_IDLE_S:
+		picker_open = false
+
+
+## The local rig can be steered from the dock: combat, still in the match, not watching someone else, rule editor shut.
+func _picker_usable(me: SimVehicle) -> bool:
+	return world != null and me != null and not me.eliminated and world.phase == SimWorld.PHASE_COMBAT \
+		and view != null and not view.spectating() and not (view.rules != null and view.rules.is_open)
+
+
+func _pointer() -> Vector2:
+	return pointer_override if pointer_override.x >= 0.0 else get_local_mouse_position()
+
+
+func _hover_hit() -> Array:
+	var p: Vector2 = _pointer()
+	for i in range(_hits.size() - 1, -1, -1):
+		if (_hits[i][0] as Rect2).has_point(p):
+			return _hits[i]
+	return []
+
+
+func _is_hover(action: String, arg: Variant = null) -> bool:
+	return not _hover.is_empty() and _hover[1] == action and (arg == null or _hover[2] == arg)
+
+
+## Clicks at `p` (viewport px); true if it hit the dock block or the picker. Also used by screenshot scenarios.
+func click_at(p: Vector2) -> bool:
+	var me: SimVehicle = world.get_vehicle_for_peer(local_peer) if world != null else null
+	if not _picker_usable(me):
+		return false
+	for i in range(_hits.size() - 1, -1, -1):
+		var h: Array = _hits[i]
+		if not (h[0] as Rect2).has_point(p):
+			continue
+		_picker_idle = 0.0
+		match str(h[1]):
+			"picker":
+				picker_open = not picker_open
+			"rules":
+				picker_open = false
+				view.rules.open()
+			"drive":
+				_send({"type": "set_drive", "value": h[2]})
+			"target":
+				_send({"type": "set_target", "value": h[2]})
+		return true
+	if picker_open:
+		picker_open = false  # a click anywhere else closes it
+	return false
+
+
+func _send(cmd: Dictionary) -> void:
+	if view != null and view.workshop != null and view.workshop.send_command.is_valid():
+		view.workshop.send_command.call(cmd)
+
+
+## Flashes the dock line when the base doctrine changes (by key, picker or rule editor).
+func _note_doctrine(v: SimVehicle) -> void:
+	for k in ["drive", "target"]:
+		var cur: String = str(v.doctrine[k])
+		if _doc_seen.has(k) and _doc_seen[k] != cur and int(_doc_seen.get("id", -1)) == v.id:
+			_flash[k] = 1.0
+		_doc_seen[k] = cur
+	_doc_seen["id"] = v.id
+
+
+## Dock colour of the drive / target line: bright while a rule overrides the base, white while flashing.
+func _doc_col(v: SimVehicle, group: String, eff: String) -> Color:
+	var base: Color = Gfx.CRT_HI if eff != str(v.doctrine[group]) else Gfx.CRT_TEXT
+	return base.lerp(Gfx.UI_TEXT, float(_flash.get(group, 0.0)))
+
+
+## Small up / down caret (open state of the picker).
+func _caret(p: Vector2, up: bool) -> void:
+	var c: Color = Gfx.CRT_TEXT
+	for i in 3:
+		var w: float = 5.0 - 2.0 * i
+		var y: float = p.y + (2 - i if up else i)
+		draw_rect(Rect2(p.x + i, y, w, 1), c)
+
+
+## The strip above the dock: base drive and base target as chips with their keys, the rule that overrides
+## each right now, and the way into the full rule editor.
+func _draw_picker(v: SimVehicle, vs: Vector2) -> void:
+	var dock: Rect2 = _dock_rect(vs)
+	var rows: Array = [["DRIVE", "drive", Doctrine.BASE_DRIVES, DRIVE_KEY_LABELS], ["TARGET", "target", Doctrine.RIG_TARGETS, TARGET_KEY_LABELS]]
+	var label_w: float = 34.0
+	var widths: Array[float] = []
+	for row: Array in rows:
+		var w: float = label_w
+		for id: String in row[2]:
+			w += _pick_chip_w(id, row) + 3.0
+		widths.append(w)
+	var inner_w: float = maxf(widths.max(), 220.0)
+	var r := Rect2(floorf(vs.x / 2.0 - (inner_w + 12.0) / 2.0), 0, inner_w + 12.0, 52)
+	r.position.y = dock.position.y - 22.0 - r.size.y
+	_panels.append(r)
+	draw_rect(r.grow(1), Gfx.OUTLINE)
+	draw_rect(r, Color(Gfx.CRT_BG, 0.94))
+	UiKit.outline_rect(self, r.grow(-1), Gfx.CRT_DIM)
+	var x0: float = r.position.x + 6.0
+	var y: float = r.position.y + 5.0
+	UiFont.draw(self, "BEHAVIOUR", Vector2(x0, y), Gfx.CRT_HI)
+	var hint := "CHANGES THE BASE SETTING - RULES STILL WIN WHEN THEY MATCH"
+	UiFont.draw_small(self, hint, Vector2(r.end.x - 6.0 - UiFont.width_small(hint), y + 1), Gfx.CRT_DIM)
+	y += 13.0
+	for row: Array in rows:
+		var grp: String = row[1]
+		UiFont.draw_small(self, row[0], Vector2(x0, y + 1), Gfx.CRT_DIM)
+		var x: float = x0 + label_w
+		var base: String = str(v.doctrine[grp])
+		var eff: String = _effective(v, grp)
+		for id: String in row[2]:
+			x = _pick_chip(id, row, Vector2(x, y), base == id, eff == id and eff != base) + 3.0
+		y += 13.0
+	var ov: String = _override_text(v)
+	var foot: String = ov if ov != "" else "NO RULE OVERRIDES RIGHT NOW"
+	UiFont.draw_small(self, foot, Vector2(x0, r.end.y - 9.0), Gfx.CRT_HI if ov != "" else Gfx.CRT_DIM)
+
+
+func _pick_label(id: String, row: Array) -> String:
+	var name: String = str(DoctrineEditor.ACTION_LABELS.get("%s:%s" % [row[1], id], id.to_upper())).trim_prefix("TGT ")
+	var key: String = str((row[3] as Dictionary).get(id, ""))
+	return name if key == "" else "%s %s" % [key, name]
+
+
+func _pick_chip_w(id: String, row: Array) -> float:
+	return UiFont.width(_pick_label(id, row)) + 6.0
+
+
+func _pick_chip(id: String, row: Array, pos: Vector2, on: bool, ruled: bool) -> float:
+	var text: String = _pick_label(id, row)
+	var r := Rect2(pos - Vector2(2, 2), Vector2(_pick_chip_w(id, row), 10))
+	var hov: bool = _is_hover(row[1], id)
+	if on:
+		draw_rect(r, Gfx.CRT_TEXT)
+	elif hov:
+		draw_rect(r, Color(Gfx.CRT_TEXT, 0.22))
+	UiKit.outline_rect(self, r, Gfx.CRT_HI if ruled else (Gfx.CRT_TEXT if on or hov else Gfx.CRT_DIM))
+	var tc: Color = Gfx.CRT_BG if on else (Gfx.CRT_HI if hov or ruled else Gfx.CRT_TEXT)
+	UiFont.draw(self, text, pos + Vector2(1, 0), tc)
+	_hits.append([r, row[1], id])
+	return r.end.x
+
+
+## "RULE 2 OVERRIDES: KITE" for the lit rig rules that set drive or target (empty when none does).
+func _override_text(v: SimVehicle) -> String:
+	var parts: PackedStringArray = []
+	var seen: Dictionary = {}
+	for i in mini(v.rules.size(), Doctrine.slots(v)):
+		if (v.rule_live >> i) & 1 == 0:
+			continue
+		var a: String = str(v.rules[i]["do"])
+		var g: String = Doctrine.action_group(a)
+		if (g == "drive" or g == "target") and not seen.has(g):
+			seen[g] = true
+			parts.append("RULE %d: %s" % [i + 1, str(DoctrineEditor.ACTION_LABELS.get(a, a.to_upper()))])
+	return ("NOW OVERRIDDEN BY " + "  ".join(parts)) if not parts.is_empty() else ""
 
 
 ## What the rig does right now in action group `group` ("drive" / "target"): the first lit rule of

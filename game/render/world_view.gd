@@ -231,6 +231,10 @@ func _ready() -> void:
 	rules.workshop = workshop
 
 
+func hud() -> Hud:
+	return _hud
+
+
 ## Shows `w` from the point of view of `peer` (camera, HUD). Clears all marks of a previous world.
 func set_world(w: SimWorld, peer: int) -> void:
 	world = w

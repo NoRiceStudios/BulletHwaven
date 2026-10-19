@@ -294,7 +294,7 @@ func test_solo_defaults_and_rematch() -> void:
 	assert_eq(started[0], 1)
 	assert_true(s.world != old_world, "fresh world")
 	assert_eq(s.world.seed, 11, "new seed")
-	assert_eq(s.world.phase, SimWorld.PHASE_COMBAT)
+	assert_eq(s.world.phase, SimWorld.PHASE_DEPLOY)
 	assert_eq(s.world.vehicles.size(), 1)
 	assert_false(s.world.vehicles[0].eliminated)
 	assert_true(s.in_match())
@@ -332,7 +332,7 @@ func test_multiplayer_rematch_keeps_players() -> void:
 	assert_eq(s.world.vehicles[0].player_name, "Hosty")
 	assert_eq(s.world.vehicles[1].player_name, "Bob")
 	assert_eq(s.world.vehicles[1].color_index, 6)
-	assert_eq(s.world.phase, SimWorld.PHASE_COMBAT)
+	assert_eq(s.world.phase, SimWorld.PHASE_DEPLOY)
 	assert_false(s.lobby_players[1]["ready"], "ready flags reset")
 	s.free()
 
@@ -342,7 +342,7 @@ func test_fast_rounds_flag_applies_to_matches() -> void:
 	s.fast_rounds = true
 	s.start_solo()
 	assert_true(s.world.fast_rounds)
-	assert_eq(s.world.phase_ticks_left, SimWorld.FAST_COMBAT_TICKS)
+	assert_eq(s.world.phase_ticks_left, SimWorld.FAST_DEPLOY_TICKS)
 	s.free()
 
 

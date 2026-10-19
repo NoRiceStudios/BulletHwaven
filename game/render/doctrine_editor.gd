@@ -169,6 +169,14 @@ func _rows_y() -> float:
 	return _panel().position.y + (92.0 if embedded() else 102.0)
 
 
+## Replaces the working copy of `p_scope` (when it is the open one) with `p_rules`, e.g. after a preset was sent:
+## the sim applies it a tick later, the editor shows it at once.
+func show_work(p_scope: String, p_rules: Variant) -> void:
+	if is_open and scope == p_scope and p_rules is Array:
+		_work = (p_rules as Array).duplicate(true)
+		_menu = {}
+
+
 func toggle() -> void:
 	if is_open:
 		close()
@@ -558,7 +566,7 @@ func _draw_rule(i: int, rule: Dictionary, pos: Vector2, row: Rect2, locked: bool
 		x = _draw_cond(i, ci, conds[ci], Vector2(x, pos.y)) + 6.0
 	if conds.size() < Doctrine.max_conds(_local()):
 		x = _chip("+ IF" if conds.is_empty() else "+ AND", Vector2(x, pos.y), false, "add_cond", i) + 6.0
-	x = maxf(x, row.position.x + 404.0)
+	x = maxf(x, row.position.x + minf(404.0, row.size.x - 150.0))  # narrower when embedded in the deploy screen
 	x = UiFont.draw(self, "THEN", Vector2(x, pos.y), Gfx.CRT_DIM) + 5.0
 	_chip(ACTION_LABELS[rule["do"]], Vector2(x, pos.y), false, "action", i, true)
 	var bx: float = row.end.x - 44.0

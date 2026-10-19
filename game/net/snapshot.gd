@@ -118,7 +118,7 @@ static func encode(world: SimWorld, p_events: Array[Dictionary] = []) -> PackedB
 	sp.put_u16(n_enemy)
 	sp.put_u16(n_proj)
 	sp.put_u32(id_min)
-	sp.put_u8(clampi(world.phase, 0, SimWorld.PHASE_GAME_OVER))
+	sp.put_u8(clampi(world.phase, 0, SimWorld.PHASE_DEPLOY))
 	sp.put_u16(clampi(world.round, 1, MAX_ROUND))
 	sp.put_u16(clampi(world.phase_ticks_left, 0, 65535))
 	sp.put_32(world.winner_peer)
@@ -274,7 +274,7 @@ static func apply(world: SimWorld, bytes: PackedByteArray) -> bool:
 	var boss_first: int = r.u8() & 1
 	var hive_bits: int = r.u16()
 	var with_stats: bool = (flags & FLAG_STATS) != 0
-	if not r.ok or n_veh > MAX_VEHICLES or phase > SimWorld.PHASE_GAME_OVER or round_n < 1:
+	if not r.ok or n_veh > MAX_VEHICLES or phase > SimWorld.PHASE_DEPLOY or round_n < 1:
 		return false
 	var wide: bool = (flags & FLAG_WIDE_IDS) != 0
 
