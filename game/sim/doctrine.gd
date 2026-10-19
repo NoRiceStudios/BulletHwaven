@@ -25,7 +25,7 @@ const RIVAL_RADIUS := 380.0  ## "rivals": rival rigs within this many px (only w
 
 ## Index tables for the binary form. Only append.
 const COND_IDS: PackedStringArray = ["hp", "swarm", "rivals", "t_dist", "t_hp", "t_player", "t_boulder", "t_spitter", "pvp", "has_target",
-	"boulders", "fuel", "rival_weaker", "ability_ready", "t_leader", "boss_active", "shrieker_near", "mark_active"]
+	"boulders", "fuel", "rival_weaker", "ability_ready", "t_leader", "boss_active", "shrieker_near", "mark_active", "radio_active"]
 const OPS: PackedStringArray = ["<", ">", "="]
 const ACTIONS: PackedStringArray = [
 	"drive:circle", "drive:kite", "drive:charge", "drive:flee", "drive:hold",
@@ -57,6 +57,7 @@ const CONDS := {
 	"boss_active": {"flag": true, "def": 1},
 	"shrieker_near": {"flag": true, "def": 1},
 	"mark_active": {"flag": true, "def": 1},
+	"radio_active": {"flag": true, "def": 1},
 }
 ## Conditions the tech tree unlocks: condition id -> tech fx key (anything else is always available).
 const COND_FX := {
@@ -446,6 +447,8 @@ static func _value(w: SimWorld, v: SimVehicle, id: String, tk: int, ti: int, tid
 			return 1.0 if w.boss_state == Bosses.ST_ACTIVE else 0.0
 		"mark_active":
 			return 1.0 if Orders.active(w, v) else 0.0
+		"radio_active":
+			return 1.0 if Orders.radio_active(v) else 0.0
 		"shrieker_near":
 			if not ctx.has("shrieker_near"):
 				ctx["shrieker_near"] = Species.shrieker_near(w, v)

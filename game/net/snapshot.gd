@@ -30,7 +30,7 @@ extends RefCounted
 ## current round, SimWorld.enemy_max_hp). Card and tech ids are table indices (Cards.DEFS / Tech.DEFS).
 ## Projectile pierce / splash are not sent: the client world is passive.
 
-const VERSION := 15  # 15: live order "target mark" (vehicle extras flag 128: mark_order ticks / cooldown / kind / id), event mark; 14: hive signature (header u16), species kinds 3..5 (enemy kind 3 bits, heading 6 bits), taken stats glass / brood / shrieker, events shriek / brood; 13: boss rounds (header boss_first, FLAG_BOSS tail block, boss enemy kinds, boss events); 12: event surge; 11: salvage (contract offers and progress, loan debt, reserved card, bonus offers), events contract_done / saw / shockwave / chain / jerry_blast; 10: momentum, abilities (slots, cooldowns, effect timers, decoy), swarm mark, jam flags, stunned bitset; 9: ammo / heat per weapon, ground zones, burning bitset, float cooldowns; 8: tech v2.3 (dormant fusions, respecs, purchase rounds); 7: doctrine rules (rig + per weapon); 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
+const VERSION := 16  # 16: radio commands (vehicle extras byte 2, bit 1: charges / ticks / cmd / lock), event radio; 15: live order "target mark" (vehicle extras flag 128: mark_order ticks / cooldown / kind / id), event mark; 14: hive signature (header u16), species kinds 3..5 (enemy kind 3 bits, heading 6 bits), taken stats glass / brood / shrieker, events shriek / brood; 13: boss rounds (header boss_first, FLAG_BOSS tail block, boss enemy kinds, boss events); 12: event surge; 11: salvage (contract offers and progress, loan debt, reserved card, bonus offers), events contract_done / saw / shockwave / chain / jerry_blast; 10: momentum, abilities (slots, cooldowns, effect timers, decoy), swarm mark, jam flags, stunned bitset; 9: ammo / heat per weapon, ground zones, burning bitset, float cooldowns; 8: tech v2.3 (dormant fusions, respecs, purchase rounds); 7: doctrine rules (rig + per weapon); 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
 const FLAG_WIDE_IDS := 1  ## enemy ids spread over more than 65535: ids are sent as u32 deltas from 0
 const FLAG_STATS := 2  ## vehicles carry round_stats and match_stats (sent outside combat only)
 const FLAG_BURNING := 4  ## a burning bitset follows the projectiles (only sent while something burns)
@@ -54,7 +54,7 @@ const PROJ_BYTES := 13
 const EVENT_BYTES := 7
 
 const MAX_VEHICLES := 64  ## vehicle ids travel as u8 / i8 owners, keep well below 127
-const EVENT_TYPES: PackedStringArray = ["fire", "hit", "kill", "vehicle_destroyed", "retreat", "respawn", "spit", "pvp_on", "bounty", "drain", "shrapnel", "jam", "overheat", "execute", "nitro", "emp", "smoke", "salvo", "dodge", "sparks", "boom", "shed", "contract_done", "saw", "shockwave", "chain", "jerry_blast", "surge", "boss", "boss_spawn", "boss_phase", "boss_kill", "boss_retreat", "boss_shell", "boss_blast", "boss_ring", "boss_charge", "boss_brood", "boss_split", "shriek", "brood", "mark"]
+const EVENT_TYPES: PackedStringArray = ["fire", "hit", "kill", "vehicle_destroyed", "retreat", "respawn", "spit", "pvp_on", "bounty", "drain", "shrapnel", "jam", "overheat", "execute", "nitro", "emp", "smoke", "salvo", "dodge", "sparks", "boom", "shed", "contract_done", "saw", "shockwave", "chain", "jerry_blast", "surge", "boss", "boss_spawn", "boss_phase", "boss_kill", "boss_retreat", "boss_shell", "boss_blast", "boss_ring", "boss_charge", "boss_brood", "boss_split", "shriek", "brood", "mark", "radio"]
 const MAX_ROUND := 65535
 const SPEED_STEPS := 7
 const HEADING_STEPS := 64
@@ -661,6 +661,15 @@ static func _put_extras(sp: StreamPeerBuffer, v: SimVehicle) -> void:
 	if v.mark_order_ticks > 0 or v.mark_order_cd > 0:
 		ext |= 128
 	sp.put_u8(ext)
+	var ext2: int = 0
+	if v.radio_charges != Orders.RADIO_CHARGES or v.radio_ticks > 0 or v.radio_lock > 0:
+		ext2 |= 1
+	sp.put_u8(ext2)  # second flags byte (version 16): 1 radio state
+	if (ext2 & 1) != 0:
+		sp.put_u8(clampi(v.radio_charges, 0, 255))
+		sp.put_u8(clampi(v.radio_ticks, 0, 255))
+		sp.put_8(clampi(v.radio_cmd, -1, 127))
+		sp.put_u8(clampi(v.radio_lock, 0, 255))
 	if (ext & 1) != 0:
 		sp.put_float(v.momentum)
 	if (ext & 2) != 0:
@@ -712,6 +721,19 @@ static func _put_extras(sp: StreamPeerBuffer, v: SimVehicle) -> void:
 
 static func _get_extras(r: _Reader, v: SimVehicle, slot_ids: Array[String], slot_cd: PackedInt32Array) -> void:
 	var ext: int = r.u8()
+	var ext2: int = r.u8()
+	if (ext2 & 1) != 0:
+		v.radio_charges = r.u8()
+		v.radio_ticks = r.u8()
+		v.radio_cmd = r.s8()
+		v.radio_lock = r.u8()
+		if v.radio_cmd >= Orders.RADIO_IDS.size() or v.radio_charges > Orders.RADIO_CHARGES:
+			r.fail()
+	else:
+		v.radio_charges = Orders.RADIO_CHARGES
+		v.radio_ticks = 0
+		v.radio_cmd = -1
+		v.radio_lock = 0
 	if (ext & 1) != 0:
 		v.momentum = r.f32()
 	if (ext & 2) != 0:
@@ -1095,6 +1117,10 @@ static func _commit_vehicles(world: SimWorld, fresh: Array[SimVehicle]) -> void:
 			dst.mark_order_cd = src.mark_order_cd
 			dst.mark_order_kind = src.mark_order_kind
 			dst.mark_order_id = src.mark_order_id
+			dst.radio_charges = src.radio_charges
+			dst.radio_ticks = src.radio_ticks
+			dst.radio_cmd = src.radio_cmd
+			dst.radio_lock = src.radio_lock
 			dst.contract_offers = src.contract_offers
 			dst.contract_kind = src.contract_kind
 			dst.contract_need = src.contract_need

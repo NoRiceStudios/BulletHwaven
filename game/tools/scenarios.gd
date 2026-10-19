@@ -85,6 +85,7 @@ extends RefCounted
 ## - "picker"   the programmed rig of "rules" in combat with the dock's behaviour picker open (--hover a chip).
 ## - "mark"     skirmish where MAD MAREK right-clicks an alien at tick MARK_CAST_TICK (target mark order;
 ##              about 215 ticks shows the reticle snapping in, 300 the order running).
+## - "radio"    skirmish where MAD MAREK calls ALL IN on the radio at tick MARK_CAST_TICK (about 260 ticks).
 ## - "deploy"   the deploy screen before round 1 (three rigs, one ready; --click a preset). Under 900 ticks.
 
 const NAMES: PackedStringArray = ["skirmish", "horde", "workshop", "tech_tree", "gameover", "gameover_mp", "eliminated",
@@ -92,7 +93,7 @@ const NAMES: PackedStringArray = ["skirmish", "horde", "workshop", "tech_tree", 
 	"recap", "recap_pvp", "scouting", "combat_feed", "pvp_grace", "spectator", "spectator_ws", "awards",
 	"tech_mid", "tech_swap", "workshop_mid", "tech_beginner", "fx_firebrand", "fx_fortress", "fx_scrapper",
 	"fx_chassis", "fx_ram", "juice", "juice_surge", "evo_combat", "evo_flip", "evo_workshop", "evo_moment", "boss_tripod", "boss_colossus", "boss_shards",
-	"boss_warning", "boss_enraged", "boss_spawn", "boss_phase", "boss_kill", "boss_kill_colossus", "boss_retreat", "species", "hive", "picker", "deploy", "mark"]
+	"boss_warning", "boss_enraged", "boss_spawn", "boss_phase", "boss_kill", "boss_kill_colossus", "boss_retreat", "species", "hive", "picker", "deploy", "mark", "radio"]
 const EVO_FLIP_TICK := 90
 const MARK_CAST_TICK := 200
 const EVO_PICK_DELAY := 30
@@ -159,7 +160,7 @@ static func build(name: String, p_seed: int) -> SimWorld:
 			return _programmed(p_seed)
 		"deploy":
 			return _deploy(p_seed)
-		"mark":
+		"mark", "radio":
 			return _skirmish(p_seed)
 		"rig_growth":
 			return _rig_growth(p_seed)
@@ -284,6 +285,11 @@ static func step(name: String, w: SimWorld) -> void:
 		return
 	if name == "species":
 		_species_step(w)
+		return
+	if name == "radio":
+		if w.tick == MARK_CAST_TICK:
+			w.apply_command(1, {"type": "radio", "value": "all_in"})
+		w.step()
 		return
 	if name == "mark":
 		if w.tick == MARK_CAST_TICK:  # the alien nearest a point 120 px ahead of the rig, like a player's right click

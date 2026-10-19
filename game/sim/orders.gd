@@ -10,6 +10,11 @@ const MARK_COOLDOWN := 450  ## 15 s from the cast
 const MARK_PICK_RADIUS := 40.0  ## px from the clicked point to the target (bosses add their body radius)
 const MARK_MAX_DIST := 640.0  ## px from the rig to the target
 
+const RADIO_IDS: PackedStringArray = ["fall_back", "all_in", "hold", "boss"]  ## index = wire value, append only
+const RADIO_TICKS := 150  ## 5 s
+const RADIO_CHARGES := 3  ## per combat round
+const RADIO_LOCK_TICKS := 30  ## minimum gap between two calls
+
 const KIND_NONE := 0
 const KIND_ALIEN := 1
 const KIND_RIVAL := 2
@@ -112,6 +117,61 @@ static func target_pos(w: SimWorld, v: SimVehicle) -> Vector2:
 	if v.mark_order_kind == KIND_RIVAL and v.mark_order_id >= 0 and v.mark_order_id < w.vehicles.size():
 		return w.vehicles[v.mark_order_id].pos
 	return Vector2.ZERO
+
+
+## Radio command: overrides the rig's rules and base setting for RADIO_TICKS. False (nothing changes) when
+## not in combat, dead, out of charges, locked or on an unknown id. Replaces a running command (costs a charge).
+static func cast_radio(w: SimWorld, v: SimVehicle, id: String) -> bool:
+	var idx: int = RADIO_IDS.find(id)
+	if idx < 0 or w.phase != SimWorld.PHASE_COMBAT or not v.alive or v.eliminated:
+		return false
+	if v.radio_charges <= 0 or v.radio_lock > 0:
+		return false
+	v.radio_charges -= 1
+	v.radio_ticks = RADIO_TICKS
+	v.radio_cmd = idx
+	v.radio_lock = RADIO_LOCK_TICKS
+	w._emit("radio", v.pos, v.id, idx)
+	return true
+
+
+static func radio_active(v: SimVehicle) -> bool:
+	return v.radio_ticks > 0 and v.radio_cmd >= 0 and v.radio_cmd < RADIO_IDS.size()
+
+
+## "" when no command runs.
+static func radio_id(v: SimVehicle) -> String:
+	return RADIO_IDS[v.radio_cmd] if radio_active(v) else ""
+
+
+## Combat tick, right after Doctrine.apply_rig and before targeting: counts the lock and the command down
+## and, while it runs, overrides the effective drive / target / focus (beats every rule).
+static func radio_tick(v: SimVehicle) -> void:
+	if v.radio_lock > 0:
+		v.radio_lock -= 1
+	if v.radio_ticks <= 0:
+		return
+	v.radio_ticks -= 1
+	match RADIO_IDS[v.radio_cmd] if v.radio_cmd >= 0 and v.radio_cmd < RADIO_IDS.size() else "":
+		"fall_back":
+			v.eff_drive = "hold" if not Doctrine.action_unlocked(v, "drive:flee") else "flee"
+		"all_in":
+			v.eff_drive = "charge"
+			v.focus = true
+		"hold":
+			v.eff_drive = "hold"
+		"boss":
+			v.eff_target = "boss"
+			v.focus = true
+
+
+## Round start / respawn: the radio command ends (charges are refilled only at the round start).
+static func reset_radio(v: SimVehicle, refill: bool) -> void:
+	v.radio_ticks = 0
+	v.radio_cmd = -1
+	v.radio_lock = 0
+	if refill:
+		v.radio_charges = RADIO_CHARGES
 
 
 ## Clears the running order and its cooldown (round start, respawn).

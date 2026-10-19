@@ -338,6 +338,10 @@ static func validate_command(cmd: Variant) -> Dictionary:
 		if not is_finite(fx) or not is_finite(fy) or not SimWorld.ARENA.grow(MARK_MARGIN).has_point(Vector2(fx, fy)):
 			return {}
 		return {"type": type_s, "x": fx, "y": fy}
+	if type_s == "radio":  # {"value": Orders.RADIO_IDS}
+		if typeof(v) != TYPE_STRING or not Orders.RADIO_IDS.has(String(v)):
+			return {}
+		return {"type": type_s, "value": String(v)}
 	if type_s == "set_ability":  # {"slot": 0..SLOTS-1, "value": ability id} (the sim checks it is unlocked)
 		var slot: int = _small_int(d.get("slot"), Abilities.SLOTS)
 		if slot < 0 or typeof(v) != TYPE_STRING or not Abilities.IDS.has(String(v)):

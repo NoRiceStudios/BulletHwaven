@@ -97,6 +97,10 @@ var mark_order_ticks: int = 0  ## ticks of focus fire left
 var mark_order_cd: int = 0  ## ticks until the order can be cast again
 var mark_order_kind: int = 0  ## 0 none, 1 alien, 2 rival rig (same numbers as target_kind)
 var mark_order_id: int = -1  ## stable enemy id (kind 1) or vehicle id (kind 2)
+var radio_charges: int = Orders.RADIO_CHARGES  ## radio commands left this combat round (refilled at every combat start)
+var radio_ticks: int = 0  ## ticks left of the running radio command
+var radio_cmd: int = -1  ## index into Orders.RADIO_IDS, -1 none
+var radio_lock: int = 0  ## ticks until the next radio call is accepted
 
 # Salvage and fusion state (tech tree v2.3 stage 3; Salvage, Fusions). The contract / loan / reserve / bonus fields are synced.
 var contract_offers: Array[Vector3i] = []  ## workshop: offered contracts as (kind, need, reward); empty once one is accepted

@@ -190,6 +190,8 @@ func _draw() -> void:
 			_draw_eliminated(vs)
 		elif dead:
 			_draw_respawn(me, vs)
+		if _picker_usable(me):
+			_draw_radio(me, vs)
 		if picker_open and _picker_usable(me):
 			_draw_picker(me, vs)
 	var pv: int = world.tick - view.pvp_on_tick if view != null and view.pvp_on_tick >= 0 else -1
@@ -385,6 +387,48 @@ func _draw_mobility(v: SimVehicle, dock: Rect2) -> void:
 	_draw_mark_chip(v, Vector2(x, y))
 
 
+# ---------------------------------------------------------------- radio
+
+const RADIO_LABELS := {"fall_back": "FALL BACK", "all_in": "ALL IN", "hold": "HOLD", "boss": "BOSS FOCUS"}
+const RADIO_KEYS: PackedStringArray = ["Z", "X", "C", "V"]
+const RADIO_W := 138.0
+
+
+## Bottom left: the radio set. Four calls (key, name) that override every rule for a few seconds, the charges
+## left this round as lamps, the running call lit with a bar for its time left.
+func _draw_radio(v: SimVehicle, vs: Vector2) -> void:
+	var r := Rect2(4, vs.y - 4.0 - 40.0, RADIO_W, 40)
+	_panels.append(r)
+	UiKit.panel(self, r)
+	var x0: float = r.position.x + 6.0
+	var y: float = r.position.y + 4.0
+	UiFont.draw_small(self, "RADIO", Vector2(x0, y), Gfx.UI_DIM, Gfx.UI_SHADOW)
+	var charges: int = v.radio_charges
+	for i in Orders.RADIO_CHARGES:
+		var p := Vector2(x0 + 30.0 + i * 7.0, y + 1.0)
+		draw_rect(Rect2(p - Vector2.ONE, Vector2(6, 6)), Gfx.OUTLINE)
+		draw_rect(Rect2(p, Vector2(4, 4)), Gfx.FIRE[4] if i < charges else Gfx.UI_PLATE_DARK)
+	var cur: String = Orders.radio_id(v)
+	var note: String = "OVERRIDES RULES 5 S" if cur == "" else "%s %d" % [RADIO_LABELS.get(cur, ""), ceili(float(v.radio_ticks) / float(SimWorld.TICK_RATE))]
+	UiFont.draw_small(self, note, Vector2(r.end.x - 6.0 - UiFont.width_small(note), y), Gfx.FIRE[5] if cur != "" else Gfx.UI_DIM, Gfx.UI_SHADOW)
+	var bw: float = floorf((r.size.x - 12.0 - 3.0) / 2.0)
+	for i in Orders.RADIO_IDS.size():
+		var id: String = Orders.RADIO_IDS[i]
+		var br := Rect2(x0 + (i % 2) * (bw + 3.0), y + 10.0 + (i / 2) * 12.0, bw, 10)
+		var on: bool = cur == id
+		var can: bool = charges > 0 and v.alive and v.radio_lock <= 0
+		var hov: bool = can and _is_hover("radio", id)
+		draw_rect(br, Gfx.FIRE[4] if on else (Color(Gfx.FIRE[4], 0.22) if hov else Gfx.UI_PLATE_DARK))
+		UiKit.outline_rect(self, br, Gfx.FIRE[5] if on or hov else (Gfx.UI_DIM if can else Color(Gfx.UI_DIM, 0.4)))
+		var tc: Color = Gfx.OUTLINE if on else (Gfx.UI_TEXT if can else Gfx.UI_DIM)
+		var kx: float = UiFont.draw_small(self, RADIO_KEYS[i], br.position + Vector2(3, 2), Gfx.OUTLINE if on else Gfx.FIRE[4])
+		UiFont.draw_small(self, RADIO_LABELS[id], Vector2(kx + 3.0, br.position.y + 2), tc)
+		if on:
+			var f: float = float(v.radio_ticks) / float(Orders.RADIO_TICKS)
+			draw_rect(Rect2(br.position.x + 1, br.end.y - 2, floorf((br.size.x - 2) * f), 1), Gfx.OUTLINE)
+		_hits.append([br, "radio", id])
+
+
 ## The target mark order: "RMB MARK" when ready, the seconds left while it runs, the cooldown after.
 func _draw_mark_chip(v: SimVehicle, p: Vector2) -> void:
 	var label: String
@@ -486,10 +530,19 @@ func click_at(p: Vector2) -> bool:
 				_send({"type": "set_drive", "value": h[2]})
 			"target":
 				_send({"type": "set_target", "value": h[2]})
+			"radio":
+				radio(str(h[2]))
 		return true
 	if picker_open:
 		picker_open = false  # a click anywhere else closes it
 	return false
+
+
+## Calls radio command `id` (Orders.RADIO_IDS) for the local rig; the sim refuses it without charges.
+func radio(id: String) -> void:
+	var me: SimVehicle = world.get_vehicle_for_peer(local_peer) if world != null else null
+	if _picker_usable(me) and me.alive:
+		_send({"type": "radio", "value": id})
 
 
 ## Right click: orders the target mark on whatever is under `p` (the sim picks the alien or rival there; a miss
@@ -617,6 +670,18 @@ func _override_text(v: SimVehicle) -> String:
 ## What the rig does right now in action group `group` ("drive" / "target"): the first lit rule of
 ## that group, else the base doctrine. Built from the synced rules and lamps, so clients agree.
 static func _effective(v: SimVehicle, group: String) -> String:
+	var radio: String = Orders.radio_id(v)  # a radio call beats every rule (Orders)
+	if radio != "":
+		if group == "drive":
+			match radio:
+				"fall_back":
+					return "flee" if Doctrine.action_unlocked(v, "drive:flee") else "hold"
+				"all_in":
+					return "charge"
+				"hold":
+					return "hold"
+		elif radio == "boss":
+			return "boss"
 	var slots: int = Doctrine.slots(v)
 	for i in mini(v.rules.size(), slots):
 		if (v.rule_live >> i) & 1 == 1:

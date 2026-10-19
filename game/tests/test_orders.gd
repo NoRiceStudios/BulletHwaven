@@ -219,7 +219,7 @@ func test_snapshot_round_trip() -> void:
 	assert_eq(v2.mark_order_cd, v.mark_order_cd)
 	assert_eq(v2.mark_order_kind, 1)
 	assert_eq(v2.mark_order_id, id)
-	assert_eq(Snapshot.VERSION, 15)
+	assert_eq(Snapshot.VERSION, 16)
 	assert_true(Snapshot.EVENT_TYPES.has("mark"))
 
 
