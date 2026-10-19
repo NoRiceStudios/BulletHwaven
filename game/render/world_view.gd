@@ -235,6 +235,16 @@ func hud() -> Hud:
 	return _hud
 
 
+## Viewport / HUD position of the world point `p`.
+func to_screen(p: Vector2) -> Vector2:
+	return (get_viewport().get_canvas_transform() * Gfx.snap(p)).floor()
+
+
+## World position under `p`, a point in viewport / HUD units (the inverse of screen_pos).
+func world_at(p: Vector2) -> Vector2:
+	return get_viewport().get_canvas_transform().affine_inverse() * p
+
+
 ## Shows `w` from the point of view of `peer` (camera, HUD). Clears all marks of a previous world.
 func set_world(w: SimWorld, peer: int) -> void:
 	world = w

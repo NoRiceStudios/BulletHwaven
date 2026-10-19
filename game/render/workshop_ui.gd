@@ -406,7 +406,7 @@ func _draw_deploy(v: SimVehicle, vs: Vector2) -> void:
 	var custom: bool = cur == "" and not v.rules.is_empty()
 	var note: String = "CUSTOM - EDITED BY HAND" if custom else "PICK ONE, THEN TUNE IT ON THE RIGHT"
 	UiFont.draw_small(self, note, Vector2(col.position.x + 2, y + 1), Gfx.CRT_HI if custom else Gfx.UI_DIM, Gfx.UI_SHADOW)
-	UiKit.footer(self, "1-4  PRESET      CLICK  EDIT RULES      IN COMBAT: CLICK THE DOCK OR 1 2 3 / Q W E      SPACE  ROLL OUT", vs)
+	UiKit.footer(self, "1-4  PRESET      SPACE  ROLL OUT      IN COMBAT: CLICK THE DOCK (1 2 3 / Q W E) TO SWITCH, RIGHT-CLICK AN ALIEN TO MARK IT", vs)
 	_draw_toast(vs)
 
 

@@ -41,6 +41,7 @@ const COMMANDS := {
 ## Commands without a value (any "value" key is dropped).
 const VALUELESS_COMMANDS: PackedStringArray = ["reroll", "ready"]
 const LOBBY_COMMANDS: PackedStringArray = ["profile", "lobby_ready"]
+const MARK_MARGIN := 64.0  ## "mark" points may lie this far outside the arena
 const OFFER_SLOTS := Cards.OFFER_COUNT + 1  ## pick_card / reserve_card take an offer index 0..OFFER_SLOTS-1 (a lucky strike adds a fourth offer)
 
 enum Mode { NONE, SOLO, HOST, CLIENT }
@@ -327,6 +328,16 @@ static func validate_command(cmd: Variant) -> Dictionary:
 		if not Doctrine.is_weapon_scope(String(ascope)) or not Ammo.is_valid_id(String(v)):
 			return {}
 		return {"type": type_s, "scope": String(ascope), "value": String(v)}
+	if type_s == "mark":  # {"x": float, "y": float} inside the arena (grown by MARK_MARGIN)
+		var mx: Variant = d.get("x")
+		var my: Variant = d.get("y")
+		if (typeof(mx) != TYPE_INT and typeof(mx) != TYPE_FLOAT) or (typeof(my) != TYPE_INT and typeof(my) != TYPE_FLOAT):
+			return {}
+		var fx: float = float(mx)
+		var fy: float = float(my)
+		if not is_finite(fx) or not is_finite(fy) or not SimWorld.ARENA.grow(MARK_MARGIN).has_point(Vector2(fx, fy)):
+			return {}
+		return {"type": type_s, "x": fx, "y": fy}
 	if type_s == "set_ability":  # {"slot": 0..SLOTS-1, "value": ability id} (the sim checks it is unlocked)
 		var slot: int = _small_int(d.get("slot"), Abilities.SLOTS)
 		if slot < 0 or typeof(v) != TYPE_STRING or not Abilities.IDS.has(String(v)):

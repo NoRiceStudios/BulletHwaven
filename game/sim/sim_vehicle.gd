@@ -92,6 +92,11 @@ var jammed_by: int = -1  ## vehicle id of the jammer whose field this rig is in 
 var shed: int = 0  ## armour plates shed this round (scrap armour)
 var mark_id: int = -1  ## swarm logic: enemy id of the marked target, -1 = none
 var mark_pos: Vector2 = Vector2.ZERO
+# Live order "target mark" (Orders): synced, in the checksum. Not the swarm-logic `mark_id`.
+var mark_order_ticks: int = 0  ## ticks of focus fire left
+var mark_order_cd: int = 0  ## ticks until the order can be cast again
+var mark_order_kind: int = 0  ## 0 none, 1 alien, 2 rival rig (same numbers as target_kind)
+var mark_order_id: int = -1  ## stable enemy id (kind 1) or vehicle id (kind 2)
 
 # Salvage and fusion state (tech tree v2.3 stage 3; Salvage, Fusions). The contract / loan / reserve / bonus fields are synced.
 var contract_offers: Array[Vector3i] = []  ## workshop: offered contracts as (kind, need, reward); empty once one is accepted

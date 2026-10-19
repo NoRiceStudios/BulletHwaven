@@ -111,6 +111,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	if mb != null:
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and click_at(mb.position):
 			get_viewport().set_input_as_handled()
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT and mark_at(mb.position):
+			get_viewport().set_input_as_handled()
 		return
 	if view == null or not view.spectating() or not (event is InputEventKey) or not event.is_pressed() or event.is_echo():
 		return
@@ -162,6 +164,8 @@ func _draw() -> void:
 		if view != null and view.juice.surge_active(world.tick) and not _boss_intro():
 			_surge_edge(vs)
 		_draw_rival_tags()  # under the panels
+		if me != null and me.alive and not spec:
+			_draw_mark_reticle(me)
 		_draw_top(vs)
 		_hover = _hover_hit()
 		_hits.clear()
@@ -290,7 +294,10 @@ func _draw_dock(v: SimVehicle, vs: Vector2) -> void:
 	UiFont.draw(self, drive.to_upper(), Vector2(lx, y1), _doc_col(v, "drive", drive), Gfx.UI_SHADOW)
 	UiFont.draw_small(self, "TARGET", Vector2(dx, y2 + 1), Gfx.UI_DIM)
 	var tgt: String = _effective(v, "target")
-	UiFont.draw(self, str(WorkshopUi.TARGET_LABELS.get(tgt, tgt.to_upper())), Vector2(lx, y2), _doc_col(v, "target", tgt), Gfx.UI_SHADOW)
+	if Orders.active(world, v):
+		UiFont.draw(self, "MARKED", Vector2(lx, y2), Gfx.FIRE[5], Gfx.UI_SHADOW)
+	else:
+		UiFont.draw(self, str(WorkshopUi.TARGET_LABELS.get(tgt, tgt.to_upper())), Vector2(lx, y2), _doc_col(v, "target", tgt), Gfx.UI_SHADOW)
 	_rule_lamps(v, Vector2(r.position.x + 91.0, y1 + 1.0))
 	var pr := Rect2(r.position.x + 89.0, y2 - 1, UiFont.width_small("P RULES") + 4.0, 9)
 	var phov: bool = own and _is_hover("rules")
@@ -333,8 +340,7 @@ func _draw_dock(v: SimVehicle, vs: Vector2) -> void:
 func _draw_contract(v: SimVehicle, dock: Rect2) -> void:
 	if v.contract_kind < 0:
 		return
-	var up: bool = Mobility.has_momentum(v) or v.abilities[0] != "" or v.abilities[1] != ""
-	var y: float = dock.position.y - (18.0 if up else 9.0)
+	var y: float = dock.position.y - 18.0
 	var done: bool = Salvage.is_done(v)
 	var failed: bool = v.contract_kind == Salvage.K_NO_DEATH and v.contract_prog < 0.0
 	var col: Color = Gfx.UI_BAD if failed else (Gfx.FIRE[5] if done else Gfx.UI_DIM)
@@ -354,9 +360,6 @@ func _draw_contract(v: SimVehicle, dock: Rect2) -> void:
 ## the Tuned Engine / an ability.
 func _draw_mobility(v: SimVehicle, dock: Rect2) -> void:
 	var has_mom: bool = Mobility.has_momentum(v)
-	var has_ab: bool = v.abilities[0] != "" or v.abilities[1] != ""
-	if not has_mom and not has_ab:
-		return
 	var x: float = dock.position.x + 7.0
 	var y: float = dock.position.y - 9.0
 	if has_mom:
@@ -379,6 +382,48 @@ func _draw_mobility(v: SimVehicle, dock: Rect2) -> void:
 			label += " %d" % ceili(float(cd) / float(SimWorld.TICK_RATE))
 		UiFont.draw_small(self, label, Vector2(x, y), col, Gfx.UI_SHADOW)
 		x += UiFont.width_small(label) + 10.0
+	_draw_mark_chip(v, Vector2(x, y))
+
+
+## The target mark order: "RMB MARK" when ready, the seconds left while it runs, the cooldown after.
+func _draw_mark_chip(v: SimVehicle, p: Vector2) -> void:
+	var label: String
+	var col: Color
+	if Orders.active(world, v):
+		label = "MARKED %d" % ceili(float(v.mark_order_ticks) / float(SimWorld.TICK_RATE))
+		col = Gfx.FIRE[5] if (world.tick / 4) % 2 == 0 else Gfx.FIRE[4]
+	elif v.mark_order_cd > 0:
+		label = "RMB MARK %d" % ceili(float(v.mark_order_cd) / float(SimWorld.TICK_RATE))
+		col = Gfx.UI_DIM
+	else:
+		label = "RMB MARK"
+		col = Gfx.FIRE[5]
+	UiFont.draw_small(self, label, p, col, Gfx.UI_SHADOW)
+
+
+## Reticle over the local rig's marked target: four warm corner brackets that snap in on the cast and a bar
+## for the time left. Screen space, so it stays crisp.
+func _draw_mark_reticle(v: SimVehicle) -> void:
+	if view == null or not Orders.active(world, v):
+		return
+	var c: Vector2 = view.to_screen(Orders.target_pos(world, v))
+	var age: int = Orders.MARK_TICKS - v.mark_order_ticks
+	var snap: float = clampf(1.0 - float(age) / 8.0, 0.0, 1.0)
+	var r: float = floorf(10.0 + 14.0 * snap * snap)
+	var col: Color = Gfx.FIRE[5] if snap > 0.0 or (world.tick / 6) % 2 == 0 else UiKit.bar_color(v.color_index)
+	var arms: Array[Rect2] = []
+	for sx in [-1.0, 1.0]:
+		for sy in [-1.0, 1.0]:
+			var k := c + Vector2(sx * r, sy * r)
+			arms.append(Rect2(k.x - (4.0 if sx > 0.0 else 0.0), k.y, 5, 1))
+			arms.append(Rect2(k.x, k.y - (4.0 if sy > 0.0 else 0.0), 1, 5))
+	for a in arms:
+		draw_rect(a.grow(1), Gfx.OUTLINE)
+	for a in arms:
+		draw_rect(a, col)
+	var f: float = float(v.mark_order_ticks) / float(Orders.MARK_TICKS)
+	draw_rect(Rect2(c.x - r - 1, c.y + r + 3, 2.0 * r + 2, 3), Gfx.OUTLINE)
+	draw_rect(Rect2(c.x - r, c.y + r + 4, floorf(2.0 * r * f), 1), Gfx.FIRE[4])
 
 
 # ---------------------------------------------------------------- behaviour picker
@@ -447,6 +492,17 @@ func click_at(p: Vector2) -> bool:
 	return false
 
 
+## Right click: orders the target mark on whatever is under `p` (the sim picks the alien or rival there; a miss
+## costs nothing). Screenshot scenarios call it too.
+func mark_at(p: Vector2) -> bool:
+	var me: SimVehicle = world.get_vehicle_for_peer(local_peer) if world != null else null
+	if not _picker_usable(me) or not me.alive:
+		return false
+	var wp: Vector2 = view.world_at(p)
+	_send({"type": "mark", "x": wp.x, "y": wp.y})
+	return true
+
+
 func _send(cmd: Dictionary) -> void:
 	if view != null and view.workshop != null and view.workshop.send_command.is_valid():
 		view.workshop.send_command.call(cmd)
@@ -513,6 +569,8 @@ func _draw_picker(v: SimVehicle, vs: Vector2) -> void:
 		y += 13.0
 	var ov: String = _override_text(v)
 	var foot: String = ov if ov != "" else "NO RULE OVERRIDES RIGHT NOW"
+	var rmb := "RIGHT-CLICK AN ALIEN: ALL GUNS ON IT"
+	UiFont.draw_small(self, rmb, Vector2(r.end.x - 6.0 - UiFont.width_small(rmb), r.end.y - 9.0), Gfx.CRT_DIM)
 	UiFont.draw_small(self, foot, Vector2(x0, r.end.y - 9.0), Gfx.CRT_HI if ov != "" else Gfx.CRT_DIM)
 
 

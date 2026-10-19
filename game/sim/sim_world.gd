@@ -390,6 +390,9 @@ func apply_command(peer_id: int, cmd: Dictionary) -> void:
 		"use_ability":  # {"value": ability id}; combat only, casts now if equipped and ready
 			if phase == PHASE_COMBAT and v.alive and not v.eliminated:
 				Abilities.cast(self, v, str(cmd.get("value", "")))
+		"mark":  # {"x": float, "y": float}; combat only, the "target mark" order (Orders.cast_mark)
+			if phase == PHASE_COMBAT and v.alive and not v.eliminated and v.mark_order_cd == 0:
+				Orders.cast_mark(self, v, Vector2(float(cmd.get("x", 0.0)), float(cmd.get("y", 0.0))))
 		"set_ability":  # {"slot": 0..1, "value": ability id}; workshop only, needs the ability unlocked
 			if _can_shop(v):
 				Abilities.set_slot(v, _integral(cmd.get("slot")), str(cmd.get("value", "")))
@@ -886,6 +889,10 @@ func checksum() -> int:
 		vf.append(float(v.jammed_by))
 		vf.append(float(v.shed))
 		vf.append(float(v.mark_id))
+		vf.append(float(v.mark_order_ticks))
+		vf.append(float(v.mark_order_cd))
+		vf.append(float(v.mark_order_kind))
+		vf.append(float(v.mark_order_id))
 		vf.append(float(v.contract_kind))
 		vf.append(float(v.contract_need))
 		vf.append(float(v.contract_reward))
@@ -1040,6 +1047,7 @@ func _respawn(v: SimVehicle) -> void:
 	v.invuln_ticks = INVULN_TICKS
 	v.retaliate_ticks = 0
 	v.target_kind = 0
+	Orders.reset(v)
 	Abilities.clear_effects(v)
 	v.momentum = 0.0
 	v.heading = (ARENA.get_center() - v.pos).angle()
@@ -1105,6 +1113,7 @@ func _begin_workshop() -> void:
 		Abilities.clear_effects(v)
 		v.momentum = 0.0
 		v.mark_id = -1
+		Orders.reset(v)
 		if v.shed > 0:  # the workshop refits shed scrap plates
 			v.shed = 0
 			Cards.recompute(v, false, false)
@@ -1161,6 +1170,7 @@ func _begin_combat() -> void:
 			v.hp = v.max_hp
 			v.invuln_ticks = INVULN_TICKS
 		Abilities.reset_round(v)
+		Orders.reset(v)
 		v.ram_fx.clear()
 		v.contract_offers = []
 		v.barbed_scrap = 0
@@ -1704,6 +1714,7 @@ func _update_vehicles() -> void:
 		Abilities.tick(self, v)
 		Doctrine.apply_rig(self, v)
 		VehicleAI.update_target(self, v)
+		Orders.tick(self, v)
 		_update_mark(v)
 		Abilities.auto_cast(self, v)
 		VehicleAI.steer(self, v)
@@ -1817,6 +1828,7 @@ func _damage_vehicle(v: SimVehicle, dmg: float, attacker: int, use_armor: bool =
 	v.momentum = 0.0
 	v.vel = Vector2.ZERO
 	v.target_kind = 0
+	v.mark_order_ticks = 0
 	v.ram_damage = 0.0
 	var killer_id: int = attacker if by_player else -1
 	var killer_kind: int = -1

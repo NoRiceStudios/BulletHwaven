@@ -160,6 +160,7 @@ This answers R2 (agency). Inspired by the **Gambit system from Final Fantasy XII
 **Live control (as built, after playtest feedback "I want to adjust my rig's behaviour during the round and set it once before round 1"):**
 - **Deploy phase before round 1** (30 s, ends early when everyone is ready): every player picks a starting doctrine from four presets (Orbiter, Long Gun, Brawler, Headhunter: base drive, base target and two rules each, all usable by a fresh rig) and can tune it in the rule editor next to them.
 - **Behaviour picker in combat:** a click on the dock's DRIVE / TARGET block opens a strip above the dock to switch the base drive and base target with one click; it shows the keys (1 2 3 drive, Q W E target) and which rule overrides the base right now. The full editor stays on **P**.
+- **Target mark (right-click):** during combat the player right-clicks an alien or (with PvP on) a rival rig. For 6 s every gun and the rig's targeting focus it (the drive mode is unchanged); the order then cools down for 15 s, counted from the cast. A miss costs nothing, and the mark ends at once when the target dies. Rules can react with the condition `MARK ACTIVE` (e.g. charge while a mark is on). Bots never use it.
 
 **Layer 3: active abilities (1–2 slots, optional)**
 - Nitro, EMP, smoke, oil slick, overcharge. They have cooldowns and can be set to **auto-cast** (idle players) or triggered by hand (active players get a slight advantage through timing).
