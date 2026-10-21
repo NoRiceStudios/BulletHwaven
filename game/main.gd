@@ -475,7 +475,6 @@ func _run_shot(args: Dictionary) -> void:
 		return
 	var sd: int = int(args.get("seed", "1"))
 	var ticks: int = int(args.get("ticks", "300"))
-	TechGuide.persist = false  # screenshots never read or write the player's tech prefs (beginner view on)
 	var world: SimWorld = Scenarios.build(scenario, sd)
 	if out_path == "" or world == null:
 		push_error("main: bad --shot/--scenario (scenarios: %s)" % ", ".join(Scenarios.NAMES))
@@ -507,7 +506,7 @@ func _run_shot(args: Dictionary) -> void:
 		_view.rules.open(str(ui["rules"]))
 	if ui.has("workshop_tab"):
 		_view.workshop.activate("tab", str(ui["workshop_tab"]))
-	for wa: Array in ui.get("workshop_actions", []):  # e.g. ["tpl", "fortress"], ["beginner", false], ["tech", id]
+	for wa: Array in ui.get("workshop_actions", []):  # e.g. ["idea", "fortress"], ["goal", id], ["tech", id]
 		_view.workshop.activate(str(wa[0]), wa[1])
 	for i in 4:
 		await get_tree().process_frame

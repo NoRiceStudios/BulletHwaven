@@ -82,10 +82,6 @@ func _process(delta: float) -> void:
 	_blink += delta
 	if visible and not was:
 		_scout_pin = -1
-		if use_real_pointer:
-			TechGuide.persist = true
-			if world.round <= 1:
-				TechGuide.note_match(world)  # the first workshop of a match: beginner-view counter
 		# the editor was open as a combat overlay: camp continues in the RULES view
 		if rules != null and rules.is_open and not _local().eliminated:
 			_set_tab("rules")
@@ -177,6 +173,9 @@ func _gui_input(event: InputEvent) -> void:
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
 			click_at(mb.position)
 			accept_event()
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT:
+			right_click_at(mb.position)
+			accept_event()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -222,6 +221,15 @@ func click_at(p: Vector2) -> bool:
 			return rules.click_at(p)
 		return false
 	activate(h[1], h[2])
+	return true
+
+
+## Right-click at `p`: flags or unflags the tech node there as a goal (TECH view).
+func right_click_at(p: Vector2) -> bool:
+	var h: Array = _hit_at(p)
+	if h.is_empty() or str(h[1]) != "tech":
+		return false
+	activate("goal", h[2])
 	return true
 
 
@@ -307,12 +315,19 @@ func activate(action: String, arg: Variant) -> void:
 					_say("SWAPPED IN %s" % UiKit.tech_name(t2))
 		"swap_cancel":
 			confirm = {}
-		"tpl":  # follow a build template (client-side, this match)
-			TechGuide.set_template(world, str(arg))
-		"beginner":
-			TechGuide.set_beginner(bool(arg))
-		"expand":  # beginner view: open / fold a branch under MORE
-			TechGuide.toggle_opened(str(arg))
+		"goal":  # flag / unflag a node as a goal (client-side, this match)
+			var gid: String = str(arg)
+			if v.tech.has(gid):
+				_say("ALREADY BUILT")
+			elif TechGuide.toggle_goal(world, gid):
+				_say("GOAL: %s" % UiKit.tech_name(gid))
+			else:
+				_say("GOAL DROPPED: %s" % UiKit.tech_name(gid))
+		"idea":  # an idea seeds the goals; the player changes them from there
+			TechGuide.set_goals(world, TechGuide.idea_goals(TechGuide.template_by_id(str(arg))))
+			_say("GOALS SET FROM %s" % str(TechGuide.template_by_id(str(arg)).get("name", "")))
+		"clear_goals":
+			TechGuide.set_goals(world, [] as Array[String])
 		"ammo":  # [weapon kind, ammo id]
 			var a: Array = arg
 			var cur: Array = v.ammo.get(str(a[0]), [])
@@ -324,7 +339,7 @@ func activate(action: String, arg: Variant) -> void:
 		"ability":  # [slot, ability id]
 			var b: Array = arg
 			_send({"type": "set_ability", "slot": int(b[0]), "value": str(b[1])})
-		"buy_next":  # the plan's next node, from the compact tech column
+		"buy_next":  # the next node towards the goals, from the compact tech column
 			activate("tech", arg)
 		"accept":  # a contract offer
 			if int(arg) >= 0 and int(arg) < v.contract_offers.size():
@@ -739,11 +754,12 @@ func _draw_abilities(v: SimVehicle) -> void:
 		y += 7.0
 
 
-## Compact tech column (design doc 5b): stage pips per branch, the build plan's next node as a buy
-## button, and a FUSION READY tag. Clicking a branch row opens the TECH view.
+## Compact tech column (design doc 5b): stage pips per branch, the next node towards the player's goals
+## as a buy button, and a FUSION READY tag. Clicking a branch row opens the TECH view.
 func _draw_tech_compact(v: SimVehicle) -> void:
-	var tpl: Dictionary = TechGuide.template_for(world, v)
-	var nxt: String = TechGuide.next_on_path(v, tpl)
+	var goals: Array[String] = TechGuide.goals(world, v)
+	var nxt: String = TechGuide.next_step(v, goals)
+	var main: Array[String] = TechGuide.main_branches(v)
 	var ready_f: Array[String] = TechTreeView.fusions_ready(v)
 	var h: float = 15.0 + 5.0 * 9.0 + 32.0 + (13.0 if not ready_f.is_empty() else 0.0)
 	var r := Rect2(RIGHT_X - 6.0 - 102.0, BODY_Y, 102.0, h)
@@ -761,8 +777,7 @@ func _draw_tech_compact(v: SimVehicle) -> void:
 		if hov:
 			draw_rect(rr, UiKit.HOVER_WASH)
 		_hits.append([rr, "tab", "tech:" + b])
-		var plan: bool = (tpl["branches"] as Array).has(b)
-		UiFont.draw_small(self, b.left(4).to_upper(), Vector2(x0, y), Gfx.FIRE[4] if plan else Gfx.UI_TEXT)
+		UiFont.draw_small(self, b.left(4).to_upper(), Vector2(x0, y), Gfx.FIRE[4] if main.has(b) else Gfx.UI_TEXT)
 		UiKit.pips(self, Vector2(x0 + 22, y), Tech.branch_tier(v, b), Tech.MAX_TIER, Gfx.BRASS[3])
 		var tag: String = ""
 		var tcol: Color = Gfx.UI_DIM
@@ -784,11 +799,20 @@ func _draw_tech_compact(v: SimVehicle) -> void:
 		UiFont.draw_small(self, tag, Vector2(x0 + w - UiFont.width_small(tag), y), tcol)
 		y += 9.0
 	y += 2.0
-	UiFont.draw_small(self, ("PLAN: " if TechGuide.is_picked(world) else "TRY: ") + str(tpl["name"]), Vector2(x0, y), Gfx.UI_DIM)
+	var gl: String = "NO GOAL YET"
+	if not goals.is_empty():
+		gl = "GOAL: " + str(Tech.def(goals[0])["short"]) + (" +%d" % (goals.size() - 1) if goals.size() > 1 else "")
+	UiFont.draw_small(self, gl, Vector2(x0, y), Gfx.UI_DIM)
 	y += 9.0
 	var br := Rect2(x0 - 1, y - 1, w + 2, 18)
 	if nxt == "":
-		UiFont.draw_small(self, "PLAN COMPLETE", Vector2(x0, y + 4), Gfx.BRASS[3])
+		var tr := Rect2(x0 - 1, y - 1, w + 2, 18)
+		var th: bool = _is_hover("tab", "tech")
+		if th:
+			draw_rect(tr, UiKit.HOVER_WASH)
+		_hits.append([tr, "tab", "tech"])
+		UiFont.draw_small(self, "FLAG GOALS IN TECH" if goals.is_empty() else "GOALS NEED A SWAP", Vector2(x0, y + 1), Gfx.FIRE[5] if th else Gfx.BRASS[3])
+		UiFont.draw_small(self, "RIGHT-CLICK A NODE" if goals.is_empty() else "SEE TECH  T", Vector2(x0, y + 8), Gfx.UI_DIM)
 	else:
 		var st2: TechTreeView.State = TechTreeView.state(v, nxt)
 		var can: bool = st2 == TechTreeView.State.BUYABLE

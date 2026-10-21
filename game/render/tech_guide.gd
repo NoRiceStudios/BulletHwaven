@@ -1,13 +1,10 @@
 class_name TechGuide
 extends RefCounted
 ## Client-side guidance for the tech tree (tech tree v2.3, section 8; design doc section 5b): the one-line
-## pitch per branch, a "you see" and a "good if you ..." line per node, the three build templates
-## (ordered node path plus a three-line cheat sheet), the beginner view (on for a player's first
-## BEGINNER_MATCHES matches, counted in user://), glossary terms, and the net preview of a node on your
-## own rig. Render only: the preview runs on a scratch copy of the vehicle and never touches the real one.
-
-const PREFS_PATH := "user://tech_guide.cfg"
-const BEGINNER_MATCHES := 3
+## pitch per branch, a "you see" and a "good if you ..." line per node, the player's own goals (nodes
+## marked in the TECH view; the tree lights the way to them), the three build ideas that can seed those
+## goals, the build's identity from where its scrap went, glossary terms, and the net preview of a node on
+## your own rig. Render only: the preview runs on a scratch copy of the vehicle and never touches the real one.
 
 ## The branch's signature mechanic in one sentence (shown under the branch name).
 const PITCH := {
@@ -100,7 +97,8 @@ const GOOD_IF := {
 	"fusion_thunderclap": "KILL BY CONTACT",
 }
 
-## Build templates: two branches, an ordered node path (requirements always come first) and a cheat sheet.
+## Build ideas: two branches, an ordered node path (requirements always come first) and a cheat sheet.
+## Picking one only seeds the player's goals (idea_goals); the tree itself never narrows to it.
 const TEMPLATES: Array = [
 	{"id": "firebrand", "name": "FIREBRAND", "branches": ["ballistics", "propulsion"],
 		"blurb": "BURN EVERYTHING, DRIFT THROUGH THE FIRE",
@@ -150,79 +148,12 @@ const ABILITY_AUTO := {
 const AMMO_NAMES := {"fire": "FIRE", "shrapnel": "SHRAPNEL", "ap": "AP"}
 const AMMO_SHORT := {"fire": "FIRE", "shrapnel": "SHRAP", "ap": "AP"}
 
-static var persist: bool = true  ## false in screenshot mode: no user:// reads or writes
-static var matches_seen: int = 0
-static var beginner_pref: int = -1  ## -1 = automatic (first BEGINNER_MATCHES matches), 0 off, 1 on
-static var _loaded: bool = false
-static var _counted: Dictionary = {}  ## world instance id -> true (match already counted)
-static var _template: Dictionary = {}  ## world instance id -> template id picked this match
-static var _opened: Dictionary = {}  ## branch -> true: opened from MORE in the beginner view
+static var _goals: Dictionary = {}  ## world instance id -> Array[String]: goals marked this match
 static var _pv_key: String = ""
 static var _pv: Dictionary = {}
 
 
-# ---------------------------------------------------------------- prefs (user://)
-
-static func _load() -> void:
-	if _loaded:
-		return
-	_loaded = true
-	if not persist:
-		return
-	var cf := ConfigFile.new()
-	if cf.load(PREFS_PATH) == OK:
-		matches_seen = int(cf.get_value("tech", "matches_seen", 0))
-		beginner_pref = int(cf.get_value("tech", "beginner", -1))
-
-
-static func _save() -> void:
-	if not persist:
-		return
-	var cf := ConfigFile.new()
-	cf.set_value("tech", "matches_seen", matches_seen)
-	cf.set_value("tech", "beginner", beginner_pref)
-	cf.save(PREFS_PATH)
-
-
-## Counts a match once (the first workshop of a world seen by this client).
-static func note_match(w: SimWorld) -> void:
-	_load()
-	var key: int = w.get_instance_id()
-	if _counted.has(key):
-		return
-	_counted[key] = true
-	_opened.clear()
-	matches_seen += 1
-	_save()
-
-
-## Beginner view: on by default in the first BEGINNER_MATCHES matches, or as toggled.
-static func beginner() -> bool:
-	_load()
-	if beginner_pref >= 0:
-		return beginner_pref == 1
-	return matches_seen <= BEGINNER_MATCHES
-
-
-static func set_beginner(on: bool) -> void:
-	_load()
-	beginner_pref = 1 if on else 0
-	_save()
-
-
-## Branches opened from MORE in the beginner view (client-side, this match).
-static func is_opened(branch: String) -> bool:
-	return _opened.has(branch)
-
-
-static func toggle_opened(branch: String) -> void:
-	if _opened.has(branch):
-		_opened.erase(branch)
-	else:
-		_opened[branch] = true
-
-
-# ---------------------------------------------------------------- templates
+# ---------------------------------------------------------------- ideas and goals
 
 static func template_by_id(id: String) -> Dictionary:
 	for t: Dictionary in TEMPLATES:
@@ -231,39 +162,74 @@ static func template_by_id(id: String) -> Dictionary:
 	return {}
 
 
-## The template picked this match, else the one whose path matches the owned tech best (first on a tie).
-static func template_for(w: SimWorld, v: SimVehicle) -> Dictionary:
-	if w != null and _template.has(w.get_instance_id()):
-		return template_by_id(str(_template[w.get_instance_id()]))
-	var best: Dictionary = TEMPLATES[0]
-	var best_n: int = 0
-	for t: Dictionary in TEMPLATES:
-		var n: int = 0
-		for id: String in t["path"]:
-			if v.tech.has(id):
-				n += 1
-		if n > best_n:
-			best = t
-			best_n = n
-	return best
+## The goals an idea seeds: the deepest node of each of its branches on its path, then its fusions.
+static func idea_goals(t: Dictionary) -> Array[String]:
+	var deepest := {}
+	var fus: Array[String] = []
+	for id: String in t.get("path", []):
+		if Tech.is_fusion(id):
+			fus.append(id)
+			continue
+		var b: String = str(Tech.def(id)["branch"])
+		if not deepest.has(b) or int(Tech.def(id)["tier"]) > int(Tech.def(str(deepest[b]))["tier"]):
+			deepest[b] = id
+	var out: Array[String] = []
+	for b: String in t.get("branches", []):
+		if deepest.has(b):
+			out.append(str(deepest[b]))
+	out.append_array(fus)
+	return out
 
 
-static func is_picked(w: SimWorld) -> bool:
-	return w != null and _template.has(w.get_instance_id())
+## The goals marked on `v` this match, built ones left out (they drop off once owned).
+static func goals(w: SimWorld, v: SimVehicle) -> Array[String]:
+	var out: Array[String] = []
+	if w == null:
+		return out
+	var key: int = w.get_instance_id()
+	var kept: Array[String] = []
+	for id: String in _goals.get(key, []):
+		if not v.tech.has(id):
+			kept.append(id)
+	_goals[key] = kept
+	out.append_array(kept)
+	return out
 
 
-static func set_template(w: SimWorld, id: String) -> void:
-	if w != null and not template_by_id(id).is_empty():
-		_template[w.get_instance_id()] = id
+static func is_goal(w: SimWorld, id: String) -> bool:
+	return w != null and (_goals.get(w.get_instance_id(), []) as Array).has(id)
 
 
-## The node to buy next on the template's path ("" = path done or blocked): the first path node that is
-## neither owned nor locked out by a sibling, resolved to the first step it still needs.
-static func next_on_path(v: SimVehicle, tpl: Dictionary) -> String:
-	for id: String in tpl.get("path", []):
+## Marks or unmarks `id` as a goal; returns true when it is a goal now.
+static func toggle_goal(w: SimWorld, id: String) -> bool:
+	if w == null or Tech.def(id).is_empty():
+		return false
+	var key: int = w.get_instance_id()
+	var g: Array[String] = []
+	g.append_array(_goals.get(key, []))
+	var on: bool = not g.has(id)
+	if on:
+		g.append(id)
+	else:
+		g.erase(id)
+	_goals[key] = g
+	return on
+
+
+static func set_goals(w: SimWorld, ids: Array[String]) -> void:
+	if w != null:
+		var g: Array[String] = []
+		g.append_array(ids)
+		_goals[w.get_instance_id()] = g
+
+
+## The node to buy next towards the goals ("" = no goal reachable without a swap): the first step of the
+## first goal whose path needs no sibling swap.
+static func next_step(v: SimVehicle, goal_ids: Array[String]) -> String:
+	for id in goal_ids:
 		if v.tech.has(id) or Tech.blocked_by(v, id) != "":
 			continue
-		var steps: Array[String] = build_path(v, id, tpl.get("path", []))
+		var steps: Array[String] = build_path(v, id, goal_ids)
 		if steps.is_empty():
 			continue
 		var ok: bool = true
@@ -275,14 +241,55 @@ static func next_on_path(v: SimVehicle, tpl: Dictionary) -> String:
 	return ""
 
 
-## [owned, total] nodes of the template's path.
-static func path_progress(v: SimVehicle, tpl: Dictionary) -> Vector2i:
-	var n: int = 0
-	var path: Array = tpl.get("path", [])
-	for id: String in path:
-		if v.tech.has(id):
-			n += 1
-	return Vector2i(n, path.size())
+## Every node still to build for all goals, each once, in buy order.
+static func goals_path(v: SimVehicle, goal_ids: Array[String]) -> Array[String]:
+	var out: Array[String] = []
+	for id in goal_ids:
+		for p in build_path(v, id, goal_ids):
+			if not out.has(p):
+				out.append(p)
+	return out
+
+
+## Base scrap built into each branch (a fusion counts half for each of its two branches).
+static func invested(v: SimVehicle) -> Dictionary:
+	var out := {}
+	for b in Tech.BRANCHES:
+		out[b] = 0
+	for id in v.tech:
+		if Tech.is_fusion(id):
+			for rq in Tech.requirements(id):
+				var rb: String = str(Tech.def(str(rq))["branch"])
+				out[rb] = int(out[rb]) + Tech.cost(id) / 2
+		else:
+			var b2: String = str(Tech.def(id)["branch"])
+			out[b2] = int(out[b2]) + Tech.cost(id)
+	return out
+
+
+## The build's two main branches by scrap built in, biggest first ([] = nothing built; one entry when
+## only one branch has scrap in it).
+static func main_branches(v: SimVehicle) -> Array[String]:
+	var inv: Dictionary = invested(v)
+	var order: Array[String] = []
+	for b in Tech.BRANCHES:
+		if int(inv[b]) > 0:
+			order.append(b)
+	order.sort_custom(func(x: String, y: String) -> bool: return int(inv[x]) > int(inv[y]))
+	if order.size() > 2:
+		order.resize(2)
+	return order
+
+
+## The idea whose two branches are the build's two main ones ({} = none).
+static func idea_like(v: SimVehicle) -> Dictionary:
+	var mb: Array[String] = main_branches(v)
+	if mb.size() < 2:
+		return {}
+	for t: Dictionary in TEMPLATES:
+		if (t["branches"] as Array).has(mb[0]) and (t["branches"] as Array).has(mb[1]):
+			return t
+	return {}
 
 
 # ---------------------------------------------------------------- paths and previews
