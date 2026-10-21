@@ -402,6 +402,14 @@ The doctrine drives and the player watches, so watching has to feel good. Kill f
 - **Kill combo:** kills within 1.5 s chain; the counter ("x24") stands next to the rig, grows and warms from pale gold to deep fire, and calls out milestones in stencil: ROADKILL (10), SHREDDED (25), BUG BLENDER (50), HIVE BREAKER (100), WASTELAND LEGEND (200).
 - **Surges:** two seconds before a hive surge a SWARM INCOMING plate drops in under the clock with a faint cyan pulse on the screen edges (cyan = the hive).
 
+### 11i. Sound and music
+Sound follows the colour rule of 11c: **our side is warm and mechanical, the hive is wet and glassy.**
+- **Guns and rigs:** dry, punchy, scrap-built. Each weapon has its own voice (machine gun rattle, shotgun bark, cannon boom, flamer roar); rams crunch metal. Your own guns sit centred and slightly louder than everyone else's, so you hear your rig in a horde.
+- **Aliens:** deaths are wet squelches and chitin cracks (mites small, boulders a rock crack with rubble, glass wings shatter); shriekers screech, acid sizzles. Alarms that belong to the hive (surge siren, boss horn) carry the same glassy shimmer as the cyan glow.
+- **Mass:** in a horde the mix must stay readable, so every sound has a minimum gap and a per-tick cap, distant events are quieter and panned, and far ones are skipped.
+- **Music** (all synthesised, no licences): dusty desert western meets scrap-yard industrial, in D phrygian. MENU "Dune Sea" (slow guitar and wind), WORKSHOP "Scrap Yard" (laid-back groove with clanking tools), COMBAT "Convoy" (driving war-rig rock), BOSS "Hive Queen" (half-time and dissonant while a boss is on the field). Tracks crossfade on phase changes; a win or lose sting plays on game over.
+- **Settings:** master, music and effects levels plus a mute toggle on the main menu and the pause menu, saved with the profile.
+
 ---
 
 ## 12. Reference games (gameplay): what we take from each

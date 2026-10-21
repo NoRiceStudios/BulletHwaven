@@ -15,9 +15,10 @@
 | `sim/` | Simulation | Pure GDScript (`RefCounted`). No `Node`, scene tree, `Input`, `OS`, `Time`, or global `randf()`/`randi()`. Deterministic: all randomness comes from `world.rng`. Fixed tick 30 Hz. |
 | `net/` | Networking | Host runs the sim. Clients send commands and receive snapshots. |
 | `render/` | Presentation | Reads sim state every frame and never mutates it. |
+| `audio/` | Presentation (sound) | Same rule as `render/`: reads the shown world and its events, never mutates the sim. |
 | `tools/` | Dev tools | Screenshot scenarios. |
 | `tests/` | Tests | Headless runner, no external addons. |
-| `assets/` | Art | PNGs exported by `tools/artgen` (`python tools/artgen/generate.py --export-game-assets`). |
+| `assets/` | Art and audio | PNGs exported by `tools/artgen` (`python tools/artgen/generate.py --export-game-assets`); `assets/audio/` (sfx WAVs, music OGG loops) rendered by `tools/audiogen` (`python tools/audiogen/generate.py`). |
 
 ## Sim contract (`sim/`)
 
@@ -330,6 +331,12 @@ All in `render/`, reading the synced vehicle only; every change goes out as a co
 - `TechTreeView` (TECH view): tool row (plan chips `tpl`, BEGINNER VIEW toggle `beginner`), branch columns (folded columns under MORE in the beginner view, `expand` opens one), fusion rows, detail panel (sticky while the pointer is on it, so glossary words `gloss` can be hovered; `draw_gloss` draws the explanation last), and `draw_confirm` for `WorkshopUi.confirm` (clicking a sibling-locked choice asks before `respec_tech`; Enter / Esc).
 - `WorkshopUi` PARTS view: ammo per gun under each gun row (`LOADED: ...`, chips for the other unlocked types, action `ammo`), the ability panel next to YOUR RIG (two slots, a click cycles to the next unlocked ability, action `ability`), and the compact tech column (pips per branch with NEXT / IDLE / +n tags, the plan's next node as a buy button `buy_next`, FUSION READY).
 - Screenshot scenarios: `tech_tree` (full tree), `tech_mid` (fusions built / dormant / ready, idle and active keystone, mixed belts), `tech_swap` (swap confirmation), `workshop_mid` (PARTS with ammo chips, abilities, compact column), `tech_beginner` (beginner view). `Scenarios.ui_state()` may list `workshop_actions` ([action, arg] pairs main.gd passes to `WorkshopUi.activate`).
+
+## Audio (design doc 11i)
+
+- **Assets:** everything is synthesised by `tools/audiogen` (numpy + scipy, ffmpeg with libvorbis for the music; `dsp.py` the DSP kit, `sfx.py` the effects and their peak levels in `SOUNDS`, `music.py` the four loops). `python tools/audiogen/generate.py [--only a,b]` writes `game/assets/audio/sfx/<name>.wav` (44.1 kHz mono) and `game/assets/audio/music/<track>.ogg` (stereo; the reverb tail is folded onto the start so the loop is seamless; the `.ogg.import` files set `loop=true`). Seeded per name, so a rerun writes the same sounds.
+- **`AudioDirector`** (`audio/audio_director.gd`, a Node created by `main.gd` as a child of the WorldView; not in screenshot mode): reads `view.world` and its `events` once per sim tick (like the WorldView) and plays nothing while `view.attract` (the menu battle). `sound_for(event)` maps event types and kinds to sound names (`SOUNDS`: volume dB, minimum interval, max starts per tick; `admit()` enforces them, the focus rig's `fire` events have their own lane). World sounds use a pool of `AudioStreamPlayer2D` in the world's SubViewport (main.gd sets `audio_listener_enable_2d`, so the camera is the ear; events farther than `HEAR_RANGE` from the followed rig are skipped); `FLAT` sounds (alarms, UI, stings) and the focus rig's own guns use plain players. Phase changes play `round_start` / `round_end` and, on game over, `win` / `lose` (ducking the music). `track_for(world, attract)` picks the music: `menu` (no world, attract, game over), `combat`, `boss` (while `boss_state == Bosses.ST_ACTIVE`), `workshop`; two players crossfade (`MUSIC_FADE`). Workshop commands get UI sounds through `on_command()` (main.gd wraps `WorkshopUi.send_command`), menu actions a click.
+- **Buses and settings:** `ensure_buses()` adds `Music` and `SFX` (to `Master`). Levels `master` / `music` / `sfx` (0..1 in tenths, squared to dB) and `muted` (mutes `Master`) are saved in `[audio]` of `user://profile.cfg` (other sections kept). `MenuUi` draws the settings on the main menu (bottom left) and the pause menu: `-` / `+` buttons (keyboard stops, action `vol_step`), clickable bar segments (action `volume` `[key, level]`) and a mute button (action `mute`); `main.gd` applies them.
 
 ## Combat visuals (tech tree v2.3 stage 5)
 

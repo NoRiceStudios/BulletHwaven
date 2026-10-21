@@ -28,7 +28,7 @@ def vp(x: float, y: float):
 
 # Viewport positions (design: render/menu_ui.gd `_draw_main` / `_draw_pause`, render/workshop_ui.gd)
 SOLO_BUTTON = vp(40 + 176 / 2, 110 + 24 / 2)  # first main menu button
-RESUME_BUTTON = vp(320, 62 + 52 + 24 / 2)  # pause overlay, RESUME (plate y 62, button at +52)
+RESUME_BUTTON = vp(320, 40 + 52 + 24 / 2)  # pause overlay, RESUME (plate y 40, button at +52)
 CARD0 = vp(320 - 156 + 50, 160 + 61)  # workshop PARTS view: first of three 100x122 cards (x0 = 320 - 312 / 2)
 # Screen regions (x, y, w, h)
 DARK_PROBE = (0, 180 * SCALE, 100 * SCALE, 100 * SCALE)  # left plates: dark in workshop, sand in combat

@@ -18,3 +18,7 @@
 - Player projectiles, muzzle flashes and fire are always warm (`FIRE`); players are marked by paint colour (`PLAYERS`).
 - No repeating patterns on the ground; vehicles look scrap-built (see design doc 11b).
 - Art generator: `python tools/artgen/generate.py` writes to `art/samples/` (`--export-game-assets` writes game sprites to `game/assets/`). Modules: `palette.py`, `pixel.py`, `sprites.py`, `aliens.py` (bosses and late species), `terrain.py`, `scene.py`. After changing it, regenerate and look at the output before committing.
+
+## Audio
+
+- All sound is procedural: `python tools/audiogen/generate.py` (numpy, scipy, ffmpeg) writes `game/assets/audio/`. The game side is `game/audio/audio_director.gd`; see `docs/architecture.md` "Audio" and design doc 11i. There is no sound card in the container, so check new sounds with the generator's numbers (peak, RMS, DC) or a spectrogram, and ask the user to listen.
