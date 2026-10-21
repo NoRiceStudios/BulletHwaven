@@ -164,7 +164,7 @@ const PHASE_GAME_OVER := 2
 const COMBAT_TICKS := 2100  # 70 s
 const COMBAT_TICKS_EARLY := 1350  # 45 s, rounds 1 and 2
 const EARLY_ROUNDS := 2
-const WORKSHOP_TICKS := 1350  # 45 s
+const WORKSHOP_TICKS := 3600  # 120 s (ready-skip ends it early)
 const FAST_COMBAT_TICKS := 120  # world.fast_rounds (tests, screenshots)
 const FAST_WORKSHOP_TICKS := 81  # scaled with the workshop: 45 * 45 / 25
 

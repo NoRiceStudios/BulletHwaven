@@ -119,7 +119,7 @@ Render details (as built):
 
 Phases (`SimWorld` constants): `PHASE_COMBAT = 0`, `PHASE_WORKSHOP = 1`, `PHASE_GAME_OVER = 2`.
 - `world.phase: int`, `world.round: int` (starts at 1), `world.phase_ticks_left: int`, `world.winner_peer: int` (`-1` until game over).
-- Durations are tunable constants: `COMBAT_TICKS` (default 70 s; rounds 1–2 shorter, 45 s) and `WORKSHOP_TICKS` (45 s; ready-skip ends it early). `world.fast_rounds: bool` (tests and screenshots) shortens both.
+- Durations are tunable constants: `COMBAT_TICKS` (default 70 s; rounds 1–2 shorter, 45 s) and `WORKSHOP_TICKS` (120 s; ready-skip ends it early). `world.fast_rounds: bool` (tests and screenshots) shortens both.
 - **Combat:** enemies spawn and scale per round (hp and spawn-rate multipliers; boulders more frequent later).
 - **Combat → workshop:** enemies retreat (all removed, with a `"retreat"` event), projectiles are cleared and vehicles stop. Every vehicle earns interest (10% of the scrap held, capped at `interest_cap_for(v)`, see "Economy") and gets 3 fresh card offers.
 - **Workshop → combat:** when the timer runs out, or when every alive, non-eliminated player is ready. Then `round += 1`.
@@ -154,7 +154,7 @@ Snapshots carry all of the above. Card and tech ids are encoded as indices into 
 
 Implemented in `sim/sim_world.gd`, `sim/cards.gd`, `sim/tech.gd`, `net/snapshot.gd` (format version 2) and `net/net_session.gd`; tests in `tests/test_rounds.gd`.
 
-- **Timers:** `COMBAT_TICKS_EARLY = 1350` (rounds 1–2, 45 s), `COMBAT_TICKS = 2100` (70 s), `WORKSHOP_TICKS = 1350` (45 s); with `fast_rounds` they are `FAST_COMBAT_TICKS = 120` and `FAST_WORKSHOP_TICKS = 81`. Set `fast_rounds` right after constructing the world (at tick 0 the setter also resets the running timer). A phase flips on the `step()` that brings `phase_ticks_left` to 0. Ready-skip needs at least one non-eliminated player and is evaluated on the next `step()` after the last `ready`.
+- **Timers:** `COMBAT_TICKS_EARLY = 1350` (rounds 1–2, 45 s), `COMBAT_TICKS = 2100` (70 s), `WORKSHOP_TICKS = 3600` (120 s); with `fast_rounds` they are `FAST_COMBAT_TICKS = 120` and `FAST_WORKSHOP_TICKS = 81`. Set `fast_rounds` right after constructing the world (at tick 0 the setter also resets the running timer). A phase flips on the `step()` that brings `phase_ticks_left` to 0. Ready-skip needs at least one non-eliminated player and is evaluated on the next `step()` after the last `ready`.
 - **Retreat:** one `"retreat"` event per enemy (`pos`, `owner = -1`, `kind` = enemy kind), thinned by a stride to at most `RETREAT_EVENT_CAP = 150`. `"respawn"` events carry `pos` and `owner` = vehicle id.
 - **Repair and respawn timing (additions):** vehicles are repaired to `max_hp` when the next combat round starts. A vehicle that is destroyed when combat ends respawns at once for the workshop, so every non-eliminated player is alive in the workshop. Respawn picks the first free slot of the 8 arena-ellipse slots (starting at the vehicle's own), without using `rng`.
 - **Game over:** checked every tick. Multiplayer means `vehicles.size() >= 2`. On game over the field freezes (nothing moves; aliens and projectiles are left as they were). `winner_peer` is the survivor's peer id, `-1` if nobody survives (or in solo). `NetSession` marks a departed peer's vehicle `eliminated`, so a lone host wins when the last client leaves.

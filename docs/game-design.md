@@ -42,7 +42,7 @@
 ```
 ┌─ MATCH (8 players, ~20–25 min, ~14 rounds) ───────────────────────────┐
 │                                                                        │
-│  [ CONVOY PHASE 45–70 s ]  ──►  [ WORKSHOP ~45 s ]  ──►  next round    │
+│  [ CONVOY PHASE 45–70 s ]  ──►  [ WORKSHOP ~120 s ]  ──►  next round   │
 │   AI drives & fights           Draft 1 of 3 cards (free)                │
 │   Collect scrap                Spend scrap: tech tree / rerolls         │
 │   Use 1–2 active abilities     Place modules on the chassis grid        │
@@ -56,7 +56,7 @@
   META: base camp / garage (idle production, unlocks, drivers)
 ```
 
-**Pacing (horde pass):** combat is the reward, so the workshop is short (45 s) and combat is long and dense: 45 s in rounds 1–2, 70 s from round 3. Difficulty comes from mass, not sponges: mites arrive in packs (3 in round 1 rising to 8, clustered at one edge point), the alive count climbs to roughly 30–60 by mid round 1, 150 at the peak of round 5 and 300+ by round 10, while alien hp scales gently (+7 % per round plus a small quadratic term). Each combat follows a wave curve: build-up, a first surge at about 35 % of the round, a short lull (6 s), then a final surge that runs until the end-of-round retreat. The sim emits a `surge` event 2 s before each surge so the HUD can show a SWARM INCOMING banner. Mites pay a fraction of a scrap per kill so a bigger horde does not inflate the economy.
+**Pacing (horde pass):** combat is the reward, but the workshop gets enough time to set up parts, tech and rules (120 s, ending early once every player is ready) and combat is long and dense: 45 s in rounds 1–2, 70 s from round 3. Difficulty comes from mass, not sponges: mites arrive in packs (3 in round 1 rising to 8, clustered at one edge point), the alive count climbs to roughly 30–60 by mid round 1, 150 at the peak of round 5 and 300+ by round 10, while alien hp scales gently (+7 % per round plus a small quadratic term). Each combat follows a wave curve: build-up, a first surge at about 35 % of the round, a short lull (6 s), then a final surge that runs until the end-of-round retreat. The sim emits a `surge` event 2 s before each surge so the HUD can show a SWARM INCOMING banner. Mites pay a fraction of a scrap per kill so a bigger horde does not inflate the economy.
 
 **Workshop phases run simultaneously for everyone** (like TFT), so the multiplayer stays fair and synchronous. Vehicles stop in a safe spot during the workshop (story framing: "the convoy makes camp").
 
