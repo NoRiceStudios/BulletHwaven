@@ -222,7 +222,7 @@ static func _table() -> Dictionary:
 	return {
 		"never_upgrade": {
 			"desc": "Never picks, rerolls or buys: the starter mg all game (baseline).",
-			"cards": {}, "default_card": NEVER, "tech_mode": "none",
+			"cards": {}, "default_card": NEVER, "tech_mode": "none", "zones": 0,
 			"drive": "circle", "target": "nearest",
 		},
 		"random": {
@@ -253,7 +253,7 @@ static func _table() -> Dictionary:
 		},
 		"turtle": {
 			"desc": "Passive FFA play: tank build, kites, never targets players (nearest alien only; the sim's return fire still applies).",
-			"cards": CARDS_TANK, "default_card": 1.0, "upgrade_bonus": 0.0, "new_weapon_bonus": 4.0,
+			"zones": 0, "cards": CARDS_TANK, "default_card": 1.0, "upgrade_bonus": 0.0, "new_weapon_bonus": 4.0,
 			"tech_mode": "order", "tech": TECH_TANK, "tech_reserve": 0,
 			"reroll_below": 7.0, "max_rerolls": 3, "reroll_reserve": 10,
 			"drive": "kite", "target": "nearest",
@@ -327,6 +327,7 @@ static func _table() -> Dictionary:
 		},
 		"tpl_rammer_hunt": {
 			"desc": "Rammer that hunts rivals (players_first, PvP stress test): propulsion + engineering to the War Machine, charge driving, armour and speed cards, never takes weapons.",
+			"zones": 0,
 			"cards": CARDS_RAMMER, "default_card": 1.0, "upgrade_bonus": 1.0, "lvl_decay": 0.08, "new_weapon_bonus": 0.0,
 			"tech_mode": "order", "tech": TECH_RAMMER, "tech_reserve": 0,
 			"reroll_below": 5.5, "max_rerolls": 3, "reroll_reserve": 15,
@@ -347,7 +348,8 @@ static func _table() -> Dictionary:
 			"drive": "circle", "target": "nearest",
 		},
 		"pvp_hunter": {
-			"desc": "players_first + charge, damage cards, hunts rivals.",
+			"desc": "players_first + charge, damage cards, hunts rivals (and shoots zone intruders).",
+			"zones": 2,
 			"cards": CARDS_HUNTER, "default_card": 1.0, "upgrade_bonus": 1.5,
 			"tech_mode": "order", "tech": TECH_HUNTER, "tech_reserve": 0,
 			"reroll_below": 7.0, "max_rerolls": 3, "reroll_reserve": 10,
@@ -371,6 +373,14 @@ func doctrine_commands(world: SimWorld, v: SimVehicle) -> Array[Dictionary]:
 		out.append({"type": "set_drive", "value": drive})
 	if str(v.doctrine.get("target", "")) != target:
 		out.append({"type": "set_target", "value": target})
+	# Control zones (PvP, round 4+): drive into the nearest zone and hold it; hunters also shoot whoever
+	# intrudes. Passive baselines (cfg "zones": 0) and random bots keep their plain doctrine.
+	var zmode: int = int(cfg.get("zones", 1))
+	if zmode > 0 and str(cfg.get("mode", "")) != "random" and v.rules.is_empty():
+		var rule: String = "pvp=1&hp>40|drive:zone"
+		if zmode >= 2:
+			rule = "in_zone=1&rivals>0|target:intruders;" + rule
+		out.append({"type": "set_rules", "scope": Doctrine.SCOPE_RIG, "value": rule})
 	# Shrieker matches: every gun shoots a shrieker in range first (the pulse heals and speeds up the horde).
 	if world.hive_first[2] > 0 and str(cfg.get("mode", "")) != "random":
 		for wp in v.weapons:

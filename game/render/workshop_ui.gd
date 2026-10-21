@@ -37,7 +37,7 @@ const TABS: PackedStringArray = ["parts", "tech", "rules"]
 const TAB_LABELS := {"parts": "PARTS", "tech": "TECH", "rules": "RULES"}
 const TAB_KEYS := {"parts": "", "tech": "T", "rules": "P"}
 const TARGET_LABELS := {"nearest": "NEAREST", "strongest": "STRONGEST", "players_first": "PLAYERS 1ST", "weakest": "WEAKEST",
-	"boulders": "BOULDERS", "spitters": "SPITTERS", "boss": "BOSS", "shriekers": "SHRIEKERS"}
+	"boulders": "BOULDERS", "spitters": "SPITTERS", "boss": "BOSS", "shriekers": "SHRIEKERS", "intruders": "INTRUDERS"}
 const TOAST_SECS := 1.6
 const DRAIN_NOTICE_TICKS := 150  ## the "-N FUEL DRAIN" tape flashes this long after the drain
 

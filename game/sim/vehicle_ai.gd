@@ -10,6 +10,7 @@ const SPEED_CIRCLE := 95.0
 const SPEED_KITE := 96.0
 const SPEED_CHARGE := 125.0
 const SPEED_FLEE := 110.0
+const SPEED_ZONE := 110.0
 const CHARGE_RAM_DAMAGE := 2.0
 
 
@@ -103,6 +104,11 @@ static func find_target(w: SimWorld, v: SimVehicle, mode: String, reach: float) 
 			idx = _nearest_boss(w, v.pos, reach)
 		"shriekers":
 			idx = _nearest_enemy(w, v.pos, -1, SimWorld.SHRIEKER, reach)
+		"intruders":
+			if w.pvp_enabled():
+				var intr: SimVehicle = Zones.nearest_intruder(w, v, r)
+				if intr != null:
+					return Vector3i(2, intr.id, intr.id)
 	if idx < 0:
 		# Charge without berserker does not ram boulders: prefer anything else if it is around.
 		var skip: int = SimWorld.BOULDER if reach <= 0.0 and _avoids_boulders(v) else -1
@@ -232,7 +238,20 @@ static func steer(w: SimWorld, v: SimVehicle) -> void:
 	var speed: float = SPEED_CIRCLE
 	v.ram_damage = 0.0
 	v.ramming = false
-	if v.target_kind != 0:
+	var goal: int = Zones.goal_zone(w, v) if drive == "zone" else -1
+	if goal >= 0:
+		# Zone drive: head for the centre of the goal zone, then orbit it while the guns keep firing at the target.
+		var zc: Vector2 = w.zones[goal]["pos"]
+		var to_z: Vector2 = zc - v.pos
+		var dz: float = to_z.length()
+		var uz: Vector2 = to_z / maxf(dz, 0.001)
+		var orbit_r: float = Zones.ZONE_RADIUS * 0.45
+		if dz > Zones.ZONE_RADIUS * 0.6:
+			desired = uz
+		else:
+			desired = Vector2(-uz.y, uz.x) * v.orbit_dir + uz * clampf((dz - orbit_r) / orbit_r, -1.0, 1.0)
+		speed = SPEED_ZONE
+	elif v.target_kind != 0:
 		var to_t: Vector2 = v.target_pos - v.pos
 		var d: float = to_t.length()
 		var u: Vector2 = to_t / maxf(d, 0.001)

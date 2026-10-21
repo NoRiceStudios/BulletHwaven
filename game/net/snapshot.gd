@@ -7,6 +7,8 @@ extends RefCounted
 ##                   phase, round, phase_ticks_left, winner_peer, leader_peer, pvp_grace_ticks, fuel_drain, zone count
 ##   (header ends with u8 boss_first, u16 hive signature: 3 bits first round per species, Glass Wings lowest)
 ##   zones    u8 count, per zone 9 B: x, y u16 (1/16 px, offset), radius u8 (px), kind u8, ttl u16, owner i8
+##   control zones (version 18, after the ground zones) u8 active, u8 count (<= Zones.MAX_ZONES), per zone 8 B: x, y u16 (1/16 px, offset), owner i8,
+##                   capture id i8, capture ticks u8, flags u8 (bit 0 contested)
 ##   vehicles variable (about 160 B each: doctrine strings, weapons (with heat, jam, switch pause, loaded ammo), doctrine rules, fuel / flags,
 ##                   offers, cards, tech (+ purchase rounds, dormant fusions, respecs), player name and colour index). Rules are binary: u8 count,
 ##                   per rule u8 action (Doctrine.ACTIONS index), u8 conditions, per condition
@@ -30,14 +32,14 @@ extends RefCounted
 ## current round, SimWorld.enemy_max_hp). Card and tech ids are table indices (Cards.DEFS / Tech.DEFS).
 ## Projectile pierce / splash are not sent: the client world is passive.
 
-const VERSION := 17  # 17: live condition masks (vehicle rule_conds u32, weapon clive u32); 16: radio commands (vehicle extras byte 2, bit 1: charges / ticks / cmd / lock), event radio; 15: live order "target mark" (vehicle extras flag 128: mark_order ticks / cooldown / kind / id), event mark; 14: hive signature (header u16), species kinds 3..5 (enemy kind 3 bits, heading 6 bits), taken stats glass / brood / shrieker, events shriek / brood; 13: boss rounds (header boss_first, FLAG_BOSS tail block, boss enemy kinds, boss events); 12: event surge; 11: salvage (contract offers and progress, loan debt, reserved card, bonus offers), events contract_done / saw / shockwave / chain / jerry_blast; 10: momentum, abilities (slots, cooldowns, effect timers, decoy), swarm mark, jam flags, stunned bitset; 9: ammo / heat per weapon, ground zones, burning bitset, float cooldowns; 8: tech v2.3 (dormant fusions, respecs, purchase rounds); 7: doctrine rules (rig + per weapon); 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
+const VERSION := 18  # 18: PvP control zones (header zone block after the ground zones, vehicle extras byte 2 bit 2: zone_ticks, zone_points stats, events zones_open / zone_captured / zone_bonus); 17: live condition masks (vehicle rule_conds u32, weapon clive u32); 16: radio commands (vehicle extras byte 2, bit 1: charges / ticks / cmd / lock), event radio; 15: live order "target mark" (vehicle extras flag 128: mark_order ticks / cooldown / kind / id), event mark; 14: hive signature (header u16), species kinds 3..5 (enemy kind 3 bits, heading 6 bits), taken stats glass / brood / shrieker, events shriek / brood; 13: boss rounds (header boss_first, FLAG_BOSS tail block, boss enemy kinds, boss events); 12: event surge; 11: salvage (contract offers and progress, loan debt, reserved card, bonus offers), events contract_done / saw / shockwave / chain / jerry_blast; 10: momentum, abilities (slots, cooldowns, effect timers, decoy), swarm mark, jam flags, stunned bitset; 9: ammo / heat per weapon, ground zones, burning bitset, float cooldowns; 8: tech v2.3 (dormant fusions, respecs, purchase rounds); 7: doctrine rules (rig + per weapon); 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
 const FLAG_WIDE_IDS := 1  ## enemy ids spread over more than 65535: ids are sent as u32 deltas from 0
 const FLAG_STATS := 2  ## vehicles carry round_stats and match_stats (sent outside combat only)
 const FLAG_BURNING := 4  ## a burning bitset follows the projectiles (only sent while something burns)
 const FLAG_BOSS := 16  ## a boss block follows the stunned bitset (while Bosses state != NONE)
 const FLAG_STUNNED := 8  ## a stunned bitset follows the burning one (only sent while an EMP holds something)
 const EVENT_EXTRA_BIT := 0x80
-const EVENT_EXTRAS := {"kill": ["victim", "weapon"], "vehicle_destroyed": ["cause", "killer"], "surge": ["in_ticks", "index"], "boss": ["in_ticks", "enraged"]}
+const EVENT_EXTRAS := {"kill": ["victim", "weapon"], "vehicle_destroyed": ["cause", "killer"], "surge": ["in_ticks", "index"], "boss": ["in_ticks", "enraged"], "zone_captured": ["prev", "count"]}
 const TAKEN_KEYS: PackedStringArray = ["mite", "boulder", "spitter", "acid", "rival", "glass", "brood", "shrieker"]
 const MAX_DEATHS := 16
 const MAX_ROUND_PLAYERS := 16
@@ -47,14 +49,14 @@ const POS_SCALE := 16.0  ## u16 / 16 covers 4096 px: the arena plus POS_ORIGIN m
 const POS_ORIGIN := 64.0  ## added to projectile/event coordinates (they may leave the arena slightly)
 const POS_ERROR := 1.0 / 32.0
 
-const HEADER_BYTES := 41  # includes the zone count; the zone entries follow it
+const HEADER_BYTES := 43  # includes the ground zone count and the control zone active flag + count; the zone entries follow them
 const ENEMY_BYTES := 8
 const WIDE_ENEMY_BYTES := 10
 const PROJ_BYTES := 13
 const EVENT_BYTES := 7
 
 const MAX_VEHICLES := 64  ## vehicle ids travel as u8 / i8 owners, keep well below 127
-const EVENT_TYPES: PackedStringArray = ["fire", "hit", "kill", "vehicle_destroyed", "retreat", "respawn", "spit", "pvp_on", "bounty", "drain", "shrapnel", "jam", "overheat", "execute", "nitro", "emp", "smoke", "salvo", "dodge", "sparks", "boom", "shed", "contract_done", "saw", "shockwave", "chain", "jerry_blast", "surge", "boss", "boss_spawn", "boss_phase", "boss_kill", "boss_retreat", "boss_shell", "boss_blast", "boss_ring", "boss_charge", "boss_brood", "boss_split", "shriek", "brood", "mark", "radio"]
+const EVENT_TYPES: PackedStringArray = ["fire", "hit", "kill", "vehicle_destroyed", "retreat", "respawn", "spit", "pvp_on", "bounty", "drain", "shrapnel", "jam", "overheat", "execute", "nitro", "emp", "smoke", "salvo", "dodge", "sparks", "boom", "shed", "contract_done", "saw", "shockwave", "chain", "jerry_blast", "surge", "boss", "boss_spawn", "boss_phase", "boss_kill", "boss_retreat", "boss_shell", "boss_blast", "boss_ring", "boss_charge", "boss_brood", "boss_split", "shriek", "brood", "mark", "radio", "zones_open", "zone_captured", "zone_bonus"]
 const MAX_ROUND := 65535
 const SPEED_STEPS := 7
 const HEADING_STEPS := 64
@@ -137,6 +139,18 @@ static func encode(world: SimWorld, p_events: Array[Dictionary] = []) -> PackedB
 		sp.put_u8(world.zone_kind[zi])
 		sp.put_u16(clampi(world.zone_ttl[zi], 0, 65535))
 		sp.put_8(clampi(world.zone_owner[zi], -1, 127))
+	var n_cz: int = mini(world.zones.size(), Zones.MAX_ZONES)
+	sp.put_u8(1 if world.zones_active else 0)
+	sp.put_u8(n_cz)
+	for ci in n_cz:
+		var cz: Dictionary = world.zones[ci]
+		var cp: Vector2 = cz["pos"]
+		sp.put_u16(_q_off(cp.x))
+		sp.put_u16(_q_off(cp.y))
+		sp.put_8(clampi(int(cz["owner"]), -1, 127))
+		sp.put_8(clampi(int(cz["cap_id"]), -1, 127))
+		sp.put_u8(clampi(int(cz["cap_ticks"]), 0, 255))
+		sp.put_u8(1 if cz["contested"] else 0)
 
 	for vi in n_veh:
 		_put_vehicle(sp, world.vehicles[vi], with_stats)
@@ -294,6 +308,25 @@ static func apply(world: SimWorld, bytes: PackedByteArray) -> bool:
 		z_owner.append(r.s8())
 	if not r.ok or n_zone > SimWorld.MAX_ZONES:
 		return false
+
+	var cz_active: int = r.u8()
+	var n_cz: int = r.u8()
+	var cz_list: Array[Dictionary] = []
+	if not r.ok or cz_active > 1 or n_cz > Zones.MAX_ZONES:
+		return false
+	for ci in n_cz:
+		var cx: float = float(r.u16()) / POS_SCALE - POS_ORIGIN
+		var cy: float = float(r.u16()) / POS_SCALE - POS_ORIGIN
+		var cz := Zones.make_zone(Vector2(cx, cy))
+		cz["owner"] = r.s8()
+		cz["cap_id"] = r.s8()
+		cz["cap_ticks"] = r.u8()
+		var cflags: int = r.u8()
+		cz["contested"] = (cflags & 1) != 0
+		if not r.ok or cflags > 1 or int(cz["owner"]) >= n_veh or int(cz["cap_id"]) >= n_veh or int(cz["cap_ticks"]) > Zones.CAPTURE_TICKS \
+				or int(cz["owner"]) < -1 or int(cz["cap_id"]) < -1:
+			return false
+		cz_list.append(cz)
 
 	var vehicles: Array[SimVehicle] = []
 	for vi in n_veh:
@@ -491,6 +524,8 @@ static func apply(world: SimWorld, bytes: PackedByteArray) -> bool:
 	world.zone_kind = z_kind
 	world.zone_ttl = z_ttl
 	world.zone_owner = z_owner
+	world.zones = cz_list
+	world.zones_active = cz_active == 1
 	world.proj_pos = p_pos
 	world.proj_vel = p_vel
 	world.proj_ttl = p_ttl
@@ -666,12 +701,16 @@ static func _put_extras(sp: StreamPeerBuffer, v: SimVehicle) -> void:
 	var ext2: int = 0
 	if v.radio_charges != Orders.RADIO_CHARGES or v.radio_ticks > 0 or v.radio_lock > 0:
 		ext2 |= 1
-	sp.put_u8(ext2)  # second flags byte (version 16): 1 radio state
+	if v.zone_ticks > 0:
+		ext2 |= 2
+	sp.put_u8(ext2)  # second flags byte (version 16): 1 radio state, 2 zone_ticks (version 18)
 	if (ext2 & 1) != 0:
 		sp.put_u8(clampi(v.radio_charges, 0, 255))
 		sp.put_u8(clampi(v.radio_ticks, 0, 255))
 		sp.put_8(clampi(v.radio_cmd, -1, 127))
 		sp.put_u8(clampi(v.radio_lock, 0, 255))
+	if (ext2 & 2) != 0:
+		sp.put_u16(clampi(v.zone_ticks, 0, 65535))
 	if (ext & 1) != 0:
 		sp.put_float(v.momentum)
 	if (ext & 2) != 0:
@@ -736,6 +775,9 @@ static func _get_extras(r: _Reader, v: SimVehicle, slot_ids: Array[String], slot
 		v.radio_ticks = 0
 		v.radio_cmd = -1
 		v.radio_lock = 0
+	v.zone_ticks = r.u16() if (ext2 & 2) != 0 else 0
+	if (ext2 & 252) != 0:
+		r.fail()
 	if (ext & 1) != 0:
 		v.momentum = r.f32()
 	if (ext & 2) != 0:
@@ -849,6 +891,8 @@ static func _put_stats(sp: StreamPeerBuffer, v: SimVehicle) -> void:
 	sp.put_u16(clampi(int(ms.get("top_victim_n", 0)), 0, 65535))
 	sp.put_8(clampi(int(ms.get("nemesis", -1)), -1, 127))
 	sp.put_u16(clampi(int(ms.get("nemesis_n", 0)), 0, 65535))
+	sp.put_u16(clampi(int(rs.get("zone_points", 0)), 0, 65535))
+	sp.put_u16(clampi(int(ms.get("zone_points", 0)), 0, 65535))
 
 
 static func _get_stats(r: _Reader, v: SimVehicle) -> void:
@@ -898,6 +942,8 @@ static func _get_stats(r: _Reader, v: SimVehicle) -> void:
 	ms["top_victim_n"] = r.u16()
 	ms["nemesis"] = r.s8()
 	ms["nemesis_n"] = r.u16()
+	rs["zone_points"] = r.u16()
+	ms["zone_points"] = r.u16()
 	v.round_stats = rs
 	v.match_stats = ms
 
@@ -1126,6 +1172,7 @@ static func _commit_vehicles(world: SimWorld, fresh: Array[SimVehicle]) -> void:
 			dst.radio_ticks = src.radio_ticks
 			dst.radio_cmd = src.radio_cmd
 			dst.radio_lock = src.radio_lock
+			dst.zone_ticks = src.zone_ticks
 			dst.contract_offers = src.contract_offers
 			dst.contract_kind = src.contract_kind
 			dst.contract_need = src.contract_need

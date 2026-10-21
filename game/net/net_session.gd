@@ -34,7 +34,7 @@ const MAX_RAW_NAME := 64  ## longer raw names are junk and rejected; shorter one
 
 ## Allow-list of client commands with a fixed set of string values: type -> permitted values.
 const COMMANDS := {
-	"set_drive": ["circle", "kite", "charge"],
+	"set_drive": Doctrine.BASE_DRIVES,
 	"set_target": Doctrine.RIG_TARGETS,
 	"use_ability": Abilities.IDS,
 }
