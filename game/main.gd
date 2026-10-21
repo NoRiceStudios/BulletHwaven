@@ -12,6 +12,8 @@ extends Node
 ##                         --hover puts the UI pointer at x,y (viewport px); --click clicks there
 ##                         through the visible UI's own click path (menu or workshop).
 ##   --scenario=replay --session=<dir> --frames=<frames.json>   (playtest harness, scripts/playtest.sh)
+##   --windowed            start in a window (default: fullscreen, toggled with F11 / Alt+Enter and remembered)
+## Keys (any screen): F11 or Alt+Enter toggles fullscreen.
 ## Keys (combat): 1/2/3 drive circle/kite/charge, Q/W/E target nearest/strongest/players_first,
 ## P the rule editor (render/doctrine_editor.gd, any phase),
 ## Esc the pause / menu overlay (solo pauses the sim). Workshop and game over keys are handled by
@@ -27,6 +29,7 @@ const PORT := 24680
 const DRIVE_KEYS := {KEY_1: "circle", KEY_2: "kite", KEY_3: "charge"}
 const TARGET_KEYS := {KEY_Q: "nearest", KEY_W: "strongest", KEY_E: "players_first"}
 const ABILITY_KEYS := {KEY_F: 0, KEY_G: 1}  ## cast the ability in slot 0 / 1 by hand
+const FIT_INTEGER_MIN := 0.94  ## whole-pixel scaling only while it fills at least this much of the window
 const DEMO_TICKS := 30 * 120  ## the menu's attract battle restarts after this many ticks
 
 @onready var _view: WorldView = $Stage/World/WorldView
@@ -53,6 +56,7 @@ func _ready() -> void:
 		return
 	_fast = args.has("fast")
 	_load_profile()
+	_setup_display(args.has("windowed"))
 	_menu.action.connect(_on_menu_action)
 	_view.game_over.quit = _leave_to_menu
 	if args.has("host") or args.has("join") or args.has("solo"):
@@ -420,6 +424,51 @@ func _save_profile() -> void:
 	var err: Error = cfg.save(PROFILE_PATH)
 	if err != OK:
 		push_warning("main: cannot save %s (%s)" % [PROFILE_PATH, error_string(err)])
+
+
+# ---------------------------------------------------------------- display
+
+## Fullscreen by default (the [display] fullscreen pref, --windowed forces a window) and a scale that
+## fills the window: whole-pixel scaling only while it fills nearly all of it, else fractional (a
+## maximised window on a 1080p desktop is ~1920x1010: whole pixels would leave the game at 2x).
+func _setup_display(windowed: bool) -> void:
+	var cfg := ConfigFile.new()
+	cfg.load(PROFILE_PATH)
+	var full: bool = bool(cfg.get_value("display", "fullscreen", true)) and not windowed
+	get_window().size_changed.connect(_fit_scale)
+	_set_fullscreen(full, false)
+	_fit_scale()
+
+
+func _set_fullscreen(on: bool, save: bool) -> void:
+	if DisplayServer.get_name() == "headless":
+		return
+	get_window().mode = Window.MODE_FULLSCREEN if on else Window.MODE_WINDOWED
+	if save:
+		var cfg := ConfigFile.new()
+		cfg.load(PROFILE_PATH)
+		cfg.set_value("display", "fullscreen", on)
+		cfg.save(PROFILE_PATH)
+
+
+func _fit_scale() -> void:
+	var win: Window = get_window()
+	var base := Vector2(win.content_scale_size)
+	if base.x <= 0.0 or base.y <= 0.0:
+		return
+	var s: float = minf(float(win.size.x) / base.x, float(win.size.y) / base.y)
+	win.content_scale_stretch = Window.CONTENT_SCALE_STRETCH_INTEGER if s >= 1.0 and floorf(s) / s >= FIT_INTEGER_MIN \
+		else Window.CONTENT_SCALE_STRETCH_FRACTIONAL
+
+
+func _input(event: InputEvent) -> void:
+	var k := event as InputEventKey
+	if k == null or not k.pressed or k.echo:
+		return
+	if k.keycode == KEY_F11 or (k.keycode == KEY_ENTER and k.alt_pressed):
+		var win: Window = get_window()
+		_set_fullscreen(win.mode != Window.MODE_FULLSCREEN and win.mode != Window.MODE_EXCLUSIVE_FULLSCREEN, true)
+		get_viewport().set_input_as_handled()
 
 
 # ---------------------------------------------------------------- screenshot mode

@@ -54,6 +54,7 @@ var _labels: Node2D
 var _camera: Camera2D
 var _hud: Hud
 var minimap: Minimap
+var rig_status: RigStatus  ## the watched rig's guns and active effects (left edge)
 var _hud_layer: CanvasLayer
 var workshop: WorkshopUi
 var game_over: GameOverUi
@@ -216,6 +217,9 @@ func _ready() -> void:
 	minimap = Minimap.new()
 	minimap.view = self
 	hud_layer.add_child(minimap)
+	rig_status = RigStatus.new()
+	rig_status.view = self
+	hud_layer.add_child(rig_status)
 	workshop = WorkshopUi.new()
 	workshop.view = self
 	hud_layer.add_child(workshop)
