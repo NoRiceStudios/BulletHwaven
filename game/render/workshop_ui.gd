@@ -69,7 +69,7 @@ var _deploy_shown: bool = false  ## the deploy screen (phase PHASE_DEPLOY) is up
 ## Deploy screen (before round 1): starting doctrine presets in a column on the left, the rule editor on the right.
 const DEPLOY_COL := Rect2(6, 34, 126, 310)
 const DEPLOY_EDITOR := Rect2(138, 34, 496, 310)
-const PRESET_H := 70.0
+const PRESET_H := 56.0  ## five starting doctrines fit DEPLOY_COL
 ## Pending tech swap waiting for confirmation in the TECH view ({"from", "to"}; {} = none).
 var confirm: Dictionary = {}
 
@@ -205,6 +205,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	match key:
 		KEY_1, KEY_2, KEY_3, KEY_4:
 			activate("pick", int(key - KEY_1))
+		KEY_5:
+			if _deploy_shown:  # the fifth starting doctrine (the workshop has three cards)
+				activate("pick", 4)
+			else:
+				handled = false
 		KEY_R:
 			activate("reroll", null)
 		KEY_SPACE, KEY_ENTER:
@@ -406,7 +411,7 @@ func _draw_deploy(v: SimVehicle, vs: Vector2) -> void:
 	var custom: bool = cur == "" and not v.rules.is_empty()
 	var note: String = "CUSTOM - EDITED BY HAND" if custom else "PICK ONE, THEN TUNE IT ON THE RIGHT"
 	UiFont.draw_small(self, note, Vector2(col.position.x + 2, y + 1), Gfx.CRT_HI if custom else Gfx.UI_DIM, Gfx.UI_SHADOW)
-	UiKit.footer(self, "1-4  PRESET    SPACE  ROLL OUT    IN COMBAT: CLICK THE DOCK TO SWITCH    RIGHT-CLICK  MARK    Z X C V  RADIO", vs)
+	UiKit.footer(self, "1-5  PRESET    SPACE  ROLL OUT    IN COMBAT: CLICK THE DOCK TO SWITCH    RIGHT-CLICK  MARK    Z X C V  RADIO", vs)
 	_draw_toast(vs)
 
 
@@ -460,10 +465,10 @@ func _draw_preset(p: Dictionary, i: int, r: Rect2, cur: String) -> void:
 	UiFont.draw(self, p["name"], Vector2(x, head.position.y + 2), hc)
 	var tag: String = "ACTIVE" if on else str(p["tag"])
 	UiFont.draw_small(self, tag, Vector2(head.end.x - 3 - UiFont.width_small(tag), head.position.y + 3), Gfx.CRT_BG if on else Gfx.CRT_DIM)
-	var y: float = head.end.y + 4.0
+	var y: float = head.end.y + 3.0
 	for line: String in p["lines"]:
 		UiFont.draw_small(self, line, Vector2(r.position.x + 6, y), Gfx.CRT_TEXT)
-		y += 9.0
+		y += 8.0
 	var lbl: String = "%s / %s" % [str(DoctrineEditor.ACTION_LABELS.get("drive:" + str(p["drive"]), "")),
 		str(DoctrineEditor.ACTION_LABELS.get("target:" + str(p["target"]), "")).trim_prefix("TGT ")]
 	UiFont.draw_small(self, lbl, Vector2(r.position.x + 6, r.end.y - 10), Gfx.CRT_DIM)
@@ -478,6 +483,12 @@ func _send(cmd: Dictionary) -> void:
 func _say(text: String) -> void:
 	_toast = text
 	_toast_left = TOAST_SECS
+
+
+## A longer toast from outside (WorldView: the zone king bonus as the workshop opens).
+func say(text: String, secs: float = 4.0) -> void:
+	_toast = text
+	_toast_left = secs
 
 
 # ---------------------------------------------------------------- drawing
@@ -1305,7 +1316,10 @@ func _draw_recap(v: SimVehicle) -> void:
 	# earnings and fuel as label / value rows
 	var ex: float = _kv("KILLS", str(int(rs.get("kills", 0))), Vector2(x0, y), Gfx.UI_TEXT)
 	if world.vehicles.size() > 1:
-		_kv("RIGS", str(int(rs.get("kills_players", 0))), Vector2(ex, y), Gfx.UI_TEXT)
+		ex = _kv("RIGS", str(int(rs.get("kills_players", 0))), Vector2(ex, y), Gfx.UI_TEXT)
+	var zone_pts: int = int(rs.get("zone_points", 0))
+	if zone_pts > 0:  # seconds held alone in an own control zone = scrap (already in SCRAP below)
+		_kv("ZONES", "+%d" % zone_pts, Vector2(ex, y), Gfx.FIRE[4])
 	y += 9.0
 	ex = _kv("SCRAP", "+%d" % int(rs.get("scrap_earned", 0)), Vector2(x0, y), Gfx.FIRE[4])
 	_kv("INTEREST", "+%d" % int(rs.get("interest", 0)), Vector2(ex, y), Gfx.FIRE[4])
@@ -1314,8 +1328,12 @@ func _draw_recap(v: SimVehicle) -> void:
 	var parts: Array = []  # [text, colour]
 	if int(rs.get("fuel_lost", 0)) > 0:
 		parts.append(["-%d LOST" % int(rs["fuel_lost"]), Gfx.UI_BAD])
-	if int(rs.get("fuel_gained", 0)) > 0:
-		parts.append(["+%d STOLEN" % int(rs["fuel_gained"]), Gfx.FIRE[4]])
+	var king: int = view.zone_bonus_for(v.id, int(rs.get("round", world.round))) if view != null else 0
+	var stolen: int = int(rs.get("fuel_gained", 0)) - king
+	if stolen > 0:
+		parts.append(["+%d STOLEN" % stolen, Gfx.FIRE[4]])
+	if king > 0:
+		parts.append(["+%d ZONE KING" % king, Gfx.FIRE[5]])
 	if int(rs.get("fuel_drained", 0)) > 0:
 		parts.append(["-%d DRAIN" % int(rs["fuel_drained"]), Gfx.UI_BAD])
 	if parts.is_empty():

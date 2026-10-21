@@ -475,6 +475,7 @@ def export_fx(save, fx_ang):
     save(sheet([[fx.banner(0), fx.banner(1)]]), "fx_banner.png")
     d_ang = [k * 2 * math.pi / 16 for k in range(16)]
     save(sheet([[fx.drone(a, ph) for a in d_ang] for ph in (0, 1)]), "rig_drone.png")
+    save(sheet([[fx.zone_beacon(st, ph) for ph in (0, 1)] for st in (0, 1, 2)]), "zone_beacon.png")
 
 
 # ---------------------------------------------------------------- bosses and late species (tools/artgen/aliens.py)

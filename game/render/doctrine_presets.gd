@@ -13,6 +13,8 @@ const LIST: Array[Dictionary] = [
 		"lines": ["DRIVES STRAIGHT IN AND RAMS", "CIRCLES WHEN 30+ ALIENS SWARM", "KITES BELOW 25% HP"], "tag": "FAST SCRAP, RISKY"},
 	{"id": "hunter", "name": "HEADHUNTER", "drive": "circle", "target": "nearest", "rules": "pvp=1&rivals>0|target:players_first;hp<30|drive:flee",
 		"lines": ["CLEARS ALIENS UNTIL PVP IS ON", "THEN GOES FOR NEARBY RIVALS", "FLEES BELOW 30% HP"], "tag": "PVP FROM ROUND 4"},
+	{"id": "zone_holder", "name": "ZONE HOLDER", "drive": "circle", "target": "nearest", "rules": "pvp=1&hp>35|drive:zone;in_zone=1|target:intruders",
+		"lines": ["CLEARS ALIENS UNTIL ZONES OPEN", "THEN TAKES AND HOLDS A ZONE", "SHOOTS RIVALS INSIDE IT"], "tag": "SCRAP FROM ROUND 4"},
 ]
 
 

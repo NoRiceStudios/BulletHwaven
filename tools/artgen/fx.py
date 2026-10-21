@@ -12,6 +12,8 @@ SMOKE (palette rules: GLOW cyan stays reserved for aliens). Exported by export_a
 - fx_kill.png: the "KILL" pop (2 frames: white-hot flash, settled), 32x12.
 - fx_banner.png: the contract pennant on a pole (2 wave frames), 14x18.
 - rig_drone.png: the repair drone, 16 directions x 2 rotor frames, 20x20.
+- zone_beacon.png: the PvP control zone beacon, a scrap derrick on sandbags with a lamp cage and a pennant
+  (2 wave frames) x 3 rows (neutral bone cloth, paint-keyed cloth for the owner, locked: cloth furled), 24x36.
 """
 
 import math
@@ -386,3 +388,73 @@ def drone(ang, phase, size=20):
         cv.put(line(size, size, [(bx0, by0), (bx1, by1)], 1) & disc, STEEL[5], alpha=0.9)
         _put(cv, [(rx, ry)], STEEL[1])
     return cv
+
+
+ZONE_W, ZONE_H = 40, 56
+ZONE_FOOT = (18, 51)  ## the mast's foot in a zone beacon cell (the ground point under the zone centre)
+ZONE_LAMP = (17, 15)  ## top-left pixel of the 2x2 lamp in the cage at the top of the derrick
+BURLAP_DUSTY = ["#3e3424", "#5c4b33", "#7a6646", "#998259", "#b39d72"]
+
+
+def zone_beacon(state, phase):
+    """Control zone beacon, upright like the contract pennant: a rusty tripod derrick on a ring of sandbags
+    round a drum, a steel lamp cage at the apex and a big swallowtail pennant on the mast. state 0 neutral
+    (bone cloth with a red stencil stripe), 1 owned (paint-keyed cloth and drum band: the paint shader takes
+    the owner's ramp), 2 locked (the cloth furled round the mast, the lamp dark)."""
+    from rig import paint_key
+
+    def build(ramp):
+        W, H = ZONE_W, ZONE_H
+        cv = Canvas(W, H)
+        cloth = ramp if state == 1 else BONE
+        # sandbag ring (back row first), a dented drum in the middle
+        for i, (x0, y0, x1, y1) in enumerate(((5, 44, 15, 50), (21, 44, 31, 50))):
+            paint(cv, ellipse(W, H, x0, y0, x1, y1), BURLAP_DUSTY, base=2, noise=0.3, seed=7 + i)
+        drum = rect(W, H, 14, 41, 22, 50)
+        paint(cv, drum, RUST, base=2, noise=0.25, seed=4)
+        cv.put(rect(W, H, 14, 44, 22, 45), cloth[3] if state == 1 else STEEL[2])  # band in the owner's paint
+        cv.put(rect(W, H, 14, 41, 22, 41), RUST[4])
+        # tripod: back leg in shade, the two front legs 2 px (lit left), braces and X bracing
+        apex = (18, 17)
+        cv.put(line(W, H, [apex, (20, 44)], 1), RUST[0])
+        for foot, lit, dark in (((5, 49), RUST[4], RUST[2]), ((31, 49), RUST[3], RUST[1])):
+            cv.put(line(W, H, [apex, foot], 1), lit)
+            cv.put(line(W, H, [(apex[0] + 1, apex[1]), (foot[0] + 1, foot[1])], 1), dark)
+        cv.put(line(W, H, [(10, 37), (27, 37)], 1), STEEL[3])
+        cv.put(line(W, H, [(13, 27), (24, 27)], 1), STEEL[3])
+        cv.put(line(W, H, [(13, 28), (26, 37)], 1), STEEL[1])
+        cv.put(line(W, H, [(24, 28), (11, 37)], 1), STEEL[2])
+        cv.put(pixels(W, H, [(10, 37), (13, 27), (27, 37), (24, 27)]), STEEL[5])  # bolt heads catch the light
+        # mast and lamp cage
+        cv.put(rect(W, H, 18, 1, 18, 16), STEEL[4])
+        cv.put(rect(W, H, 19, 1, 19, 16), STEEL[2])
+        cv.put(rect(W, H, 17, 0, 19, 0), STEEL[5])
+        cage = rect(W, H, 14, 12, 22, 18)
+        paint(cv, cage, STEEL, base=2)
+        cv.put(rect(W, H, 15, 13, 21, 17), STEEL[0])
+        lx, ly = ZONE_LAMP
+        lamp = rect(W, H, lx, ly - 1, lx + 2, ly + 1)
+        cv.put(lamp, STEEL[1] if state == 2 else FIRE[4], emissive=state != 2)
+        if state != 2:
+            cv.put(pixels(W, H, [(lx, ly - 1)]), FIRE[6], emissive=True)
+        cv.put(pixels(W, H, [(16, 12), (18, 12), (20, 12)]), STEEL[5])  # cage bars
+        cv.put(pixels(W, H, [(16, 18), (18, 18), (20, 18)]), STEEL[1])
+        if state == 2:
+            roll = rect(W, H, 20, 1, 22, 10)
+            paint(cv, roll, BONE, base=1)
+            cv.put(pixels(W, H, [(21, 3), (21, 6), (21, 9)]), RUST[1])  # lashing
+        else:
+            w0, w1 = (0, 1) if phase == 0 else (1, 0)
+            pts = [(20, 1), (27, 2 + w0), (38, 1 + w1), (33, 6 + w0), (38, 11 + w1), (27, 11 + w0), (20, 11)]
+            m = poly(W, H, pts)
+            paint(cv, m, cloth, base=3, light=False)
+            cv.put(m & rect(W, H, 20, 9, 39, 12), cloth[1])  # the sagging lower edge in shade
+            cv.put(m & rect(W, H, 20, 1, 39, 2), cloth[4])  # the top edge in the sun
+            for fold in (24 + 2 * phase, 31 - phase):  # folds catch the light / fall in shade
+                cv.put(m & rect(W, H, fold, 3, fold, 9), cloth[2])
+            if state == 0:
+                cv.put(m & rect(W, H, 21, 6, 33, 6), "#a8341f")  # a red stencil stripe on the bare cloth
+        outline(cv, OUTLINE)
+        return cv
+
+    return paint_key(build)
