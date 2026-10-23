@@ -160,11 +160,14 @@ const PLATE_TTL := 0.5
 const PHASE_COMBAT := 0
 const PHASE_WORKSHOP := 1
 const PHASE_GAME_OVER := 2
+const PHASE_DEPLOY := 3  # pre-match doctrine setup (begin_deploy); ends in round 1 combat
 
 const COMBAT_TICKS := 2100  # 70 s
 const COMBAT_TICKS_EARLY := 1350  # 45 s, rounds 1 and 2
 const EARLY_ROUNDS := 2
 const WORKSHOP_TICKS := 3600  # 120 s (ready-skip ends it early)
+const DEPLOY_TICKS := 900  # 30 s
+const FAST_DEPLOY_TICKS := 60
 const FAST_COMBAT_TICKS := 120  # world.fast_rounds (tests, screenshots)
 const FAST_WORKSHOP_TICKS := 81  # scaled with the workshop: 45 * 45 / 25
 
@@ -223,8 +226,11 @@ var fuel_drain: int = 0
 var fast_rounds: bool = false:
 	set(value):
 		fast_rounds = value
-		if tick == 0 and phase == PHASE_COMBAT and round == 1:
-			phase_ticks_left = combat_duration(1)
+		if tick == 0 and round == 1:
+			if phase == PHASE_COMBAT:
+				phase_ticks_left = combat_duration(1)
+			elif phase == PHASE_DEPLOY:
+				phase_ticks_left = deploy_duration()
 
 var enemy_count: int = 0
 var enemy_id: PackedInt32Array = PackedInt32Array()
@@ -261,6 +267,11 @@ var zone_radius: PackedFloat32Array = PackedFloat32Array()
 var zone_kind: PackedByteArray = PackedByteArray()
 var zone_ttl: PackedInt32Array = PackedInt32Array()
 var zone_owner: PackedInt32Array = PackedInt32Array()
+
+## PvP control zones (sim/zones.gd): {"pos", "owner", "cap_id", "cap_ticks", "contested"} each. Empty outside
+## combat, solo and before PVP_START_ROUND. `zones_active`: PvP is on, so they capture and score (else locked).
+var zones: Array[Dictionary] = []
+var zones_active: bool = false
 
 var events: Array[Dictionary] = []
 
@@ -367,7 +378,7 @@ func apply_command(peer_id: int, cmd: Dictionary) -> void:
 	match type:
 		"set_drive":
 			var value: String = str(cmd.get("value", ""))
-			if value in ["circle", "kite", "charge"]:
+			if value in Doctrine.BASE_DRIVES:
 				v.doctrine["drive"] = value
 		"set_target":
 			var value2: String = str(cmd.get("value", ""))
@@ -384,11 +395,31 @@ func apply_command(peer_id: int, cmd: Dictionary) -> void:
 		"use_ability":  # {"value": ability id}; combat only, casts now if equipped and ready
 			if phase == PHASE_COMBAT and v.alive and not v.eliminated:
 				Abilities.cast(self, v, str(cmd.get("value", "")))
+		"mark":  # {"x": float, "y": float}; combat only, the "target mark" order (Orders.cast_mark)
+			if phase == PHASE_COMBAT and v.alive and not v.eliminated and v.mark_order_cd == 0:
+				Orders.cast_mark(self, v, Vector2(float(cmd.get("x", 0.0)), float(cmd.get("y", 0.0))))
+		"radio":  # {"value": Orders.RADIO_IDS}; combat only, 3 charges per round (Orders.cast_radio)
+			if typeof(cmd.get("value")) == TYPE_STRING:
+				Orders.cast_radio(self, v, String(cmd["value"]))
 		"set_ability":  # {"slot": 0..1, "value": ability id}; workshop only, needs the ability unlocked
 			if _can_shop(v):
 				Abilities.set_slot(v, _integral(cmd.get("slot")), str(cmd.get("value", "")))
 		"set_weapon_target":  # {"scope": weapon kind, "value": Doctrine.WEAPON_TARGETS}
 			Doctrine.set_weapon_target(v, str(cmd.get("scope", "")), str(cmd.get("value", "")))
+		"set_priority":  # {"scope": "rig" | weapon kind, "value": priority text; "" on a weapon = follow the rig}; any phase
+			var pscope: String = str(cmd.get("scope", ""))
+			var ptext: String = str(cmd.get("value", ""))
+			if pscope == Doctrine.SCOPE_RIG and ptext != "":
+				var pr: Variant = Doctrine.parse_priority(ptext)
+				if pr != null:
+					Doctrine.set_priority(v, pscope, pr)
+			elif Doctrine.is_weapon_scope(pscope):
+				if ptext == "":
+					Doctrine.set_priority(v, pscope, {})
+				elif Doctrine.weapon_prio_unlocked(v):
+					var wpr: Variant = Doctrine.parse_priority(ptext)
+					if wpr != null:
+						Doctrine.set_priority(v, pscope, wpr)
 		"pick_card":
 			if _can_shop(v) and not v.picked:
 				var idx: int = _integral(cmd.get("value"))
@@ -418,7 +449,7 @@ func apply_command(peer_id: int, cmd: Dictionary) -> void:
 			if _can_shop(v):
 				Salvage.scrap_card(v, str(cmd.get("value", "")))
 		"ready":
-			if _can_shop(v):
+			if _can_shop(v) or (phase == PHASE_DEPLOY and not v.eliminated):
 				v.ready = true
 
 
@@ -494,13 +525,13 @@ static func new_round_stats(r: int) -> Dictionary:
 		"kills": 0, "kills_players": 0,
 		"deaths": [],  # {"t": ticks into combat, "cause": SRC_NAMES entry, "src": int, "killer": vehicle id or -1, "killer_kind": enemy kind or -1}
 		"fuel_lost": 0, "fuel_gained": 0, "fuel_drained": 0,
-		"scrap_earned": 0, "interest": 0,
+		"scrap_earned": 0, "interest": 0, "zone_points": 0,
 	}
 
 
 static func new_match_stats() -> Dictionary:
 	return {
-		"kills": 0, "player_kills": 0, "ram_kills": 0, "deaths": 0, "dmg_dealt": 0.0, "scrap_earned": 0,
+		"kills": 0, "player_kills": 0, "ram_kills": 0, "deaths": 0, "dmg_dealt": 0.0, "scrap_earned": 0, "zone_points": 0,
 		"top_victim": -1, "top_victim_n": 0, "nemesis": -1, "nemesis_n": 0,
 	}
 
@@ -631,6 +662,21 @@ func combat_duration(r: int) -> int:
 	return COMBAT_TICKS_EARLY if r <= EARLY_ROUNDS else COMBAT_TICKS
 
 
+func deploy_duration() -> int:
+	return FAST_DEPLOY_TICKS if fast_rounds else DEPLOY_TICKS
+
+
+## Starts the pre-match deploy phase (doctrine setup, ends in round 1 combat). Only valid at tick 0 of
+## round 1, before anything stepped. `ticks` < 0 = the default duration. A plain SimWorld starts in combat.
+func begin_deploy(ticks: int = -1) -> void:
+	if tick != 0 or round != 1:
+		return
+	phase = PHASE_DEPLOY
+	phase_ticks_left = ticks if ticks >= 0 else deploy_duration()
+	for v in vehicles:
+		v.ready = false
+
+
 func workshop_duration() -> int:
 	return FAST_WORKSHOP_TICKS if fast_rounds else WORKSHOP_TICKS
 
@@ -719,6 +765,8 @@ func step() -> void:
 			_step_combat()
 		PHASE_WORKSHOP:
 			_step_workshop()
+		PHASE_DEPLOY:
+			_step_deploy()
 	tick += 1
 
 
@@ -736,6 +784,7 @@ func _step_combat() -> void:
 	_update_projectiles()
 	_update_burn()
 	_update_zones()
+	Zones.tick(self)
 	_compact_enemies()
 	_spawn_tick()
 	_hash.rebuild(enemy_pos, enemy_count)
@@ -762,12 +811,33 @@ func _step_workshop() -> void:
 		_begin_combat()
 
 
+## Deploy -> round 1 combat (same state as a world that started in combat; no "round" change, no events).
+func _step_deploy() -> void:
+	if _check_game_over():
+		return
+	phase_ticks_left -= 1
+	var need: int = 0
+	var ready_n: int = 0
+	for v in vehicles:
+		if v.eliminated:
+			continue
+		need += 1
+		if v.ready:
+			ready_n += 1
+	if phase_ticks_left <= 0 or (need > 0 and ready_n == need):
+		phase = PHASE_COMBAT
+		phase_ticks_left = combat_duration(1)
+		for v in vehicles:
+			v.ready = false
+			Orders.reset_radio(v, true)
+
+
 func checksum() -> int:
 	var ctx := HashingContext.new()
 	ctx.start(HashingContext.HASH_SHA256)
 	var head := PackedInt64Array([tick, enemy_count, proj_count, vehicles.size(), phase, round, phase_ticks_left, winner_peer, next_enemy_id, leader_peer, pvp_grace_ticks, fuel_drain,
 		boss_first, boss_kind, boss_state, boss_phase, int(boss_enraged), roundi(boss_max_hp), boss_marks.size(),
-		hive_first[0], hive_first[1], hive_first[2]])
+		hive_first[0], hive_first[1], hive_first[2], int(zones_active), zones.size()])
 	ctx.update(head.to_byte_array())
 	var vf := PackedFloat64Array()
 	for v in vehicles:
@@ -843,6 +913,15 @@ func checksum() -> int:
 		vf.append(float(v.jammed_by))
 		vf.append(float(v.shed))
 		vf.append(float(v.mark_id))
+		vf.append(float(v.mark_order_ticks))
+		vf.append(float(v.mark_order_cd))
+		vf.append(float(v.mark_order_kind))
+		vf.append(float(v.mark_order_id))
+		vf.append(float(v.zone_ticks))
+		vf.append(float(v.radio_charges))
+		vf.append(float(v.radio_ticks))
+		vf.append(float(v.radio_cmd))
+		vf.append(float(v.radio_lock))
 		vf.append(float(v.contract_kind))
 		vf.append(float(v.contract_need))
 		vf.append(float(v.contract_reward))
@@ -886,6 +965,13 @@ func checksum() -> int:
 				vf.append(float(aid.hash()))
 		for aid2 in v.ammo_known:
 			vf.append(float(aid2.hash()))
+	for z: Dictionary in zones:
+		vf.append((z["pos"] as Vector2).x)
+		vf.append((z["pos"] as Vector2).y)
+		vf.append(float(z["owner"]))
+		vf.append(float(z["cap_id"]))
+		vf.append(float(z["cap_ticks"]))
+		vf.append(1.0 if z["contested"] else 0.0)
 	for part: PackedByteArray in [
 		vf.to_byte_array(),
 		enemy_id.to_byte_array(),
@@ -996,7 +1082,11 @@ func _respawn(v: SimVehicle) -> void:
 	v.protect_ticks = 0
 	v.invuln_ticks = INVULN_TICKS
 	v.retaliate_ticks = 0
+	v.hurt_ticks = 0
+	Doctrine.clear_hold(v)
 	v.target_kind = 0
+	Orders.reset(v)
+	Orders.reset_radio(v, false)
 	Abilities.clear_effects(v)
 	v.momentum = 0.0
 	v.heading = (ARENA.get_center() - v.pos).angle()
@@ -1033,6 +1123,7 @@ func _find_spawn_spot(v: SimVehicle) -> Vector2:
 func _begin_workshop() -> void:
 	_compact_enemies()
 	Bosses.end_round(self)
+	Zones.finish(self)
 	var stride: int = maxi(1, ceili(float(enemy_count) / float(RETREAT_EVENT_CAP)))
 	for i in range(0, enemy_count, stride):
 		_emit("retreat", enemy_pos[i], -1, enemy_kind[i])
@@ -1057,11 +1148,15 @@ func _begin_workshop() -> void:
 		v.protect_ticks = 0
 		v.invuln_ticks = 0
 		v.retaliate_ticks = 0
+		v.hurt_ticks = 0
+		Doctrine.clear_hold(v)
 		v.reroll_cost = maxi(1, REROLL_COST_START - v.reroll_discount)
 		v.offers = []
 		Abilities.clear_effects(v)
 		v.momentum = 0.0
 		v.mark_id = -1
+		Orders.reset(v)
+		Orders.reset_radio(v, false)
 		if v.shed > 0:  # the workshop refits shed scrap plates
 			v.shed = 0
 			Cards.recompute(v, false, false)
@@ -1112,12 +1207,15 @@ func _begin_combat() -> void:
 		v.ready = false
 		v.picked = false
 		v.round_stats = new_round_stats(round)
+		v.zone_ticks = 0
 		v.kill_counts = {}
 		v.last_hit_attacker = -1
 		if v.alive and not v.eliminated:
 			v.hp = v.max_hp
 			v.invuln_ticks = INVULN_TICKS
 		Abilities.reset_round(v)
+		Orders.reset(v)
+		Orders.reset_radio(v, true)
 		v.ram_fx.clear()
 		v.contract_offers = []
 		v.barbed_scrap = 0
@@ -1135,6 +1233,7 @@ func _begin_combat() -> void:
 			w["heat"] = 0
 			w["jam"] = 0
 			w["sw"] = 0
+	Zones.setup(self)
 
 
 ## Ends the game when at most one player is left in a multiplayer game (winner = the survivor),
@@ -1656,11 +1755,15 @@ func _update_vehicles() -> void:
 			v.invuln_ticks -= 1
 		if v.retaliate_ticks > 0:
 			v.retaliate_ticks -= 1
+		if v.hurt_ticks > 0:
+			v.hurt_ticks -= 1
 		if v.regen > 0.0 and v.hp < v.max_hp:
 			v.hp = minf(v.hp + v.regen * DT, v.max_hp)
 		Abilities.tick(self, v)
 		Doctrine.apply_rig(self, v)
+		Orders.radio_tick(v)
 		VehicleAI.update_target(self, v)
+		Orders.tick(self, v)
 		_update_mark(v)
 		Abilities.auto_cast(self, v)
 		VehicleAI.steer(self, v)
@@ -1748,6 +1851,8 @@ func _damage_vehicle(v: SimVehicle, dmg: float, attacker: int, use_armor: bool =
 		v.retaliate_id = attacker
 		v.retaliate_ticks = RETALIATE_TICKS
 	var applied: float = minf(dmg, v.hp)
+	if dmg > 0.0:
+		v.hurt_ticks = Doctrine.UNDER_FIRE_TICKS
 	v.hp -= dmg
 	if dmg > Mobility.HIT_LOSS_MIN_DAMAGE and v.momentum > 0.0:
 		v.momentum = maxf(v.momentum - Mobility.HIT_LOSS, 0.0)
@@ -1774,6 +1879,8 @@ func _damage_vehicle(v: SimVehicle, dmg: float, attacker: int, use_armor: bool =
 	v.momentum = 0.0
 	v.vel = Vector2.ZERO
 	v.target_kind = 0
+	v.mark_order_ticks = 0
+	v.radio_ticks = 0
 	v.ram_damage = 0.0
 	var killer_id: int = attacker if by_player else -1
 	var killer_kind: int = -1

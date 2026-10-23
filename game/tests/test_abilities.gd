@@ -437,7 +437,7 @@ func test_rule_vocabulary_is_locked_by_tech() -> void:
 		assert_false(Doctrine.rules_allowed(pv, parsed), "locked: " + rule)
 		plain.apply_command(1, {"type": "set_rules", "scope": "rig", "value": rule})
 		assert_true(pv.rules.is_empty(), "set_rules refuses " + rule)
-	assert_eq(Doctrine.conds_for(pv).size(), Doctrine.COND_IDS.size() - 5)
+	assert_eq(Doctrine.conds_for(pv).size(), Doctrine.COND_IDS.size() - 7)
 	assert_false(Doctrine.actions_for("rig", pv).has("fire:focus"))
 	assert_true(Doctrine.actions_for("rig").has("fire:focus"), "without a vehicle everything is listed")
 	assert_eq(Doctrine.parse("|fire:focus", "mg"), null, "focus is a rig action")

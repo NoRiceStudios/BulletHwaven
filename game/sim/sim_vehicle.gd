@@ -27,7 +27,8 @@ var doctrine: Dictionary = {"drive": "circle", "target": "nearest"}
 ## weapon kind, {"target": base target mode ("follow" = the rig's target), "rules": Array}. Kept
 ## across card changes; rules beyond Doctrine.slots() are stored but not run.
 var rules: Array = []
-var weapon_doctrine: Dictionary = {}
+var weapon_doctrine: Dictionary = {}  ## per kind also optionally "prio": the weapon's own target priority (absent / {} = the rig's)
+var target_prio: Dictionary = Doctrine.default_priority()  ## the rig's target priority list (Doctrine.parse_priority form), target mode "priority"
 ## Each: {"kind", "damage", "range", "cooldown_ticks" (float, ticks per shot), "cooldown" (float ticks left,
 ## in (-1, 0] it carries the fractional rest into the next shot), "aim", "pellets", "spread",
 ## "pierce", "splash", "speed", "heat", "jam", "sw", "shots"} (see Cards.WEAPONS), plus host-side scratch from the weapon's own
@@ -92,6 +93,16 @@ var jammed_by: int = -1  ## vehicle id of the jammer whose field this rig is in 
 var shed: int = 0  ## armour plates shed this round (scrap armour)
 var mark_id: int = -1  ## swarm logic: enemy id of the marked target, -1 = none
 var mark_pos: Vector2 = Vector2.ZERO
+# Live order "target mark" (Orders): synced, in the checksum. Not the swarm-logic `mark_id`.
+var mark_order_ticks: int = 0  ## ticks of focus fire left
+var mark_order_cd: int = 0  ## ticks until the order can be cast again
+var mark_order_kind: int = 0  ## 0 none, 1 alien, 2 rival rig (same numbers as target_kind)
+var mark_order_id: int = -1  ## stable enemy id (kind 1) or vehicle id (kind 2)
+var radio_charges: int = Orders.RADIO_CHARGES  ## radio commands left this combat round (refilled at every combat start)
+var radio_ticks: int = 0  ## ticks left of the running radio command
+var radio_cmd: int = -1  ## index into Orders.RADIO_IDS, -1 none
+var zone_ticks: int = 0  ## ticks spent alone inside a zone it owns this round (Zones; synced, in the checksum)
+var radio_lock: int = 0  ## ticks until the next radio call is accepted
 
 # Salvage and fusion state (tech tree v2.3 stage 3; Salvage, Fusions). The contract / loan / reserve / bonus fields are synced.
 var contract_offers: Array[Vector3i] = []  ## workshop: offered contracts as (kind, need, reward); empty once one is accepted
@@ -130,9 +141,12 @@ var orbit_dir: float = 1.0
 var eff_drive: String = "circle"  ## doctrine after the rules ran this tick (Doctrine.apply_rig)
 var eff_target: String = "nearest"
 var acquired_mode: String = ""  ## eff_target the current target was picked with (a rule switch retargets at once)
+var rule_conds: int = 0  ## bit i * Doctrine.MAX_CONDS + j: condition j of rig rule i holds (synced, live rule view)
 var rule_live: int = 0  ## bit i: rig rule i matched this tick (synced, for the rule editor)
 var retaliate_id: int = -1  ## vehicle id of the last player that hurt this one (return fire), -1 = none
 var retaliate_ticks: int = 0  ## ticks left for the return-fire memory
+var rule_hold: Dictionary = {}  ## host-only: "scope:index" -> ticks a held rule stays matched (Doctrine; not synced, not in the checksum)
+var hurt_ticks: int = 0  ## host-only: ticks left of "took damage recently" (condition under_fire)
 var ram_damage: float = 0.0  ## per-tick damage dealt to touching enemies/vehicles ("charge")
 var kill_counts: Dictionary = {}  ## host-only: victim vehicle id -> player kills this round (diminishing rewards)
 var victim_counts: Dictionary = {}  ## host-only: victim vehicle id -> player kills this match

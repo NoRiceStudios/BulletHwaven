@@ -14,6 +14,8 @@ extends Control
 
 const BANNER_TICKS := 75  ## how long a phase-start banner stays up (sim ticks)
 const PVP_BANNER_TICKS := 105  ## the full-width PVP ON banner (#11)
+const ZONES_BANNER_TICKS := 100  ## CONTROL ZONES OPEN (after the PVP ON banner when both come at once)
+const ZONE_PANEL_W := 74.0
 const LOW_HP := 0.3  ## below this hp fraction the screen edges pulse red (#12)
 const FEED_TICKS := 210  ## a kill feed line stays this long (7 s)
 const FEED_MAX := 4
@@ -43,6 +45,21 @@ var world: SimWorld = null
 var local_peer: int = 1
 var view: WorldView = null
 
+## Behaviour picker (live doctrine control): a click on the dock's DRIVE / TARGET block opens a CRT strip above the
+## dock to switch the base drive and target with one click (keys 1/2/3 and Q/W/E do the same without it).
+## A change flashes the dock line. Screenshots set `pointer_override` and `picker_open` directly.
+const DRIVE_KEY_LABELS := {"circle": "1", "kite": "2", "charge": "3", "zone": "4"}
+const TARGET_KEY_LABELS := {"nearest": "Q", "strongest": "W", "players_first": "E"}
+const PICKER_IDLE_S := 6.0  ## the strip closes itself after this long without the pointer on it
+const FLASH_S := 0.6
+var picker_open: bool = false
+var pointer_override: Vector2 = Vector2(-1, -1)
+var _picker_idle: float = 0.0
+var _hits: Array = []  ## [Rect2, action, arg] drawn this frame (dock block and picker chips)
+var _hover: Array = []  ## the hit under the pointer, from the previous frame's hits
+var _doc_seen: Dictionary = {}  ## the base doctrine last drawn, to flash a change
+var _flash: Dictionary = {"drive": 0.0, "target": 0.0}
+
 
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -52,6 +69,7 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	_tick_juice(delta)
+	_tick_picker(delta)
 	_tick_boss_lag(delta, view == null or view.frozen)
 	queue_redraw()
 
@@ -88,8 +106,16 @@ func _tick_juice(delta: float) -> void:
 	_combo_seen = n
 
 
-## Spectator keys: Tab / Right next rig, Shift+Tab / Left previous, Home or A back to auto.
+## Spectator keys: Tab / Right next rig, Shift+Tab / Left previous, Home or A back to auto. Left clicks go to
+## the behaviour picker.
 func _unhandled_input(event: InputEvent) -> void:
+	var mb := event as InputEventMouseButton
+	if mb != null:
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and click_at(mb.position):
+			get_viewport().set_input_as_handled()
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT and mark_at(mb.position):
+			get_viewport().set_input_as_handled()
+		return
 	if view == null or not view.spectating() or not (event is InputEventKey) or not event.is_pressed() or event.is_echo():
 		return
 	var k := event as InputEventKey
@@ -140,7 +166,13 @@ func _draw() -> void:
 		if view != null and view.juice.surge_active(world.tick) and not _boss_intro():
 			_surge_edge(vs)
 		_draw_rival_tags()  # under the panels
+		_draw_zone_tags(v)
+		if me != null and me.alive and not spec:
+			_draw_mark_reticle(me)
 		_draw_top(vs)
+		_draw_zone_panel(vs, v)
+		_hover = _hover_hit()
+		_hits.clear()
 		_draw_dock(v, vs)
 		var watching: bool = spec and not elim_recent
 		if world.vehicles.size() > 1:
@@ -154,6 +186,7 @@ func _draw() -> void:
 		_draw_grace(vs, watching)
 		if v != null and (watching or not (me != null and me.eliminated)):
 			_draw_rival_arrows(vs, v)
+			_draw_zone_arrows(vs)
 			if v.alive:
 				_draw_combo(v)
 		if view != null and view.juice.surge_active(world.tick) and not _boss_intro():
@@ -162,9 +195,16 @@ func _draw() -> void:
 			_draw_eliminated(vs)
 		elif dead:
 			_draw_respawn(me, vs)
+		if _picker_usable(me):
+			_draw_radio(me, vs)
+		if picker_open and _picker_usable(me):
+			_draw_picker(me, vs)
 	var pv: int = world.tick - view.pvp_on_tick if view != null and view.pvp_on_tick >= 0 else -1
 	if world.phase == SimWorld.PHASE_COMBAT and pv >= 0 and pv < PVP_BANNER_TICKS:
 		_pvp_banner(vs, pv)
+	var zo: int = _zones_banner_age()
+	if world.phase == SimWorld.PHASE_COMBAT and zo >= 0 and zo < ZONES_BANNER_TICKS:
+		_zones_banner(vs, zo)
 	if view != null and world.phase == SimWorld.PHASE_COMBAT and view.juice.evo_age(world.tick) >= 0:
 		_draw_evolved(vs)
 	var el: int = phase_elapsed(world)
@@ -249,15 +289,31 @@ func _draw_dock(v: SimVehicle, vs: Vector2) -> void:
 	# doctrine: what the rig is doing, and which rules fire right now
 	var dx: float = r.position.x + 7.0
 	var lx: float = dx + 30.0
+	var own: bool = v.peer_id == local_peer and not v.eliminated
+	if own:
+		_note_doctrine(v)
+		var blk := Rect2(r.position.x + 3, r.position.y + 3, 85, r.size.y - 6)
+		var hov: bool = _is_hover("picker")
+		if hov or picker_open:
+			draw_rect(blk, Color(Gfx.CRT_TEXT, 0.16 if hov else 0.1))
+			UiKit.outline_rect(self, blk, Color(Gfx.CRT_TEXT, 0.7 if hov else 0.45))
+		_caret(Vector2(blk.end.x - 6, blk.position.y + 3), picker_open)
+		_hits.append([blk, "picker", null])
 	UiFont.draw_small(self, "DRIVE", Vector2(dx, y1 + 1), Gfx.UI_DIM)
 	var drive: String = _effective(v, "drive")
-	UiFont.draw(self, drive.to_upper(), Vector2(lx, y1), Gfx.CRT_HI if drive != str(v.doctrine["drive"]) else Gfx.CRT_TEXT, Gfx.UI_SHADOW)
+	UiFont.draw(self, drive.to_upper(), Vector2(lx, y1), _doc_col(v, "drive", drive), Gfx.UI_SHADOW)
 	UiFont.draw_small(self, "TARGET", Vector2(dx, y2 + 1), Gfx.UI_DIM)
 	var tgt: String = _effective(v, "target")
-	UiFont.draw(self, str(WorkshopUi.TARGET_LABELS.get(tgt, tgt.to_upper())), Vector2(lx, y2),
-		Gfx.CRT_HI if tgt != str(v.doctrine["target"]) else Gfx.CRT_TEXT, Gfx.UI_SHADOW)
+	if Orders.active(world, v):
+		UiFont.draw(self, "MARKED", Vector2(lx, y2), Gfx.FIRE[5], Gfx.UI_SHADOW)
+	else:
+		UiFont.draw(self, str(WorkshopUi.TARGET_LABELS.get(tgt, tgt.to_upper())), Vector2(lx, y2), _doc_col(v, "target", tgt), Gfx.UI_SHADOW)
 	_rule_lamps(v, Vector2(r.position.x + 91.0, y1 + 1.0))
-	UiFont.draw_small(self, "P RULES", Vector2(r.position.x + 91.0, y2 + 1), Gfx.UI_DIM)
+	var pr := Rect2(r.position.x + 89.0, y2 - 1, UiFont.width_small("P RULES") + 4.0, 9)
+	var phov: bool = own and _is_hover("rules")
+	UiFont.draw_small(self, "P RULES", Vector2(r.position.x + 91.0, y2 + 1), Gfx.CRT_HI if phov else Gfx.UI_DIM)
+	if own:
+		_hits.append([pr, "rules", null])
 	var s1: float = r.position.x + 122.0
 	draw_rect(Rect2(s1, r.position.y + 4, 1, r.size.y - 8), Color(UiKit.PANEL_EDGE, 0.8))
 	# hp and fuel
@@ -294,8 +350,7 @@ func _draw_dock(v: SimVehicle, vs: Vector2) -> void:
 func _draw_contract(v: SimVehicle, dock: Rect2) -> void:
 	if v.contract_kind < 0:
 		return
-	var up: bool = Mobility.has_momentum(v) or v.abilities[0] != "" or v.abilities[1] != ""
-	var y: float = dock.position.y - (18.0 if up else 9.0)
+	var y: float = dock.position.y - 18.0
 	var done: bool = Salvage.is_done(v)
 	var failed: bool = v.contract_kind == Salvage.K_NO_DEATH and v.contract_prog < 0.0
 	var col: Color = Gfx.UI_BAD if failed else (Gfx.FIRE[5] if done else Gfx.UI_DIM)
@@ -315,9 +370,6 @@ func _draw_contract(v: SimVehicle, dock: Rect2) -> void:
 ## the Tuned Engine / an ability.
 func _draw_mobility(v: SimVehicle, dock: Rect2) -> void:
 	var has_mom: bool = Mobility.has_momentum(v)
-	var has_ab: bool = v.abilities[0] != "" or v.abilities[1] != ""
-	if not has_mom and not has_ab:
-		return
 	var x: float = dock.position.x + 7.0
 	var y: float = dock.position.y - 9.0
 	if has_mom:
@@ -340,11 +392,308 @@ func _draw_mobility(v: SimVehicle, dock: Rect2) -> void:
 			label += " %d" % ceili(float(cd) / float(SimWorld.TICK_RATE))
 		UiFont.draw_small(self, label, Vector2(x, y), col, Gfx.UI_SHADOW)
 		x += UiFont.width_small(label) + 10.0
+	_draw_mark_chip(v, Vector2(x, y))
+
+
+# ---------------------------------------------------------------- radio
+
+const RADIO_LABELS := {"fall_back": "FALL BACK", "all_in": "ALL IN", "hold": "HOLD", "boss": "BOSS FOCUS"}
+const RADIO_KEYS: PackedStringArray = ["Z", "X", "C", "V"]
+const RADIO_W := 138.0
+
+
+## Bottom left: the radio set. Four calls (key, name) that override every rule for a few seconds, the charges
+## left this round as lamps, the running call lit with a bar for its time left.
+func _draw_radio(v: SimVehicle, vs: Vector2) -> void:
+	var r := Rect2(4, vs.y - 4.0 - 40.0, RADIO_W, 40)
+	_panels.append(r)
+	UiKit.panel(self, r)
+	var x0: float = r.position.x + 6.0
+	var y: float = r.position.y + 4.0
+	UiFont.draw_small(self, "RADIO", Vector2(x0, y), Gfx.UI_DIM, Gfx.UI_SHADOW)
+	var charges: int = v.radio_charges
+	for i in Orders.RADIO_CHARGES:
+		var p := Vector2(x0 + 30.0 + i * 7.0, y + 1.0)
+		draw_rect(Rect2(p - Vector2.ONE, Vector2(6, 6)), Gfx.OUTLINE)
+		draw_rect(Rect2(p, Vector2(4, 4)), Gfx.FIRE[4] if i < charges else Gfx.UI_PLATE_DARK)
+	var cur: String = Orders.radio_id(v)
+	var note: String = "OVERRIDES RULES 5 S" if cur == "" else "%s %d" % [RADIO_LABELS.get(cur, ""), ceili(float(v.radio_ticks) / float(SimWorld.TICK_RATE))]
+	UiFont.draw_small(self, note, Vector2(r.end.x - 6.0 - UiFont.width_small(note), y), Gfx.FIRE[5] if cur != "" else Gfx.UI_DIM, Gfx.UI_SHADOW)
+	var bw: float = floorf((r.size.x - 12.0 - 3.0) / 2.0)
+	for i in Orders.RADIO_IDS.size():
+		var id: String = Orders.RADIO_IDS[i]
+		var br := Rect2(x0 + (i % 2) * (bw + 3.0), y + 10.0 + (i / 2) * 12.0, bw, 10)
+		var on: bool = cur == id
+		var can: bool = charges > 0 and v.alive and v.radio_lock <= 0
+		var hov: bool = can and _is_hover("radio", id)
+		draw_rect(br, Gfx.FIRE[4] if on else (Color(Gfx.FIRE[4], 0.22) if hov else Gfx.UI_PLATE_DARK))
+		UiKit.outline_rect(self, br, Gfx.FIRE[5] if on or hov else (Gfx.UI_DIM if can else Color(Gfx.UI_DIM, 0.4)))
+		var tc: Color = Gfx.OUTLINE if on else (Gfx.UI_TEXT if can else Gfx.UI_DIM)
+		var kx: float = UiFont.draw_small(self, RADIO_KEYS[i], br.position + Vector2(3, 2), Gfx.OUTLINE if on else Gfx.FIRE[4])
+		UiFont.draw_small(self, RADIO_LABELS[id], Vector2(kx + 3.0, br.position.y + 2), tc)
+		if on:
+			var f: float = float(v.radio_ticks) / float(Orders.RADIO_TICKS)
+			draw_rect(Rect2(br.position.x + 1, br.end.y - 2, floorf((br.size.x - 2) * f), 1), Gfx.OUTLINE)
+		_hits.append([br, "radio", id])
+
+
+## The target mark order: "RMB MARK" when ready, the seconds left while it runs, the cooldown after.
+func _draw_mark_chip(v: SimVehicle, p: Vector2) -> void:
+	var label: String
+	var col: Color
+	if Orders.active(world, v):
+		label = "MARKED %d" % ceili(float(v.mark_order_ticks) / float(SimWorld.TICK_RATE))
+		col = Gfx.FIRE[5] if (world.tick / 4) % 2 == 0 else Gfx.FIRE[4]
+	elif v.mark_order_cd > 0:
+		label = "RMB MARK %d" % ceili(float(v.mark_order_cd) / float(SimWorld.TICK_RATE))
+		col = Gfx.UI_DIM
+	else:
+		label = "RMB MARK"
+		col = Gfx.FIRE[5]
+	UiFont.draw_small(self, label, p, col, Gfx.UI_SHADOW)
+
+
+## Reticle over the local rig's marked target: four warm corner brackets that snap in on the cast and a bar
+## for the time left. Screen space, so it stays crisp.
+func _draw_mark_reticle(v: SimVehicle) -> void:
+	if view == null or not Orders.active(world, v):
+		return
+	var c: Vector2 = view.to_screen(Orders.target_pos(world, v))
+	var age: int = Orders.MARK_TICKS - v.mark_order_ticks
+	var snap: float = clampf(1.0 - float(age) / 8.0, 0.0, 1.0)
+	var r: float = floorf(10.0 + 14.0 * snap * snap)
+	var col: Color = Gfx.FIRE[5] if snap > 0.0 or (world.tick / 6) % 2 == 0 else UiKit.bar_color(v.color_index)
+	var arms: Array[Rect2] = []
+	for sx in [-1.0, 1.0]:
+		for sy in [-1.0, 1.0]:
+			var k := c + Vector2(sx * r, sy * r)
+			arms.append(Rect2(k.x - (4.0 if sx > 0.0 else 0.0), k.y, 5, 1))
+			arms.append(Rect2(k.x, k.y - (4.0 if sy > 0.0 else 0.0), 1, 5))
+	for a in arms:
+		draw_rect(a.grow(1), Gfx.OUTLINE)
+	for a in arms:
+		draw_rect(a, col)
+	var f: float = float(v.mark_order_ticks) / float(Orders.MARK_TICKS)
+	draw_rect(Rect2(c.x - r - 1, c.y + r + 3, 2.0 * r + 2, 3), Gfx.OUTLINE)
+	draw_rect(Rect2(c.x - r, c.y + r + 4, floorf(2.0 * r * f), 1), Gfx.FIRE[4])
+
+
+# ---------------------------------------------------------------- behaviour picker
+
+func _tick_picker(delta: float) -> void:
+	for k: String in _flash:
+		_flash[k] = maxf(0.0, float(_flash[k]) - delta / FLASH_S)
+	if not picker_open:
+		return
+	var me: SimVehicle = world.get_vehicle_for_peer(local_peer) if world != null else null
+	if not _picker_usable(me):
+		picker_open = false
+		return
+	if pointer_override.x >= 0.0:
+		return  # screenshots: keep it open
+	_picker_idle = 0.0 if not _hover.is_empty() else _picker_idle + delta
+	if _picker_idle > PICKER_IDLE_S:
+		picker_open = false
+
+
+## The local rig can be steered from the dock: combat, still in the match, not watching someone else, rule editor shut.
+func _picker_usable(me: SimVehicle) -> bool:
+	return world != null and me != null and not me.eliminated and world.phase == SimWorld.PHASE_COMBAT \
+		and view != null and not view.spectating() and not (view.rules != null and view.rules.is_open)
+
+
+func _pointer() -> Vector2:
+	return pointer_override if pointer_override.x >= 0.0 else get_local_mouse_position()
+
+
+func _hover_hit() -> Array:
+	var p: Vector2 = _pointer()
+	for i in range(_hits.size() - 1, -1, -1):
+		if (_hits[i][0] as Rect2).has_point(p):
+			return _hits[i]
+	return []
+
+
+func _is_hover(action: String, arg: Variant = null) -> bool:
+	return not _hover.is_empty() and _hover[1] == action and (arg == null or _hover[2] == arg)
+
+
+## Clicks at `p` (viewport px); true if it hit the dock block or the picker. Also used by screenshot scenarios.
+func click_at(p: Vector2) -> bool:
+	var me: SimVehicle = world.get_vehicle_for_peer(local_peer) if world != null else null
+	if not _picker_usable(me):
+		return false
+	for i in range(_hits.size() - 1, -1, -1):
+		var h: Array = _hits[i]
+		if not (h[0] as Rect2).has_point(p):
+			continue
+		_picker_idle = 0.0
+		match str(h[1]):
+			"picker":
+				picker_open = not picker_open
+			"rules":
+				picker_open = false
+				view.rules.open()
+			"drive":
+				_send({"type": "set_drive", "value": h[2]})
+			"target":
+				_send({"type": "set_target", "value": h[2]})
+			"radio":
+				radio(str(h[2]))
+		return true
+	if picker_open:
+		picker_open = false  # a click anywhere else closes it
+	return false
+
+
+## Calls radio command `id` (Orders.RADIO_IDS) for the local rig; the sim refuses it without charges.
+func radio(id: String) -> void:
+	var me: SimVehicle = world.get_vehicle_for_peer(local_peer) if world != null else null
+	if _picker_usable(me) and me.alive:
+		_send({"type": "radio", "value": id})
+
+
+## Right click: orders the target mark on whatever is under `p` (the sim picks the alien or rival there; a miss
+## costs nothing). Screenshot scenarios call it too.
+func mark_at(p: Vector2) -> bool:
+	var me: SimVehicle = world.get_vehicle_for_peer(local_peer) if world != null else null
+	if not _picker_usable(me) or not me.alive:
+		return false
+	var wp: Vector2 = view.world_at(p)
+	_send({"type": "mark", "x": wp.x, "y": wp.y})
+	return true
+
+
+func _send(cmd: Dictionary) -> void:
+	if view != null and view.workshop != null and view.workshop.send_command.is_valid():
+		view.workshop.send_command.call(cmd)
+
+
+## Flashes the dock line when the base doctrine changes (by key, picker or rule editor).
+func _note_doctrine(v: SimVehicle) -> void:
+	for k in ["drive", "target"]:
+		var cur: String = str(v.doctrine[k])
+		if _doc_seen.has(k) and _doc_seen[k] != cur and int(_doc_seen.get("id", -1)) == v.id:
+			_flash[k] = 1.0
+		_doc_seen[k] = cur
+	_doc_seen["id"] = v.id
+
+
+## Dock colour of the drive / target line: bright while a rule overrides the base, white while flashing.
+func _doc_col(v: SimVehicle, group: String, eff: String) -> Color:
+	var base: Color = Gfx.CRT_HI if eff != str(v.doctrine[group]) else Gfx.CRT_TEXT
+	return base.lerp(Gfx.UI_TEXT, float(_flash.get(group, 0.0)))
+
+
+## Small up / down caret (open state of the picker).
+func _caret(p: Vector2, up: bool) -> void:
+	var c: Color = Gfx.CRT_TEXT
+	for i in 3:
+		var w: float = 5.0 - 2.0 * i
+		var y: float = p.y + (2 - i if up else i)
+		draw_rect(Rect2(p.x + i, y, w, 1), c)
+
+
+## The strip above the dock: base drive and base target as chips with their keys, the rule that overrides
+## each right now, and the way into the full rule editor.
+func _draw_picker(v: SimVehicle, vs: Vector2) -> void:
+	var dock: Rect2 = _dock_rect(vs)
+	var rows: Array = [["DRIVE", "drive", Doctrine.BASE_DRIVES, DRIVE_KEY_LABELS], ["TARGET", "target", Doctrine.RIG_TARGETS, TARGET_KEY_LABELS]]
+	var label_w: float = 34.0
+	var widths: Array[float] = []
+	for row: Array in rows:
+		var w: float = label_w
+		for id: String in row[2]:
+			w += _pick_chip_w(id, row) + 3.0
+		widths.append(w)
+	var inner_w: float = maxf(widths.max(), 220.0)
+	var r := Rect2(floorf(vs.x / 2.0 - (inner_w + 12.0) / 2.0), 0, inner_w + 12.0, 52)
+	r.position.y = dock.position.y - 22.0 - r.size.y
+	if view != null and view.minimap != null and view.minimap.visible_now():  # wide (many targets): clear the minimap
+		var mm: Rect2 = Minimap.frame_rect(vs)
+		if r.end.x > mm.position.x:
+			r.position.y = minf(r.position.y, mm.position.y - 4.0 - r.size.y)
+	_panels.append(r)
+	draw_rect(r.grow(1), Gfx.OUTLINE)
+	draw_rect(r, Color(Gfx.CRT_BG, 0.94))
+	UiKit.outline_rect(self, r.grow(-1), Gfx.CRT_DIM)
+	var x0: float = r.position.x + 6.0
+	var y: float = r.position.y + 5.0
+	UiFont.draw(self, "BEHAVIOUR", Vector2(x0, y), Gfx.CRT_HI)
+	var hint := "CHANGES THE BASE SETTING - RULES STILL WIN WHEN THEY MATCH"
+	UiFont.draw_small(self, hint, Vector2(r.end.x - 6.0 - UiFont.width_small(hint), y + 1), Gfx.CRT_DIM)
+	y += 13.0
+	for row: Array in rows:
+		var grp: String = row[1]
+		UiFont.draw_small(self, row[0], Vector2(x0, y + 1), Gfx.CRT_DIM)
+		var x: float = x0 + label_w
+		var base: String = str(v.doctrine[grp])
+		var eff: String = _effective(v, grp)
+		for id: String in row[2]:
+			x = _pick_chip(id, row, Vector2(x, y), base == id, eff == id and eff != base) + 3.0
+		y += 13.0
+	var ov: String = _override_text(v)
+	var foot: String = ov if ov != "" else "NO RULE OVERRIDES RIGHT NOW"
+	var rmb := "RIGHT-CLICK AN ALIEN: ALL GUNS ON IT"
+	UiFont.draw_small(self, rmb, Vector2(r.end.x - 6.0 - UiFont.width_small(rmb), r.end.y - 9.0), Gfx.CRT_DIM)
+	UiFont.draw_small(self, foot, Vector2(x0, r.end.y - 9.0), Gfx.CRT_HI if ov != "" else Gfx.CRT_DIM)
+
+
+func _pick_label(id: String, row: Array) -> String:
+	var name: String = str(DoctrineEditor.ACTION_LABELS.get("%s:%s" % [row[1], id], id.to_upper())).trim_prefix("TGT ")
+	var key: String = str((row[3] as Dictionary).get(id, ""))
+	return name if key == "" else "%s %s" % [key, name]
+
+
+func _pick_chip_w(id: String, row: Array) -> float:
+	return UiFont.width(_pick_label(id, row)) + 6.0
+
+
+func _pick_chip(id: String, row: Array, pos: Vector2, on: bool, ruled: bool) -> float:
+	var text: String = _pick_label(id, row)
+	var r := Rect2(pos - Vector2(2, 2), Vector2(_pick_chip_w(id, row), 10))
+	var hov: bool = _is_hover(row[1], id)
+	if on:
+		draw_rect(r, Gfx.CRT_TEXT)
+	elif hov:
+		draw_rect(r, Color(Gfx.CRT_TEXT, 0.22))
+	UiKit.outline_rect(self, r, Gfx.CRT_HI if ruled else (Gfx.CRT_TEXT if on or hov else Gfx.CRT_DIM))
+	var tc: Color = Gfx.CRT_BG if on else (Gfx.CRT_HI if hov or ruled else Gfx.CRT_TEXT)
+	UiFont.draw(self, text, pos + Vector2(1, 0), tc)
+	_hits.append([r, row[1], id])
+	return r.end.x
+
+
+## "RULE 2 OVERRIDES: KITE" for the lit rig rules that set drive or target (empty when none does).
+func _override_text(v: SimVehicle) -> String:
+	var parts: PackedStringArray = []
+	var seen: Dictionary = {}
+	for i in mini(v.rules.size(), Doctrine.slots(v)):
+		if (v.rule_live >> i) & 1 == 0:
+			continue
+		var a: String = str(v.rules[i]["do"])
+		var g: String = Doctrine.action_group(a)
+		if (g == "drive" or g == "target") and not seen.has(g):
+			seen[g] = true
+			parts.append("RULE %d: %s" % [i + 1, str(DoctrineEditor.ACTION_LABELS.get(a, a.to_upper()))])
+	return ("NOW OVERRIDDEN BY " + "  ".join(parts)) if not parts.is_empty() else ""
 
 
 ## What the rig does right now in action group `group` ("drive" / "target"): the first lit rule of
 ## that group, else the base doctrine. Built from the synced rules and lamps, so clients agree.
 static func _effective(v: SimVehicle, group: String) -> String:
+	var radio: String = Orders.radio_id(v)  # a radio call beats every rule (Orders)
+	if radio != "":
+		if group == "drive":
+			match radio:
+				"fall_back":
+					return "flee" if Doctrine.action_unlocked(v, "drive:flee") else "hold"
+				"all_in":
+					return "charge"
+				"hold":
+					return "hold"
+		elif radio == "boss":
+			return "boss"
 	var slots: int = Doctrine.slots(v)
 	for i in mini(v.rules.size(), slots):
 		if (v.rule_live >> i) & 1 == 1:
@@ -423,34 +772,49 @@ func _draw_eliminated(vs: Vector2) -> void:
 
 # ---------------------------------------------------------------- kill feed, rivals, grace, drain
 
-## Player kills under the hive plate, newest on top: KILLER > VICTIM WEAPON (rams in fire colour).
-## Lines with the watched / local rig get a hazard edge. Alien kills are never listed.
+## Player kills under the hive plate, newest on top: KILLER > VICTIM WEAPON (rams in fire colour), and zone
+## captures: NAME TOOK [B] (FROM NAME). Lines with the watched / local rig get a hazard edge. Alien kills are
+## never listed.
 func _draw_feed(vs: Vector2) -> void:
 	if view == null:
 		return
 	var me: SimVehicle = view.focus_vehicle()
+	var lines: Array[Dictionary] = []
+	for log: Array[Dictionary] in [view.kill_log, view.zone_log]:
+		for i in range(log.size() - 1, -1, -1):
+			var e: Dictionary = log[i]
+			var age: int = world.tick - int(e["tick"])
+			if age >= FEED_TICKS or int(e["round"]) != world.round:
+				break
+			if age >= 0 and (not e.has("type") or str(e["type"]) == "captured"):
+				lines.append(e)
+	lines.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a["tick"]) > int(b["tick"]))
 	var y: float = 6.0
 	var shown: int = 0
-	for i in range(view.kill_log.size() - 1, -1, -1):
-		var e: Dictionary = view.kill_log[i]
+	for e: Dictionary in lines:
 		var age: int = world.tick - int(e["tick"])
-		if age >= FEED_TICKS or int(e["round"]) != world.round:
-			break
-		if age < 0:
-			continue
-		var kv: SimVehicle = UiKit.vehicle_by_id(world, int(e["killer"]))
-		var vv: SimVehicle = UiKit.vehicle_by_id(world, int(e["victim"]))
-		if kv == null or vv == null:
+		var zone: bool = e.has("type")
+		var kv: SimVehicle = UiKit.vehicle_by_id(world, int(e["owner"] if zone else e["killer"]))
+		var vv: SimVehicle = UiKit.vehicle_by_id(world, int(e["prev"] if zone else e["victim"]))
+		if kv == null or (vv == null and not zone):
 			continue
 		if age > FEED_TICKS - 15 and (age / 3) % 2 == 0:
 			y += 13.0
 			shown += 1
 			continue
-		var weapon: int = int(e["weapon"])
-		var wt: String = "RAMMED" if weapon == SimWorld.WEAPON_RAM else UiKit.weapon_short(weapon)
 		var kn: String = UiKit.player_name(kv)
-		var vn: String = UiKit.player_name(vv)
-		var w: float = UiFont.width(kn) + 5.0 + 6.0 + 5.0 + UiFont.width(vn) + 6.0 + UiFont.width(wt) + 12.0
+		var vn: String = UiKit.player_name(vv) if vv != null else ""
+		var w: float
+		var wt: String = ""
+		var weapon: int = -1
+		if zone:
+			w = UiFont.width(kn) + 4.0 + UiFont.width("TOOK") + 4.0 + 11.0 + 6.0
+			if vv != null:
+				w += UiFont.width("FROM") + 4.0 + UiFont.width(vn) + 6.0
+		else:
+			weapon = int(e["weapon"])
+			wt = "RAMMED" if weapon == SimWorld.WEAPON_RAM else UiKit.weapon_short(weapon)
+			w = UiFont.width(kn) + 5.0 + 6.0 + 5.0 + UiFont.width(vn) + 6.0 + UiFont.width(wt) + 12.0
 		var r := Rect2(vs.x - 6.0 - w, y, w, 12)
 		var mine: bool = me != null and (kv == me or vv == me)
 		draw_rect(r, Gfx.OUTLINE)
@@ -460,9 +824,21 @@ func _draw_feed(vs: Vector2) -> void:
 			UiKit.outline_rect(self, r, Gfx.HAZARD)
 		var x: float = r.position.x + 6.0
 		x = UiKit.paint_text(self, kn, Vector2(x, y + 3), kv.color_index) + 4.0
-		x = UiKit.arrow_glyph(self, Vector2(x, y + 3.5), Gfx.UI_TEXT, Gfx.UI_SHADOW) + 5.0
-		x = UiKit.paint_text(self, vn, Vector2(x, y + 3), vv.color_index) + 6.0
-		UiFont.draw(self, wt, Vector2(x, y + 3), Gfx.FIRE[4] if weapon == SimWorld.WEAPON_RAM else Gfx.UI_DIM, Gfx.UI_SHADOW)
+		if zone:
+			x = UiFont.draw(self, "TOOK", Vector2(x, y + 3), Gfx.UI_DIM, Gfx.UI_SHADOW) + 4.0
+			var zi: int = int(e["zone"])
+			if zi >= 0 and zi < world.zones.size():
+				_zone_badge(Rect2(x, y + 1, 11, 10), zi)
+			else:
+				UiFont.draw(self, ZoneView.letter(zi), Vector2(x + 3, y + 3), Gfx.UI_TEXT, Gfx.UI_SHADOW)
+			x += 15.0
+			if vv != null:
+				x = UiFont.draw(self, "FROM", Vector2(x, y + 3), Gfx.UI_DIM, Gfx.UI_SHADOW) + 4.0
+				UiKit.paint_text(self, vn, Vector2(x, y + 3), vv.color_index)
+		else:
+			x = UiKit.arrow_glyph(self, Vector2(x, y + 3.5), Gfx.UI_TEXT, Gfx.UI_SHADOW) + 5.0
+			x = UiKit.paint_text(self, vn, Vector2(x, y + 3), vv.color_index) + 6.0
+			UiFont.draw(self, wt, Vector2(x, y + 3), Gfx.FIRE[4] if weapon == SimWorld.WEAPON_RAM else Gfx.UI_DIM, Gfx.UI_SHADOW)
 		_panels.append(r)
 		y += 13.0
 		shown += 1
@@ -949,13 +1325,22 @@ func _draw_spectating(vs: Vector2, v: SimVehicle) -> void:
 
 
 ## Live standings top left in every multiplayer combat (fuel decides the match, then kills); the
-## watched / local rig is marked.
+## watched / local rig is marked. With control zones on the field a ZONE column shows each rig's zone points
+## this round.
 func _draw_standings(watched: SimVehicle) -> void:
 	var rows: Array[SimVehicle] = UiKit.standings(world)
-	var r := Rect2(6, 6, 140, 18 + rows.size() * 10)
+	var zones: bool = not world.zones.is_empty()
+	var r := Rect2(6, 6, 140 + (24.0 if zones else 0.0), 18 + rows.size() * 10)
 	UiKit.panel(self, r)
 	_panels.append(r)
-	UiKit.section(self, "STANDINGS", r.position + Vector2(6, 5), r.size.x - 12, "FUEL   KILLS")
+	var cols: Array = [["FUEL", 34.0], ["KILLS", 6.0]]  # [header, right edge inset]
+	if zones:
+		cols = [["FUEL", 58.0], ["KILLS", 30.0], ["ZONE", 6.0]]
+	var head_x: float = r.end.x - float(cols[0][1]) - UiFont.width_small(cols[0][0]) - 4.0
+	UiKit.section(self, "STANDINGS", r.position + Vector2(6, 5), head_x - r.position.x - 6.0)
+	for col: Array in cols:
+		var hw: float = UiFont.width_small(col[0])
+		UiFont.draw_small(self, col[0], Vector2(r.end.x - float(col[1]) - hw, r.position.y + 5), Gfx.UI_DIM)
 	var y: float = r.position.y + 16.0
 	for i in rows.size():
 		var o: SimVehicle = rows[i]
@@ -970,9 +1355,19 @@ func _draw_standings(watched: SimVehicle) -> void:
 		else:
 			UiKit.paint_text(self, UiKit.player_name(o), Vector2(r.position.x + 28, y), o.color_index)
 		var ft: String = "OUT" if out else str(maxi(o.fuel, 0))
-		UiFont.draw(self, ft, Vector2(r.end.x - 34 - UiFont.width(ft), y), Gfx.UI_DIM if out else Gfx.FIRE[3], Gfx.UI_SHADOW)
+		UiFont.draw(self, ft, Vector2(r.end.x - float(cols[0][1]) - UiFont.width(ft), y), Gfx.UI_DIM if out else Gfx.FIRE[3], Gfx.UI_SHADOW)
 		var kt := str(o.kills)
-		UiFont.draw(self, kt, Vector2(r.end.x - 6 - UiFont.width(kt), y), Gfx.UI_DIM if out else Gfx.UI_TEXT, Gfx.UI_SHADOW)
+		UiFont.draw(self, kt, Vector2(r.end.x - float(cols[1][1]) - UiFont.width(kt), y), Gfx.UI_DIM if out else Gfx.UI_TEXT, Gfx.UI_SHADOW)
+		if zones:
+			var zp: int = int(o.round_stats.get("zone_points", 0))
+			var held: int = Zones.held_by(world, o)
+			var zt := str(zp)
+			var zx: float = r.end.x - 6.0 - UiFont.width(zt)
+			UiFont.draw(self, zt, Vector2(zx, y), Gfx.FIRE[4] if zp > 0 and not out else Gfx.UI_DIM, Gfx.UI_SHADOW)
+			for k in held:  # a flag pip per zone it holds right now
+				var fp := Vector2(zx - 5.0 - 4.0 * k, y)
+				draw_rect(Rect2(fp, Vector2(3, 6)), Gfx.OUTLINE)
+				draw_rect(Rect2(fp + Vector2(1, 1), Vector2(2, 2)), UiKit.bar_color(o.color_index))
 		y += 10.0
 
 
@@ -1024,6 +1419,197 @@ func _banner(vs: Vector2, title: String, sub: String, el: int, y: float) -> void
 	UiKit.tape(self, r, Color("#e8dcc4"))
 	UiKit.center_big(self, title, r.get_center().x, y + 3, Gfx.INK)
 	UiKit.center_text(self, sub, r.get_center().x, y + 13, Gfx.INK_RED)
+
+
+
+# ---------------------------------------------------------------- control zones (sim/zones.gd, ZoneView)
+
+## Fill and text colour of zone badge `i`: the owner's paint, plate grey when nobody holds it.
+func _zone_badge(r: Rect2, i: int, big: bool = false) -> void:
+	var z: Dictionary = world.zones[i]
+	var owner: SimVehicle = UiKit.vehicle_by_id(world, int(z["owner"]))
+	var live: bool = world.zones_active
+	var hot: bool = live and bool(z["contested"])
+	draw_rect(r, Gfx.OUTLINE)
+	var inner: Rect2 = r.grow(-1.0)
+	if owner != null:
+		var pc: Color = UiKit.bar_color(owner.color_index)
+		draw_rect(inner, pc if live else pc.darkened(0.45))
+		draw_rect(Rect2(inner.position, Vector2(inner.size.x, 1)), (pc if live else pc.darkened(0.45)).lightened(0.3))
+	else:
+		draw_rect(inner, Gfx.UI_PLATE_DARK)
+	var prog: float = Zones.progress(z) if live else 0.0
+	if prog > 0.0 and not hot:
+		var cap: SimVehicle = UiKit.vehicle_by_id(world, int(z["cap_id"]))
+		if cap != null:
+			draw_rect(Rect2(inner.position.x, inner.end.y - 2, floorf(inner.size.x * prog), 2), UiKit.bar_color(cap.color_index))
+	if hot and (world.tick / 5) % 2 == 0:
+		UiKit.outline_rect(self, r.grow(1.0), Gfx.HAZARD)
+	var dark_text: bool = owner != null and live and Gfx.color_slot(owner.color_index) != Gfx.DARK_PAINT
+	var tc: Color = Gfx.INK if dark_text else (Gfx.UI_TEXT if live else Gfx.UI_DIM)
+	var l: String = ZoneView.letter(i)
+	if big:
+		UiKit.center_big(self, l, r.get_center().x, r.position.y + floorf((r.size.y - 8.0) / 2.0), tc)
+	else:
+		UiKit.center_text(self, l, r.get_center().x + 1.0, r.position.y + floorf((r.size.y - 6.0) / 2.0), tc)
+
+
+## Left of the clock plate: one badge per zone in its owner's paint (capture bar, contested blink), how many
+## the watched rig holds and its zone points this round.
+func _draw_zone_panel(vs: Vector2, v: SimVehicle) -> void:
+	if world.zones.is_empty():
+		return
+	var top: Rect2 = _top_rect(vs)
+	var r := Rect2(top.position.x - 4.0 - ZONE_PANEL_W, top.position.y, ZONE_PANEL_W, top.size.y)
+	_panels.append(r)
+	UiKit.panel(self, r)
+	var x0: float = r.position.x + 6.0
+	var y: float = r.position.y + 5.0
+	var status: String
+	var scol: Color = Gfx.UI_DIM
+	if not world.zones_active:
+		status = "LOCKED"
+	elif v != null:
+		var held: int = Zones.held_by(world, v)
+		status = "HELD %d/%d" % [held, world.zones.size()]
+		scol = Gfx.FIRE[4] if held > 0 else Gfx.UI_DIM
+	UiKit.section(self, "ZONES", Vector2(x0, y), r.size.x - 12.0, status, scol)
+	var bx: float = x0
+	for i in world.zones.size():
+		_zone_badge(Rect2(bx, r.position.y + 13.0, 12, 11), i)
+		bx += 14.0
+	if v != null:
+		var pts: int = int(v.round_stats.get("zone_points", 0))
+		var pt: String = "+%d" % pts
+		var px: float = r.end.x - 6.0 - UiFont.width_big(pt)
+		UiFont.draw_big(self, pt, Vector2(px, r.position.y + 15.0), Gfx.FIRE[4] if pts > 0 else Gfx.UI_DIM, Gfx.OUTLINE)
+
+
+## Over each zone beacon on screen (screen space, crisp): its letter in the owner's paint and what is going
+## on there: LOCKED, FREE, the holder, TAKING n% in the capturer's paint, CONTESTED, YOURS +1/S.
+func _draw_zone_tags(focus: SimVehicle) -> void:
+	if view == null or view.attract or world.zones.is_empty():
+		return
+	var vs: Vector2 = get_viewport_rect().size
+	for i in world.zones.size():
+		var z: Dictionary = world.zones[i]
+		var foot: Vector2 = view.to_screen(z["pos"])
+		var tag := Vector2(foot.x - 7.0, foot.y - ZoneView.BEACON_FOOT.y - 14.0)
+		if not Rect2(Vector2(-60, -20), vs + Vector2(120, 40)).has_point(tag):
+			continue
+		var b := Rect2(tag.floor(), Vector2(13, 12))
+		_zone_badge(b, i, true)
+		var owner: SimVehicle = UiKit.vehicle_by_id(world, int(z["owner"]))
+		var cap: SimVehicle = UiKit.vehicle_by_id(world, int(z["cap_id"]))
+		var prog: float = Zones.progress(z)
+		# [name in paint (or ""), its paint, plain text, its colour, rim]
+		var who: String = ""
+		var who_paint: int = 0
+		var text: String
+		var col: Color = Gfx.UI_TEXT
+		var rim: Color = Gfx.UI_SHADOW
+		var capturing: bool = false
+		if not world.zones_active:
+			var secs: int = ceili(float(world.pvp_grace_ticks) / float(SimWorld.TICK_RATE))
+			text = "LOCKED" if secs <= 0 else "OPENS IN %d" % secs
+			col = Gfx.UI_DIM
+		elif bool(z["contested"]):
+			text = "CONTESTED"
+			col = Gfx.UI_BAD if (world.tick / 5) % 2 == 0 else Gfx.HAZARD
+			rim = Gfx.OUTLINE
+		elif cap != null and prog > 0.0:
+			who = UiKit.player_name(cap) if cap != focus else "YOU"
+			who_paint = cap.color_index
+			text = " TAKING %d%%" % floori(prog * 100.0)
+			capturing = true
+		elif owner != null and owner == focus:
+			var inside: bool = Zones.zone_at(world, focus.pos) == i and focus.alive
+			text = "YOURS +%d/S" % Zones.ZONE_SCRAP_PER_SEC if inside else "YOURS"
+			col = Gfx.FIRE[5]
+			rim = Gfx.OUTLINE
+		elif owner != null:
+			who = UiKit.player_name(owner)
+			who_paint = owner.color_index
+			text = ""
+		else:
+			text = "FREE ZONE"
+			col = Gfx.BONE_LIGHT
+			rim = Gfx.OUTLINE
+		var tw: float = UiFont.width(who) + UiFont.width(text)
+		var tx: float = b.end.x + 4.0
+		if tx + tw > vs.x - 4.0:  # near the right edge: the words go left of the badge
+			tx = b.position.x - 4.0 - tw
+		var ty: float = b.position.y + 3.0
+		var x: float = tx
+		if who != "":
+			x = UiKit.paint_text(self, who, Vector2(x, ty), who_paint)
+		if text != "":
+			x = UiFont.draw(self, text, Vector2(x, ty), col, rim)
+		if capturing:
+			UiKit.bar(self, Rect2(tx, ty + 8.0, x - tx, 3), prog, UiKit.bar_color(cap.color_index))
+
+
+## A small badge at the screen edge for every zone off screen (its letter in the owner's paint and a pointer),
+## kept clear of the HUD plates like the rival arrows.
+func _draw_zone_arrows(vs: Vector2) -> void:
+	if view == null or world.zones.is_empty():
+		return
+	var inset := Rect2(Vector2(12, 12), vs - Vector2(24, 24))
+	var c: Vector2 = vs / 2.0
+	for i in world.zones.size():
+		var sp: Vector2 = view.to_screen(world.zones[i]["pos"])
+		if Rect2(Vector2.ZERO, vs).grow(-8.0).has_point(sp):
+			continue
+		var d: Vector2 = sp - c
+		if d.length_squared() < 1.0:
+			continue
+		var dir: Vector2 = d.normalized()
+		var t: float = INF
+		if absf(dir.x) > 0.001:
+			t = minf(t, ((inset.end.x if dir.x > 0.0 else inset.position.x) - c.x) / dir.x)
+		if absf(dir.y) > 0.001:
+			t = minf(t, ((inset.end.y if dir.y > 0.0 else inset.position.y) - c.y) / dir.y)
+		var p: Vector2 = _clear_of_panels(c + dir * t, inset).floor()
+		var owner: SimVehicle = UiKit.vehicle_by_id(world, int(world.zones[i]["owner"]))
+		var col: Color = UiKit.bar_color(owner.color_index) if owner != null and world.zones_active else Gfx.BONE_LIGHT
+		UiKit.pointer(self, p + Vector2(0.5, 0.5) + dir * 3.0, dir, 5.0, col)
+		_zone_badge(Rect2(p - dir * 7.0 - Vector2(5, 5), Vector2(11, 11)), i)
+
+
+## Ticks since the CONTROL ZONES OPEN banner started (-1 = none): with the zones, but after the PVP ON banner
+## when PvP and the zones switch on together (round 4).
+func _zones_banner_age() -> int:
+	if view == null or view.zones_open_tick < 0 or world.zones.is_empty():
+		return -1
+	var start: int = view.zones_open_tick
+	if view.pvp_on_tick >= 0 and absi(view.pvp_on_tick - start) <= 2:
+		start = view.pvp_on_tick + PVP_BANNER_TICKS
+	var age: int = world.tick - start
+	return age if age >= 0 else -1
+
+
+## The zones go live: a hazard banner in the PVP ON style with the zone badges and the deal.
+func _zones_banner(vs: Vector2, el: int) -> void:
+	var slide: float = clampf(1.0 - float(el) / 6.0, 0.0, 1.0)
+	if el > ZONES_BANNER_TICKS - 12 and (el / 2) % 2 == 0:
+		return
+	var y: float = 94.0
+	var h: float = 40.0
+	var x: float = floorf(slide * vs.x)  # from the right (PVP ON comes from the left)
+	draw_rect(Rect2(x, y - 1, vs.x, h + 2), Gfx.OUTLINE)
+	UiKit.hazard_frame(self, Rect2(x, y, vs.x, h), 4.0)
+	draw_rect(Rect2(x, y + 5, vs.x, h - 10), Color("#2a1c18"))
+	draw_rect(Rect2(x, y + 5, vs.x, 1), Color("#5e2f1e"))
+	var cx: float = floorf(x + vs.x / 2.0)
+	var flick: Color = Gfx.FIRE[5] if (el / 4) % 2 == 0 or el > 24 else Gfx.UI_TEXT
+	var title := "CONTROL ZONES OPEN"
+	UiKit.center_big(self, title, cx, y + 9, flick, Gfx.OUTLINE, 2)
+	UiKit.center_text(self, "STAND ALONE IN A ZONE %d S TO TAKE IT - HOLD IT FOR SCRAP" % (Zones.CAPTURE_TICKS / SimWorld.TICK_RATE), cx, y + 27, Gfx.UI_TEXT, Gfx.UI_SHADOW)
+	var tw: float = UiFont.width_big(title) * 2.0
+	for side in 2:
+		for i in world.zones.size():
+			var bx: float = cx - tw / 2.0 - 16.0 - 15.0 * float(world.zones.size() - i) if side == 0 else cx + tw / 2.0 + 6.0 + 15.0 * float(i)
+			_zone_badge(Rect2(floorf(bx), y + 10, 13, 13), i, true)
 
 
 # ---------------------------------------------------------------- combat juice

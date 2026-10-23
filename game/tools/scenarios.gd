@@ -34,7 +34,7 @@ extends RefCounted
 ## - "rig_kill"     (about 60 ticks) a rival rig blowing up next to yours (explosion and debris).
 ##
 ## Information UI review scenarios (playtest round 1 #2, #5, #10, #11), five named rigs (LAN_NIGHT):
-## - "recap"        (about 160 ticks) workshop after round 8: wrecked by boulders and acid, KITE hint,
+## - "recap"        (about 160 ticks) workshop after round 8: wrecked by boulders and acid, zone king, KITE hint,
 ##                  interest x/cap, UNDERDOG badge, the fuel-drain notice.
 ## - "recap_pvp"    (about 160 ticks) the same, but DUNE RAT hunted you down with its cannon.
 ## - "scouting"     = recap; use --hover / --click on a convoy row for the dossier.
@@ -82,16 +82,39 @@ extends RefCounted
 ## - "pause"    skirmish with the pause / menu overlay (LAN wording: the fight goes on).
 ## - "rematch"  gameover_mp seen by the host: REMATCH and LEAVE TO MENU.
 ## - "waiting"  gameover_mp seen by the loser (a client): waiting for the host's rematch.
+## - "picker"   the programmed rig of "rules" in combat with the dock's behaviour picker open (--hover a chip).
+## - "mark"     skirmish where MAD MAREK right-clicks an alien at tick MARK_CAST_TICK (target mark order;
+##              about 215 ticks shows the reticle snapping in, 300 the order running).
+## - "rules_logic" / "rules_logic_weapon" the rule editor on a rig with Radar and Targeting Computer: an ANY rule
+##              with a hold time, a switched-off rule, a rule shadowed by an ALWAYS rule above it, an edited
+##              priority list (the cannon has its own). Combat overlay, rig tab / cannon tab.
+## - "workshop_rules" the "workshop" scenario in its RULES view.
+## - "rules_live" the programmed rig of "rules" in combat with the live rule monitor (no overlay).
+## - "radio"    skirmish where MAD MAREK calls ALL IN on the radio at tick MARK_CAST_TICK (about 260 ticks).
+## - "deploy"   the deploy screen before round 1 (three rigs, one ready; --click a preset). Under 900 ticks.
+##
+## PvP control zones (docs/architecture.md "Control zones"; ZoneView, the HUD's zone panel and tags):
+## - "zones"        (about 120 ticks) round 6, five rigs pinned in a horde around three zones: A (bottom
+##                  centre) held by MAD MAREK, who stands in it and scores; B (right) LIMEADE's, DUNE RAT
+##                  rolls in at ZONE_ENTER_TICK and takes it at about tick 156 (60 % at 120); C (left) SANDY's,
+##                  contested by NIGHTCRAWLER. A capture of A is faked at ZONE_FLASH_TICK for the feed line and
+##                  the burst (shoot 95 to 110 to see the burst).
+## - "zones_locked" the same field at the start of round 4 with a short grace (ZONE_GRACE_TICKS): the zones
+##                  locked (about 30), PVP ON (about 70), CONTROL ZONES OPEN after it (about 190).
 
 const NAMES: PackedStringArray = ["skirmish", "horde", "workshop", "tech_tree", "gameover", "gameover_mp", "eliminated",
 	"menu", "join", "lobby", "pause", "rematch", "waiting", "rig_growth", "late_round", "pvp_on", "rig_kill",
 	"recap", "recap_pvp", "scouting", "combat_feed", "pvp_grace", "spectator", "spectator_ws", "awards",
 	"tech_mid", "tech_swap", "workshop_mid", "tech_beginner", "fx_firebrand", "fx_fortress", "fx_scrapper",
 	"fx_chassis", "fx_ram", "juice", "juice_surge", "evo_combat", "evo_flip", "evo_workshop", "evo_moment", "boss_tripod", "boss_colossus", "boss_shards",
-	"boss_warning", "boss_enraged", "boss_spawn", "boss_phase", "boss_kill", "boss_kill_colossus", "boss_retreat", "species", "hive"]
+	"boss_warning", "boss_enraged", "boss_spawn", "boss_phase", "boss_kill", "boss_kill_colossus", "boss_retreat", "species", "hive", "picker", "deploy", "mark", "radio", "rules_live", "zones", "zones_locked", "rules_logic", "rules_logic_weapon", "workshop_rules"]
 const EVO_FLIP_TICK := 90
+const MARK_CAST_TICK := 200
 const EVO_PICK_DELAY := 30
 const JUICE_SURGE_TICK := 100
+const ZONE_ENTER_TICK := 66
+const ZONE_FLASH_TICK := 90
+const ZONE_GRACE_TICKS := 60
 ## Info-UI line-up: [name, paint, GROWTH_BUILDS index, drive, target, extra tech].
 const LAN_NIGHT: Array = [
 	["MAD MAREK", 0, 6, "circle", "nearest", ["ballistics_ammo_bench"]],
@@ -122,7 +145,7 @@ static func build(name: String, p_seed: int) -> SimWorld:
 			return _skirmish(p_seed)
 		"horde":
 			return _horde(p_seed)
-		"workshop", "tech_tree", "tech_mid", "tech_swap", "workshop_mid", "tech_beginner":
+		"workshop", "tech_tree", "tech_mid", "tech_swap", "workshop_mid", "tech_beginner", "workshop_rules":
 			var w: SimWorld = _skirmish(p_seed)
 			w.fast_rounds = true
 			return w
@@ -150,8 +173,14 @@ static func build(name: String, p_seed: int) -> SimWorld:
 			return _skirmish(p_seed)
 		"rematch", "waiting":
 			return build("gameover_mp", p_seed)
-		"rules", "rules_weapon":
+		"rules", "rules_weapon", "picker", "rules_live":
 			return _programmed(p_seed)
+		"rules_logic", "rules_logic_weapon":
+			return _programmed_logic(p_seed)
+		"deploy":
+			return _deploy(p_seed)
+		"mark", "radio":
+			return _skirmish(p_seed)
 		"rig_growth":
 			return _rig_growth(p_seed)
 		"late_round":
@@ -173,6 +202,8 @@ static func build(name: String, p_seed: int) -> SimWorld:
 			return _boss_world(name, p_seed)
 		"species":
 			return _species_world(p_seed)
+		"zones", "zones_locked":
+			return _zones_world(name, p_seed)
 		"hive":
 			var wh: SimWorld = _skirmish(p_seed)
 			wh.fast_rounds = true
@@ -255,6 +286,14 @@ static func ui_state(name: String) -> Dictionary:
 			return {"rules": "rig"}
 		"rules_weapon":
 			return {"rules": "cannon"}
+		"rules_logic":
+			return {"rules": "rig"}
+		"rules_logic_weapon":
+			return {"rules": "cannon"}
+		"workshop_rules":
+			return {"workshop_tab": "rules"}
+		"picker":
+			return {"picker": true}
 		"rematch", "awards":
 			return {"game_over": "host"}
 		"waiting":
@@ -273,6 +312,26 @@ static func step(name: String, w: SimWorld) -> void:
 		return
 	if name == "species":
 		_species_step(w)
+		return
+	if name == "zones" or name == "zones_locked":
+		_zones_step(name, w)
+		return
+	if name == "radio":
+		if w.tick == MARK_CAST_TICK:
+			w.apply_command(1, {"type": "radio", "value": "all_in"})
+		w.step()
+		return
+	if name == "mark":
+		if w.tick == MARK_CAST_TICK:  # the alien nearest a point 120 px ahead of the rig, like a player's right click
+			var me: SimVehicle = w.vehicles[0]
+			var aim: Vector2 = me.pos + Vector2.from_angle(me.heading) * 120.0
+			var best: int = -1
+			for i in w.enemy_count:
+				if best < 0 or w.enemy_pos[i].distance_squared_to(aim) < w.enemy_pos[best].distance_squared_to(aim):
+					best = i
+			if best >= 0:
+				w.apply_command(1, {"type": "mark", "x": w.enemy_pos[best].x, "y": w.enemy_pos[best].y})
+		w.step()
 		return
 	if name == "hive":  # the first workshop, held (round 1 is over: the panel lists this match's species and the next boss)
 		if w.phase == SimWorld.PHASE_COMBAT:
@@ -317,7 +376,7 @@ static func step(name: String, w: SimWorld) -> void:
 		"menu", "join", "lobby":
 			if w.phase == SimWorld.PHASE_WORKSHOP:
 				_ready_all(w)
-		"workshop", "tech_tree", "tech_mid", "tech_swap", "workshop_mid", "tech_beginner":
+		"workshop", "tech_tree", "tech_mid", "tech_swap", "workshop_mid", "tech_beginner", "workshop_rules":
 			if w.phase == SimWorld.PHASE_WORKSHOP:
 				if w.round < WORKSHOP_ROUND:
 					_ready_all(w)
@@ -625,6 +684,17 @@ static func _species_step(w: SimWorld) -> void:
 
 
 ## Two rigs (red: circle / nearest, magenta: kite / players_first) in a running horde.
+## Three fresh rigs in the deploy phase before round 1; the second one is already ready.
+static func _deploy(p_seed: int) -> SimWorld:
+	var w := SimWorld.new(p_seed)
+	w.add_vehicle(1, _old_arena(Vector2(560, 380)), "MAD MAREK")
+	w.add_vehicle(2, _old_arena(Vector2(760, 330)), "DUNE RAT", 2)
+	w.add_vehicle(3, _old_arena(Vector2(700, 470)), "SANDY", 3)
+	w.begin_deploy()
+	w.apply_command(2, {"type": "ready"})
+	return w
+
+
 static func _skirmish(p_seed: int) -> SimWorld:
 	var w := SimWorld.new(p_seed)
 	w.add_vehicle(1, _old_arena(Vector2(420, 420)), "MAD MAREK")
@@ -1183,6 +1253,9 @@ static func _stage_recap(w: SimWorld, pvp: bool) -> void:
 		rs["deaths"] = [{"t": 1712, "cause": "boulder", "src": SimWorld.SRC_BOULDER, "killer": -1, "killer_kind": SimWorld.BOULDER}]
 		rs["kills"] = 47
 		rs["fuel_lost"] = 20
+		rs["zone_points"] = 14  # held a control zone for 14 s, and the most ground: zone king
+		rs["fuel_gained"] = Zones.ZONE_FUEL_BONUS
+		w.events.append({"type": "zone_bonus", "pos": me.pos, "owner": me.id, "kind": Zones.ZONE_FUEL_BONUS})
 	rs["scrap_earned"] = 61 + int(rs.get("interest", 0))
 	me.fuel = 31
 	for i in range(1, w.vehicles.size()):
@@ -1237,7 +1310,7 @@ static func _programmed(p_seed: int) -> SimWorld:
 	var w: SimWorld = _skirmish(p_seed)
 	var me: SimVehicle = w.vehicles[0]
 	Cards.grant(me, "cannon")
-	me.tech.append("electronics_1")
+	me.tech.append("electronics_rangefinder")
 	Cards.recompute(me)
 	for cmd: Dictionary in [
 		{"type": "set_rules", "scope": "rig", "value": "hp<30|drive:flee;swarm>10&t_dist<150|drive:kite;pvp=1&rivals>0|target:players_first"},
@@ -1247,3 +1320,80 @@ static func _programmed(p_seed: int) -> SimWorld:
 	]:
 		w.apply_command(me.peer_id, cmd)
 	return w
+
+
+static func _programmed_logic(p_seed: int) -> SimWorld:
+	var w: SimWorld = _programmed(p_seed)
+	var me: SimVehicle = w.vehicles[0]
+	me.tech.append_array(["electronics_radar", "electronics_targeting"])
+	Cards.recompute(me)
+	for cmd: Dictionary in [
+		{"type": "set_rules", "scope": "rig", "value": "hp<35/under_fire=1/swarm>25|drive:flee@2;-swarm>10&t_dist<150|drive:kite;flyers>1|target:priority;|target:nearest;pvp=1&rivals>0|target:players_first"},
+		{"type": "set_target", "value": "priority"},
+		{"type": "set_priority", "scope": "rig", "value": "boss,glass,spitter,shrieker,brood,mite,-boulder,rival:weakest"},
+		{"type": "set_weapon_target", "scope": "cannon", "value": "priority"},
+		{"type": "set_priority", "scope": "cannon", "value": "boss,boulder,brood,spitter,shrieker,glass,-mite,-rival:strongest"},
+	]:
+		w.apply_command(me.peer_id, cmd)
+	return w
+
+
+# ================================================================ PvP control zones
+
+## Zone centres and rig anchors around the arena centre: [zone A, B, C], then per LAN_NIGHT rig its anchor
+## (DUNE RAT has two: waiting outside B, then inside it from ZONE_ENTER_TICK).
+const ZONE_SPOTS: Array = [Vector2(40, 72), Vector2(252, 6), Vector2(-262, 22)]
+const ZONE_ANCHORS: Array = [Vector2(0, 0), Vector2(392, -120), Vector2(-236, 44), Vector2(-292, -4), Vector2(520, 330)]
+const ZONE_RAT_IN := Vector2(222, 40)
+
+
+static func _zones_world(name: String, p_seed: int) -> SimWorld:
+	var c: Vector2 = SimWorld.ARENA.get_center()
+	var spots: Array = []
+	for a: Vector2 in ZONE_ANCHORS:
+		spots.append(c + a)
+	var w: SimWorld = _lan_night(p_seed, spots)
+	w.round = SimWorld.PVP_START_ROUND if name == "zones_locked" else 6
+	w.phase_ticks_left = w.combat_duration(w.round)
+	if name == "zones_locked":
+		w.pvp_grace_ticks = ZONE_GRACE_TICKS
+	Zones.setup(w)
+	for i in mini(w.zones.size(), ZONE_SPOTS.size()):
+		w.zones[i]["pos"] = c + (ZONE_SPOTS[i] as Vector2)
+	if name == "zones":
+		w.zones[0]["owner"] = w.vehicles[0].id
+		w.zones[1]["owner"] = w.vehicles[4].id
+		w.zones[2]["owner"] = w.vehicles[2].id
+		var me: SimVehicle = w.vehicles[0]
+		me.round_stats["zone_points"] = 21
+		me.match_stats["zone_points"] = 47
+		me.zone_ticks = 21 * SimWorld.TICK_RATE
+		w.vehicles[2].round_stats["zone_points"] = 9
+		w.vehicles[4].round_stats["zone_points"] = 14
+	for i in w.vehicles.size():
+		var v: SimVehicle = w.vehicles[i]
+		v.invuln_ticks = 0
+		w.set_meta("anchor_%d" % i, v.pos)
+	w.apply_command(1, {"type": "set_drive", "value": "zone"})
+	w.apply_command(1, {"type": "set_rules", "scope": "rig", "value": "in_zone=1|target:intruders"})
+	_scatter(w, 320, 0.08, 0.05, 90.0, 620.0)
+	return w
+
+
+## Every rig holds its anchor (turning and shooting as its AI likes), DUNE RAT rolls into zone B on cue,
+## the horde is topped up, and in "zones" a capture of zone A is reported at ZONE_FLASH_TICK.
+static func _zones_step(name: String, w: SimWorld) -> void:
+	w.step()
+	if w.tick == ZONE_ENTER_TICK:
+		w.set_meta("anchor_1", SimWorld.ARENA.get_center() + ZONE_RAT_IN)
+	for i in w.vehicles.size():
+		var v: SimVehicle = w.vehicles[i]
+		v.pos = w.get_meta("anchor_%d" % i, v.pos)
+		v.vel = Vector2.ZERO
+		v.hp = maxf(v.hp, v.max_hp * 0.7)
+	if w.enemy_count < 260:
+		_scatter(w, 40, 0.08, 0.05, 200.0, 620.0)
+	if name == "zones" and w.tick == ZONE_FLASH_TICK:
+		var z: Dictionary = w.zones[0]
+		w.events.append({"type": "zone_captured", "pos": z["pos"], "owner": w.vehicles[0].id, "kind": 0,
+			"prev": w.vehicles[4].id, "count": 1})

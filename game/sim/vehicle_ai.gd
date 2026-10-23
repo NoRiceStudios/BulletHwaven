@@ -10,6 +10,7 @@ const SPEED_CIRCLE := 95.0
 const SPEED_KITE := 96.0
 const SPEED_CHARGE := 125.0
 const SPEED_FLEE := 110.0
+const SPEED_ZONE := 110.0
 const CHARGE_RAM_DAMAGE := 2.0
 
 
@@ -67,9 +68,12 @@ static func _acquire(w: SimWorld, v: SimVehicle) -> void:
 ## Picks a target for target mode `mode` (Doctrine.RIG_TARGETS / WEAPON_TARGETS). Returns
 ## Vector3i(kind, index, id) with kind 0 = nothing. `reach` > 0 (a weapon) limits every candidate to
 ## that distance; 0 (the rig) takes aliens anywhere and rivals within the longest weapon range.
-## Modes that find nothing fall back to the nearest alien.
-static func find_target(w: SimWorld, v: SimVehicle, mode: String, reach: float) -> Vector3i:
+## Modes that find nothing fall back to the nearest alien ("priority" differs, see _find_priority).
+## `kind` is the weapon kind of a weapon's lookup (its priority list), "" for the rig.
+static func find_target(w: SimWorld, v: SimVehicle, mode: String, reach: float, kind: String = "") -> Vector3i:
 	var r: float = reach if reach > 0.0 else v.max_range()
+	if mode == "priority":
+		return _find_priority(w, v, Doctrine.priority_of(v, kind if kind != "" else Doctrine.SCOPE_RIG), reach, r)
 	if mode == "players_first" and w.pvp_enabled():
 		# Prefer the marked leader (bounty), then the highest leader score in range (never the weakest rig),
 		# nearest among equals. Rivals under respawn / round-start protection cannot be targeted.
@@ -103,6 +107,17 @@ static func find_target(w: SimWorld, v: SimVehicle, mode: String, reach: float) 
 			idx = _nearest_boss(w, v.pos, reach)
 		"shriekers":
 			idx = _nearest_enemy(w, v.pos, -1, SimWorld.SHRIEKER, reach)
+		"mites":
+			idx = _nearest_enemy(w, v.pos, -1, SimWorld.MITE, reach)
+		"flyers":
+			idx = _nearest_enemy(w, v.pos, -1, SimWorld.GLASS, reach)
+		"broods":
+			idx = _nearest_enemy(w, v.pos, -1, SimWorld.BROOD, reach)
+		"intruders":
+			if w.pvp_enabled():
+				var intr: SimVehicle = Zones.nearest_intruder(w, v, r)
+				if intr != null:
+					return Vector3i(2, intr.id, intr.id)
 	if idx < 0:
 		# Charge without berserker does not ram boulders: prefer anything else if it is around.
 		var skip: int = SimWorld.BOULDER if reach <= 0.0 and _avoids_boulders(v) else -1
@@ -112,6 +127,94 @@ static func find_target(w: SimWorld, v: SimVehicle, mode: String, reach: float) 
 	if idx >= 0:
 		return Vector3i(1, idx, w.enemy_id[idx])
 	return Vector3i.ZERO
+
+
+## Target priority (Doctrine.parse_priority form): walks the list in order, skipping off types, and takes the
+## best candidate of the first type that has one within r (pick: nearest / weakest / strongest hp; ties go to
+## the lower index). Rivals only count while PvP is on. Nothing in range: the rig (reach <= 0) takes the
+## nearest alien whose type is not off, a weapon (reach > 0) returns nothing and follows the rig's target.
+static func _find_priority(w: SimWorld, v: SimVehicle, prio: Dictionary, reach: float, r: float) -> Vector3i:
+	var off: Array = prio.get("off", [])
+	var pick: int = maxi(Doctrine.PRIO_PICKS.find(str(prio.get("pick", "nearest"))), 0)
+	var nt: int = Doctrine.PRIO_TYPES.size()
+	var best_j := PackedInt32Array()
+	var best_s := PackedFloat32Array()
+	best_j.resize(nt)
+	best_s.resize(nt)
+	for t in nt:
+		best_j[t] = -1
+	var off_mask: int = 0
+	for t in nt:
+		if off.has(Doctrine.PRIO_TYPES[t]):
+			off_mask |= 1 << t
+	var r2: float = r * r
+	var n: int = w.query_enemies(v.pos, r, w.ai_buf)
+	for q in n:
+		var j: int = w.ai_buf[q]
+		if w.enemy_hp[j] <= 0.0:
+			continue
+		var t: int = Doctrine.prio_index_of_kind(w.enemy_kind[j])
+		if (off_mask >> t) & 1 != 0:
+			continue
+		var d2: float = v.pos.distance_squared_to(w.enemy_pos[j])
+		if d2 > r2:
+			continue
+		var s: float = _prio_score(pick, d2, w.enemy_hp[j])
+		if best_j[t] < 0 or s < best_s[t] or (s == best_s[t] and j < best_j[t]):
+			best_j[t] = j
+			best_s[t] = s
+	var rival: SimVehicle = null
+	var rival_s: float = 0.0
+	var rt: int = nt - 1
+	if (off_mask >> rt) & 1 == 0 and w.pvp_enabled():
+		for o in w.vehicles:
+			if o.id == v.id or not o.alive or o.invuln_ticks > 0 or o.smoke_ticks > 0:
+				continue
+			var od2: float = v.pos.distance_squared_to(o.pos)
+			if od2 > r2:
+				continue
+			var os: float = _prio_score(pick, od2, o.hp)
+			if rival == null or os < rival_s:
+				rival = o
+				rival_s = os
+	for tname: String in prio["order"]:
+		var ti: int = Doctrine.PRIO_TYPES.find(tname)
+		if ti < 0 or (off_mask >> ti) & 1 != 0:
+			continue
+		if ti == rt:
+			if rival != null:
+				return Vector3i(2, rival.id, rival.id)
+		elif best_j[ti] >= 0:
+			return Vector3i(1, best_j[ti], w.enemy_id[best_j[ti]])
+	if reach > 0.0:
+		return Vector3i.ZERO
+	var idx: int = _nearest_not_off(w, v.pos, off_mask)
+	if idx >= 0:
+		return Vector3i(1, idx, w.enemy_id[idx])
+	return Vector3i.ZERO
+
+
+## Lower is better: distance (nearest), hp (weakest) or -hp (strongest).
+static func _prio_score(pick: int, d2: float, hp: float) -> float:
+	if pick == 1:
+		return hp
+	if pick == 2:
+		return -hp
+	return d2
+
+
+## Nearest live alien anywhere whose priority type is not in off_mask (bit per Doctrine.PRIO_TYPES), or -1.
+static func _nearest_not_off(w: SimWorld, p: Vector2, off_mask: int) -> int:
+	var best: int = -1
+	var best_d2: float = INF
+	for j in w.enemy_count:
+		if w.enemy_hp[j] <= 0.0 or (off_mask >> Doctrine.prio_index_of_kind(w.enemy_kind[j])) & 1 != 0:
+			continue
+		var d2: float = p.distance_squared_to(w.enemy_pos[j])
+		if d2 < best_d2:
+			best_d2 = d2
+			best = j
+	return best
 
 
 ## Weapon targeting: "follow" shares the rig's target (tk = 0); any other mode keeps its own target
@@ -129,7 +232,7 @@ static func update_weapon_target(w: SimWorld, v: SimVehicle, wp: Dictionary, slo
 		wp["tp"] = p[0]
 		wp["tv"] = p[1]
 		return
-	var t: Vector3i = find_target(w, v, mode, float(wp["range"]))
+	var t: Vector3i = find_target(w, v, mode, float(wp["range"]), str(wp["kind"]))
 	wp["tk"] = t.x
 	wp["ti"] = t.y
 	wp["tid"] = t.z
@@ -232,7 +335,20 @@ static func steer(w: SimWorld, v: SimVehicle) -> void:
 	var speed: float = SPEED_CIRCLE
 	v.ram_damage = 0.0
 	v.ramming = false
-	if v.target_kind != 0:
+	var goal: int = Zones.goal_zone(w, v) if drive == "zone" else -1
+	if goal >= 0:
+		# Zone drive: head for the centre of the goal zone, then orbit it while the guns keep firing at the target.
+		var zc: Vector2 = w.zones[goal]["pos"]
+		var to_z: Vector2 = zc - v.pos
+		var dz: float = to_z.length()
+		var uz: Vector2 = to_z / maxf(dz, 0.001)
+		var orbit_r: float = Zones.ZONE_RADIUS * 0.45
+		if dz > Zones.ZONE_RADIUS * 0.6:
+			desired = uz
+		else:
+			desired = Vector2(-uz.y, uz.x) * v.orbit_dir + uz * clampf((dz - orbit_r) / orbit_r, -1.0, 1.0)
+		speed = SPEED_ZONE
+	elif v.target_kind != 0:
 		var to_t: Vector2 = v.target_pos - v.pos
 		var d: float = to_t.length()
 		var u: Vector2 = to_t / maxf(d, 0.001)

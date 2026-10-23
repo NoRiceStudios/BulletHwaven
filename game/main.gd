@@ -24,14 +24,16 @@ const NET_SESSION_PATH := "res://net/net_session.gd"
 const LAN_DISCOVERY_PATH := "res://net/lan_discovery.gd"
 const PROFILE_PATH := "user://profile.cfg"
 const PORT := 24680
-const DRIVE_KEYS := {KEY_1: "circle", KEY_2: "kite", KEY_3: "charge"}
+const DRIVE_KEYS := {KEY_1: "circle", KEY_2: "kite", KEY_3: "charge", KEY_4: "zone"}
 const TARGET_KEYS := {KEY_Q: "nearest", KEY_W: "strongest", KEY_E: "players_first"}
 const ABILITY_KEYS := {KEY_F: 0, KEY_G: 1}  ## cast the ability in slot 0 / 1 by hand
+const RADIO_KEYS := {KEY_Z: "fall_back", KEY_X: "all_in", KEY_C: "hold", KEY_V: "boss"}  ## radio commands (Orders)
 const DEMO_TICKS := 30 * 120  ## the menu's attract battle restarts after this many ticks
 
 @onready var _view: WorldView = $Stage/World/WorldView
 
 var _menu: MenuUi = null
+var _audio: AudioDirector = null  ## music and sound effects (not in screenshot mode)
 ## The NetSession and LanDiscovery, loaded by path so screenshot mode never depends on game/net.
 ## Each is created once and reused (the session must keep its node path for RPCs).
 var _session: Node = null
@@ -53,6 +55,12 @@ func _ready() -> void:
 		return
 	_fast = args.has("fast")
 	_load_profile()
+	_audio = AudioDirector.new()
+	_audio.view = _view
+	_view.get_viewport().audio_listener_enable_2d = true  # the world camera is the ear for positional sounds
+	_view.add_child(_audio)
+	_menu.audio_levels = _audio.levels
+	_menu.audio_muted = _audio.muted
 	_menu.action.connect(_on_menu_action)
 	_view.game_over.quit = _leave_to_menu
 	if args.has("host") or args.has("join") or args.has("solo"):
@@ -154,7 +162,16 @@ func _beacon() -> void:
 # ---------------------------------------------------------------- menu actions
 
 func _on_menu_action(act: String, arg: Variant) -> void:
+	if _audio != null and act not in ["volume", "mute"]:
+		_audio.play("ui_click")
 	match act:
+		"volume":  # [key, level]
+			var va: Array = arg
+			_audio.set_level(str(va[0]), float(va[1]))
+			_audio.play("ui_click")
+		"mute":
+			_audio.set_muted(not _audio.muted)
+			_menu.audio_muted = _audio.muted
 		"solo":
 			if _ensure_session():
 				_solo = true
@@ -368,7 +385,10 @@ func _enter_match(host: bool) -> void:
 	_menu.screen = MenuUi.Screen.NONE
 	_view.attract = false
 	_view.ui_visible = true
-	_view.workshop.send_command = func(cmd: Dictionary) -> void: _session.call("send_command", cmd)
+	_view.workshop.send_command = func(cmd: Dictionary) -> void:
+		_session.call("send_command", cmd)
+		if _audio != null:
+			_audio.on_command(cmd)
 	if host:
 		_view.game_over.restart = func() -> void: _session.call("rematch")
 		_view.game_over.restart_label = "RESTART" if _solo else "REMATCH"
@@ -395,6 +415,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		_session.call("send_command", {"type": "set_drive", "value": DRIVE_KEYS[key]})
 	elif TARGET_KEYS.has(key):
 		_session.call("send_command", {"type": "set_target", "value": TARGET_KEYS[key]})
+	elif RADIO_KEYS.has(key):
+		_view.hud().radio(RADIO_KEYS[key])
 	elif ABILITY_KEYS.has(key):
 		var me: SimVehicle = w.get_vehicle_for_peer(int(_session.call("local_peer_id")))
 		if me != null and me.abilities[ABILITY_KEYS[key]] != "":
@@ -503,6 +525,9 @@ func _run_shot(args: Dictionary) -> void:
 	_view.rules.use_real_pointer = false
 	_view.rules.pointer_override = hover
 	_menu.pointer_override = hover
+	_view.hud().pointer_override = hover
+	if ui.has("picker"):
+		_view.hud().picker_open = true
 	if ui.has("rules"):
 		_view.rules.open(str(ui["rules"]))
 	if ui.has("workshop_tab"):
@@ -521,6 +546,8 @@ func _run_shot(args: Dictionary) -> void:
 				ok = _view.workshop.click_at(p)  # forwards to the embedded rule editor in the RULES view
 			elif _view.rules.is_open:
 				ok = _view.rules.click_at(p)
+			else:
+				ok = _view.hud().click_at(p)
 			print("SHOT_CLICK %s -> %s" % [spec, "hit" if ok else "miss"])
 			await get_tree().process_frame
 			await get_tree().process_frame
@@ -622,6 +649,7 @@ func _replay_frame(w: SimWorld, history: Array, f: Dictionary) -> bool:
 	_view.workshop.use_real_pointer = false
 	_menu.use_real_pointer = false
 	_view.workshop.pointer_override = Vector2(-1, -1)
+	_view.hud().pointer_override = Vector2(-1, -1)
 	_menu.pointer_override = Vector2(-1, -1)
 	for i in 4:
 		await get_tree().process_frame

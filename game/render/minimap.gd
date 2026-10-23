@@ -3,7 +3,7 @@ extends Control
 ## Combat minimap (playtest round 3): a riveted plate in the bottom-right corner with the whole arena
 ## scaled to fit. Shows the alien density (cyan, the only cold colour), every rig still in the game in
 ## its paint (the watched one as a heading arrow, the bounty leader ringed in hazard yellow, shielded
-## rigs blinking warm, respawning rigs hollow), a fire ping where a rig was just wrecked and the
+## rigs blinking warm, respawning rigs hollow), the PvP control zones as rings in their owner's paint, a fire ping where a rig was just wrecked and the
 ## camera's view as a bone-white frame. Scales with whatever arena the sim uses, so a bigger map only
 ## changes the scale factor. M toggles it (kept in user://profile.cfg [ui] minimap); a click on it
 ## while spectating watches the rig nearest that spot. Reads sim state and the WorldView only.
@@ -136,6 +136,7 @@ func _draw() -> void:
 	_draw_hive(w, a, inner)
 	_draw_camera(a, inner)
 	_draw_pings(w, a, inner)
+	_draw_zones(w, a, inner)
 	_draw_rigs(w, a, inner)
 
 
@@ -203,6 +204,35 @@ func _draw_pings(w: SimWorld, a: Rect2, inner: Rect2) -> void:
 		var rad: float = 2.0 + floorf(float(age) / 10.0)
 		var col: Color = Color(Gfx.FIRE[4] if age < 20 else Gfx.FIRE[3], 1.0 - float(age) / float(PING_TICKS))
 		UiKit.outline_rect(self, Rect2(p - Vector2(rad, rad), Vector2(rad, rad) * 2.0 + Vector2.ONE), col)
+
+
+## PvP control zones: a ring of the zone's size in the owner's paint (bone when free, dim steel while locked)
+## with a dark rim, the capturer's paint blinking in while it is being taken, hazard yellow while contested.
+func _draw_zones(w: SimWorld, a: Rect2, inner: Rect2) -> void:
+	for z: Dictionary in w.zones:
+		var c: Vector2 = to_map(z["pos"], a, inner)
+		var rad: float = maxf(roundf(Zones.ZONE_RADIUS * inner.size.x / a.size.x), 3.0)
+		var owner: SimVehicle = UiKit.vehicle_by_id(w, int(z["owner"]))
+		var col: Color = UiKit.bar_color(owner.color_index) if owner != null else Gfx.BONE_LIGHT
+		if not w.zones_active:
+			col = Color(Gfx.STEEL[4], 0.8)
+		elif bool(z["contested"]):
+			col = Gfx.HAZARD if (w.tick / 6) % 2 == 0 else Gfx.UI_BAD
+		elif Zones.progress(z) > 0.0 and (w.tick / 8) % 2 == 0:
+			var cap: SimVehicle = UiKit.vehicle_by_id(w, int(z["cap_id"]))
+			if cap != null:
+				col = UiKit.bar_color(cap.color_index)
+		var n: int = int(TAU * rad * 1.5)
+		var pts: Dictionary = {}
+		for i in n:
+			var ang: float = TAU * float(i) / float(n)
+			pts[Vector2i((c + Vector2(cos(ang), sin(ang)) * rad).round())] = true
+		for p: Vector2i in pts:
+			draw_rect(Rect2(Vector2(p) + Vector2(1, 1), Vector2.ONE), Color(Gfx.OUTLINE, 0.8))
+		for p: Vector2i in pts:
+			draw_rect(Rect2(Vector2(p), Vector2.ONE), col)
+		draw_rect(Rect2(c - Vector2(1, 1), Vector2(3, 3)), Gfx.OUTLINE)
+		draw_rect(Rect2(c, Vector2.ONE), col)
 
 
 ## Rigs in the game: paint dots with a dark outline (hollow while respawning, a warm blink while

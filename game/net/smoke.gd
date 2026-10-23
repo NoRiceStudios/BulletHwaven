@@ -21,6 +21,7 @@ var _found: Array[String] = []
 var _found_states: Array[String] = []
 var _match: bool = false
 var _ready_sent: bool = false
+var _ready_cmd_ms: int = 0
 var _lobby_at_start: Array = []  # host: roster when it pressed start; client: roster at match_started
 var _rejected: String = ""
 var _lan_error: int = OK
@@ -100,6 +101,11 @@ func _process(_delta: float) -> bool:
 	if _role == "client" and _connected and not _match and not _ready_sent and not _session.local_player().is_empty():
 		_ready_sent = true
 		_session.set_lobby_ready(true)
+	if (_role == "client" or _role == "host") and _match and _session.world != null and _session.world.phase == SimWorld.PHASE_DEPLOY and now - _ready_cmd_ms >= 1000:
+		_ready_cmd_ms = now  # skip the deploy phase once the doctrine is set (the client's set_drive precedes this)
+		var me: SimVehicle = _session.world.get_vehicle_for_peer(_session.local_peer_id())
+		if _role == "host" or (me != null and me.doctrine.get("drive", "") == "kite"):
+			_session.send_command({"type": "ready"})
 	if _role == "client" and _match and _session.world != null:
 		# Send the command once the match runs, then retry once a second until it is visible.
 		var mine: SimVehicle = _session.world.get_vehicle_for_peer(_session.local_peer_id())

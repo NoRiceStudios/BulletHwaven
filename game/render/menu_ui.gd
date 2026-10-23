@@ -44,6 +44,9 @@ var status_error: bool = true
 var busy: String = ""  ## e.g. "CONNECTING TO 10.0.0.4" (join screen)
 var pause_solo: bool = true  ## pause screen: the sim really pauses (solo) or keeps running (LAN)
 var ip_text: String = ""
+## Audio settings shown on the main and pause screens (the AudioDirector's own dictionary, 0..1 per key).
+var audio_levels: Dictionary = {"master": 0.8, "music": 0.7, "sfx": 0.8}
+var audio_muted: bool = false
 
 ## Screenshot mode: fixed pointer position instead of the real mouse (x < 0 = no pointer).
 var pointer_override: Vector2 = Vector2(-1, -1)
@@ -204,6 +207,11 @@ func click_at(p: Vector2) -> bool:
 
 
 func activate(act: String, arg: Variant) -> void:
+	if act == "vol_step":  # [key, +1 / -1]: keeps the keyboard selection on the button
+		var a: Array = arg
+		var lv: float = AudioDirector.clamp_level(float(audio_levels.get(a[0], 0.0)) + 0.1 * float(a[1]))
+		action.emit("volume", [a[0], lv])
+		return
 	_sel = -1
 	if act == "color":
 		var c: int = int(arg)
@@ -357,6 +365,7 @@ func _draw_main(vs: Vector2) -> void:
 		_button(Rect2(bx, by, 176, h), it[0], it[1], it[2], null, true, it[2] == "solo")
 		by += h + 7.0
 	_status_line(bx + 88.0, by + 2.0)
+	_audio_panel(Rect2(bx, vs.y - 86, 176, 66), true)
 	_profile_panel(Rect2(vs.x - PANEL_W - 18, 96, PANEL_W, 196), {})
 	_footer(vs, "MOUSE OR ARROWS + ENTER    CLICK THE NAME TO TYPE")
 
@@ -577,7 +586,7 @@ func _draw_lobby(vs: Vector2) -> void:
 func _draw_pause(vs: Vector2) -> void:
 	draw_rect(Rect2(Vector2.ZERO, vs), Color(0.07, 0.045, 0.05, 0.6))
 	var cx: float = floorf(vs.x / 2.0)
-	var r := Rect2(cx - 130, 62, 260, 214)
+	var r := Rect2(cx - 130, 40, 260, 288)
 	UiKit.plate(self, r)
 	UiKit.hazard_band(self, Rect2(r.position.x + 5, r.position.y + 5, r.size.x - 10, 5))
 	UiKit.center_big(self, "PAUSED" if pause_solo else "MENU", cx, r.position.y + 18, Gfx.UI_TEXT, Gfx.OUTLINE, 2)
@@ -586,7 +595,8 @@ func _draw_pause(vs: Vector2) -> void:
 	_button(Rect2(cx - 90, r.position.y + 52, 180, BUTTON_H), "RESUME", "ESC", "resume", null, true, true)
 	_button(Rect2(cx - 90, r.position.y + 82, 180, BUTTON_H), "LEAVE TO MENU", "ABANDON THIS RUN" if pause_solo else "DISCONNECT FROM THE CONVOY", "leave_match")
 	# controls card on the salvaged terminal
-	var crt := Rect2(r.position.x + 10, r.position.y + 116, r.size.x - 20, r.size.y - 126)
+	_audio_panel(Rect2(cx - 90, r.position.y + 114, 180, 66), false)
+	var crt := Rect2(r.position.x + 10, r.position.y + 188, r.size.x - 20, r.size.y - 198)
 	UiKit.steel(self, crt)
 	var scr: Rect2 = crt.grow(-4.0)
 	draw_rect(scr, Gfx.CRT_BG)
@@ -611,3 +621,50 @@ func _draw_pause(vs: Vector2) -> void:
 		y += 9.0
 	for sy in range(int(scr.position.y), int(scr.end.y), 2):
 		draw_rect(Rect2(scr.position.x, sy, scr.size.x, 1), Color(0, 0, 0, 0.16))
+
+
+# ---------------------------------------------------------------- audio settings
+
+## MASTER / MUSIC / EFFECTS level rows (- bar +) and a mute toggle. The bar's segments are clickable;
+## the - / + buttons are keyboard stops. `backdrop`: draw a dark plate first (main menu, over the battle).
+func _audio_panel(r: Rect2, backdrop: bool) -> void:
+	if backdrop:
+		draw_rect(r.grow(4.0), Color(0.07, 0.045, 0.05, 0.55))
+	var rows: Array = [["master", "MASTER"], ["music", "MUSIC"], ["sfx", "EFFECTS"]]
+	var y: float = r.position.y
+	var bar_x: float = r.position.x + 62.0
+	var seg_w: float = 7.0
+	for row: Array in rows:
+		var key: String = row[0]
+		var lv: float = float(audio_levels.get(key, 0.0))
+		UiFont.draw(self, str(row[1]), Vector2(r.position.x, y + 2), Gfx.UI_DIM if audio_muted else Gfx.UI_TEXT, Gfx.OUTLINE)
+		_step_button(Rect2(bar_x - 14, y, 11, 11), "-", [key, -1])
+		var filled: int = int(roundf(lv * AudioDirector.LEVEL_STEPS))
+		for i in AudioDirector.LEVEL_STEPS:
+			var sr := Rect2(bar_x + float(i) * (seg_w + 1.0), y + 1, seg_w, 9)
+			var on: bool = i < filled
+			var col: Color = (Gfx.FIRE[4] if i < 7 else Gfx.FIRE[3]) if on else Color(0.12, 0.08, 0.07)
+			if audio_muted and on:
+				col = Gfx.UI_DIM.darkened(0.3)
+			draw_rect(sr, Gfx.OUTLINE)
+			draw_rect(sr.grow(-1.0), col)
+			# a click on segment i sets the level to (i + 1) tenths; on the first lit segment of a 0.1 level, to 0
+			var target: float = float(i + 1) / float(AudioDirector.LEVEL_STEPS)
+			if i == 0 and filled == 1:
+				target = 0.0
+			_hits.append([Rect2(sr.position.x, y, seg_w + 1.0, 11), "volume", [key, target], true])
+		var end_x: float = bar_x + float(AudioDirector.LEVEL_STEPS) * (seg_w + 1.0) + 2.0
+		_step_button(Rect2(end_x, y, 11, 11), "+", [key, 1])
+		UiFont.draw(self, "%d%%" % int(roundf(lv * 100.0)), Vector2(end_x + 16, y + 2), Gfx.UI_DIM, Gfx.OUTLINE)
+		y += 14.0
+	_button(Rect2(r.position.x, y + 1, r.size.x, 18), "SOUND OFF - UNMUTE" if audio_muted else "MUTE ALL SOUND", "", "mute", null, true, audio_muted)
+
+
+func _step_button(r: Rect2, label: String, arg: Array) -> void:
+	var hot: bool = _is_hot("vol_step", arg)
+	UiKit.steel(self, r, Color(0.92, 0.9, 0.9) if hot else Color(0.7, 0.67, 0.67))
+	if hot:
+		UiKit.outline_rect(self, r, Gfx.FIRE[4])
+	UiKit.center_text(self, label, r.get_center().x, r.position.y + 2, Gfx.FIRE[5] if hot else Gfx.UI_TEXT, Gfx.OUTLINE)
+	_hits.append([r, "vol_step", arg, true])
+	_nav.append(["vol_step", arg])

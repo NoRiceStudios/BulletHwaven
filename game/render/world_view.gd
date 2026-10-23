@@ -53,6 +53,7 @@ var juice: JuiceState = JuiceState.new()
 var _labels: Node2D
 var _camera: Camera2D
 var _hud: Hud
+var rules_live: RulesLive  ## live rule monitor on the right edge (combat, L toggles)
 var minimap: Minimap
 var _hud_layer: CanvasLayer
 var workshop: WorkshopUi
@@ -62,6 +63,7 @@ var _cam_lift: float = 0.0
 var _shake: float = 0.0  ## 0..1, screen shake from rigs blowing up (decays; never in screenshot mode)
 var _shake_t: float = 0.0
 var _ring: Node2D
+var zones: ZoneView  ## PvP control zones on the ground (beacons, stakes, capture arcs)
 ## world.tick at which PvP last switched on (-1 = not seen): the HUD's "PVP ON" banner.
 var pvp_on_tick: int = -1
 var _pvp_prev: bool = false
@@ -72,6 +74,9 @@ var _pvp_prev: bool = false
 var kill_log: Array[Dictionary] = []
 var wreck_log: Array[Dictionary] = []
 var drain_log: Array[Dictionary] = []
+## PvP control zones (sim/zones.gd events): captures and the zone king bonus, for the feed and the recap.
+var zone_log: Array[Dictionary] = []
+var zones_open_tick: int = -1  ## tick of the last "zones_open" (the HUD's CONTROL ZONES OPEN banner)
 const LOG_CAP := 96
 ## Spectator mode (local rig eliminated): vehicle id picked with Tab / arrows (-1 = auto: the
 ## nearest fight, else the leader). The auto choice is re-evaluated every SPECTATE_RECHECK ticks.
@@ -130,6 +135,10 @@ func _ready() -> void:
 	_ring.z_index = Gfx.Z_RING
 	_ring.draw.connect(_draw_ring)
 	add_child(_ring)
+
+	zones = ZoneView.new()
+	zones.view = self
+	add_child(zones)
 
 	var kinds: Array = [  # [texture, glow, rows, shadow offset, shadow alpha] per SimWorld enemy kind
 		[Gfx.TEX_MITE, Gfx.TEX_MITE_GLOW, 2, Vector2(1, 2), 0.45],
@@ -216,6 +225,9 @@ func _ready() -> void:
 	minimap = Minimap.new()
 	minimap.view = self
 	hud_layer.add_child(minimap)
+	rules_live = RulesLive.new()
+	rules_live.view = self
+	hud_layer.add_child(rules_live)
 	workshop = WorkshopUi.new()
 	workshop.view = self
 	hud_layer.add_child(workshop)
@@ -229,6 +241,20 @@ func _ready() -> void:
 	hud_layer.add_child(rules)
 	workshop.rules = rules
 	rules.workshop = workshop
+
+
+func hud() -> Hud:
+	return _hud
+
+
+## Viewport / HUD position of the world point `p`.
+func to_screen(p: Vector2) -> Vector2:
+	return (get_viewport().get_canvas_transform() * Gfx.snap(p)).floor()
+
+
+## World position under `p`, a point in viewport / HUD units (the inverse of screen_pos).
+func world_at(p: Vector2) -> Vector2:
+	return get_viewport().get_canvas_transform().affine_inverse() * p
 
 
 ## Shows `w` from the point of view of `peer` (camera, HUD). Clears all marks of a previous world.
@@ -250,6 +276,7 @@ func set_world(w: SimWorld, peer: int) -> void:
 	_kill_fx.clear()
 	_boss_view.clear()
 	_species.clear()
+	zones.clear()
 	juice.reset()
 	_hit_cells.clear()
 	_shells_prev.clear()
@@ -261,6 +288,8 @@ func set_world(w: SimWorld, peer: int) -> void:
 	kill_log.clear()
 	wreck_log.clear()
 	drain_log.clear()
+	zone_log.clear()
+	zones_open_tick = -1
 	spectate_id = -1
 	_auto_id = -1
 	_auto_tick = -100000
@@ -348,6 +377,7 @@ func _process(delta: float) -> void:
 	_update_enemies(lead, k)
 	_update_projectiles(lead)
 	_combat.update(world)
+	zones.update(world)
 	_update_camera(1.0 if frozen else 1.0 - exp(-CAM_EASE * delta))
 	if not frozen:
 		_shake = maxf(0.0, _shake - delta * 2.2)
@@ -711,6 +741,9 @@ func _consume_events(events: Array, age: float, transient: bool, tick: int = -1,
 	juice.set_focus(fv0.id if fv0 != null else -1)
 	for e: Dictionary in events:
 		_log_event(e, tick, rnd)
+		zones.note_event(e, tick)
+		if transient and str(e.get("type", "")) == "zone_bonus":
+			_zone_king_toast(e)
 		var pos: Vector2 = e.get("pos", Vector2.ZERO)
 		var owner: int = int(e.get("owner", -1))
 		var kind: int = int(e.get("kind", -1))
@@ -846,7 +879,7 @@ func _consume_events(events: Array, age: float, transient: bool, tick: int = -1,
 						_shake = 1.0
 
 
-## Books kills, wrecks and fuel drains for the UI (feed, recap). `tick` / `rnd`: when it happened.
+## Books kills, wrecks, fuel drains and zone captures for the UI (feed, recap). `tick` / `rnd`: when it happened.
 func _log_event(e: Dictionary, tick: int, rnd: int) -> void:
 	var type: String = str(e.get("type", ""))
 	var log: Array[Dictionary]
@@ -863,6 +896,15 @@ func _log_event(e: Dictionary, tick: int, rnd: int) -> void:
 		"drain":
 			entry.merge({"id": int(e.get("owner", -1)), "amount": int(e.get("kind", 0))})
 			log = drain_log
+		"zone_captured":
+			entry.merge({"type": "captured", "owner": int(e.get("owner", -1)), "zone": int(e.get("kind", -1)), "prev": int(e.get("prev", -1))})
+			log = zone_log
+		"zone_bonus":
+			entry.merge({"type": "bonus", "owner": int(e.get("owner", -1)), "fuel": int(e.get("kind", 0))})
+			log = zone_log
+		"zones_open":
+			zones_open_tick = tick
+			return
 		_:
 			return
 	log.append(entry)
@@ -1091,6 +1133,27 @@ func spectating() -> bool:
 
 
 ## Tick of the latest "vehicle_destroyed" of vehicle `id` seen (very old if none).
+## Fuel vehicle `id` got as zone king at the end of round `rnd` (0 = none), from the zone log.
+func zone_bonus_for(id: int, rnd: int) -> int:
+	for i in range(zone_log.size() - 1, -1, -1):
+		var e: Dictionary = zone_log[i]
+		if str(e["type"]) == "bonus" and int(e["owner"]) == id and int(e["round"]) == rnd:
+			return int(e["fuel"])
+	return 0
+
+
+## The round's best zone holder gets fuel as the workshop opens: a toast there.
+func _zone_king_toast(e: Dictionary) -> void:
+	var v: SimVehicle = _vehicle(int(e.get("owner", -1)))
+	if v == null or workshop == null:
+		return
+	var fuel: int = int(e.get("kind", 0))
+	if v.peer_id == local_peer:
+		workshop.say("ZONE KING - YOU HELD THE MOST GROUND: +%d FUEL" % fuel)
+	else:
+		workshop.say("%s IS ZONE KING: +%d FUEL" % [UiKit.player_name(v), fuel])
+
+
 func last_wreck_tick(id: int) -> int:
 	for i in range(wreck_log.size() - 1, -1, -1):
 		if int(wreck_log[i]["id"]) == id:

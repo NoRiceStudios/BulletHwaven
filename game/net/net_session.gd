@@ -34,13 +34,14 @@ const MAX_RAW_NAME := 64  ## longer raw names are junk and rejected; shorter one
 
 ## Allow-list of client commands with a fixed set of string values: type -> permitted values.
 const COMMANDS := {
-	"set_drive": ["circle", "kite", "charge"],
+	"set_drive": Doctrine.BASE_DRIVES,
 	"set_target": Doctrine.RIG_TARGETS,
 	"use_ability": Abilities.IDS,
 }
 ## Commands without a value (any "value" key is dropped).
 const VALUELESS_COMMANDS: PackedStringArray = ["reroll", "ready"]
 const LOBBY_COMMANDS: PackedStringArray = ["profile", "lobby_ready"]
+const MARK_MARGIN := 64.0  ## "mark" points may lie this far outside the arena
 const OFFER_SLOTS := Cards.OFFER_COUNT + 1  ## pick_card / reserve_card take an offer index 0..OFFER_SLOTS-1 (a lucky strike adds a fourth offer)
 
 enum Mode { NONE, SOLO, HOST, CLIENT }
@@ -320,6 +321,19 @@ static func validate_command(cmd: Variant) -> Dictionary:
 		if parsed == null:
 			return {}
 		return {"type": type_s, "scope": scope_s, "value": Doctrine.encode(parsed)}
+	if type_s == "set_priority":  # {"scope": "rig" | weapon kind, "value": priority text; "" = a weapon follows the rig}
+		var pscope: Variant = d.get("scope")
+		if typeof(pscope) != TYPE_STRING or typeof(v) != TYPE_STRING:
+			return {}
+		var pscope_s: String = pscope
+		if pscope_s != Doctrine.SCOPE_RIG and not Doctrine.is_weapon_scope(pscope_s):
+			return {}
+		if String(v) == "" and pscope_s != Doctrine.SCOPE_RIG:
+			return {"type": type_s, "scope": pscope_s, "value": ""}
+		var pp: Variant = Doctrine.parse_priority(String(v))
+		if pp == null:
+			return {}
+		return {"type": type_s, "scope": pscope_s, "value": Doctrine.encode_priority(pp)}
 	if type_s == "set_ammo":  # {"scope": weapon kind, "value": ammo id} (the sim checks it is unlocked)
 		var ascope: Variant = d.get("scope")
 		if typeof(ascope) != TYPE_STRING or typeof(v) != TYPE_STRING:
@@ -327,6 +341,20 @@ static func validate_command(cmd: Variant) -> Dictionary:
 		if not Doctrine.is_weapon_scope(String(ascope)) or not Ammo.is_valid_id(String(v)):
 			return {}
 		return {"type": type_s, "scope": String(ascope), "value": String(v)}
+	if type_s == "mark":  # {"x": float, "y": float} inside the arena (grown by MARK_MARGIN)
+		var mx: Variant = d.get("x")
+		var my: Variant = d.get("y")
+		if (typeof(mx) != TYPE_INT and typeof(mx) != TYPE_FLOAT) or (typeof(my) != TYPE_INT and typeof(my) != TYPE_FLOAT):
+			return {}
+		var fx: float = float(mx)
+		var fy: float = float(my)
+		if not is_finite(fx) or not is_finite(fy) or not SimWorld.ARENA.grow(MARK_MARGIN).has_point(Vector2(fx, fy)):
+			return {}
+		return {"type": type_s, "x": fx, "y": fy}
+	if type_s == "radio":  # {"value": Orders.RADIO_IDS}
+		if typeof(v) != TYPE_STRING or not Orders.RADIO_IDS.has(String(v)):
+			return {}
+		return {"type": type_s, "value": String(v)}
 	if type_s == "set_ability":  # {"slot": 0..SLOTS-1, "value": ability id} (the sim checks it is unlocked)
 		var slot: int = _small_int(d.get("slot"), Abilities.SLOTS)
 		if slot < 0 or typeof(v) != TYPE_STRING or not Abilities.IDS.has(String(v)):
@@ -668,6 +696,7 @@ func _begin_match() -> void:
 	for i in lobby_players.size():
 		var e: Dictionary = lobby_players[i]
 		world.add_vehicle(int(e["peer_id"]), spawn_position(i), e["name"], int(e["color_index"]))
+	world.begin_deploy()
 	state = State.MATCH
 	_ended = false
 	if _mode == Mode.HOST and _net_ready():
