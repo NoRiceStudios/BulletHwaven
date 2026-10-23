@@ -31,8 +31,9 @@ var weapon_doctrine: Dictionary = {}
 ## Each: {"kind", "damage", "range", "cooldown_ticks" (float, ticks per shot), "cooldown" (float ticks left,
 ## in (-1, 0] it carries the fractional rest into the next shot), "aim", "pellets", "spread",
 ## "pierce", "splash", "speed", "heat", "jam", "sw", "shots"} (see Cards.WEAPONS), plus host-side scratch from the weapon's own
-## doctrine (VehicleAI.update_weapon_target: "tk", "ti", "tid", "tp", "tv", "tmode") and "live", the
-## mask of its matching rules (synced). Rebuilt from the weapon cards by Cards.recompute().
+## doctrine (VehicleAI.update_weapon_target: "tk", "ti", "tid", "tp", "tv", "tmode"), "live", the
+## mask of its matching rules, and the target the gun is on this tick after falling back to the rig's
+## ("ak" kind 0/1/2 as target_kind, "aid" id, "ap" position; synced for the target marks). Rebuilt from the weapon cards by Cards.recompute().
 var weapons: Array[Dictionary] = []
 
 ## Loaded ammo per weapon kind (Ammo): kind -> Array of ammo ids (index 0 = primary, 2 entries with mixed

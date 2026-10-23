@@ -30,7 +30,7 @@ extends RefCounted
 ## current round, SimWorld.enemy_max_hp). Card and tech ids are table indices (Cards.DEFS / Tech.DEFS).
 ## Projectile pierce / splash are not sent: the client world is passive.
 
-const VERSION := 14  # 14: hive signature (header u16), species kinds 3..5 (enemy kind 3 bits, heading 6 bits), taken stats glass / brood / shrieker, events shriek / brood; 13: boss rounds (header boss_first, FLAG_BOSS tail block, boss enemy kinds, boss events); 12: event surge; 11: salvage (contract offers and progress, loan debt, reserved card, bonus offers), events contract_done / saw / shockwave / chain / jerry_blast; 10: momentum, abilities (slots, cooldowns, effect timers, decoy), swarm mark, jam flags, stunned bitset; 9: ammo / heat per weapon, ground zones, burning bitset, float cooldowns; 8: tech v2.3 (dormant fusions, respecs, purchase rounds); 7: doctrine rules (rig + per weapon); 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
+const VERSION := 15  # 15: per-weapon target (weapon ak u8 / aid s32 / ap 2 x f32, target marks); 14: hive signature (header u16), species kinds 3..5 (enemy kind 3 bits, heading 6 bits), taken stats glass / brood / shrieker, events shriek / brood; 13: boss rounds (header boss_first, FLAG_BOSS tail block, boss enemy kinds, boss events); 12: event surge; 11: salvage (contract offers and progress, loan debt, reserved card, bonus offers), events contract_done / saw / shockwave / chain / jerry_blast; 10: momentum, abilities (slots, cooldowns, effect timers, decoy), swarm mark, jam flags, stunned bitset; 9: ammo / heat per weapon, ground zones, burning bitset, float cooldowns; 8: tech v2.3 (dormant fusions, respecs, purchase rounds); 7: doctrine rules (rig + per weapon); 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
 const FLAG_WIDE_IDS := 1  ## enemy ids spread over more than 65535: ids are sent as u32 deltas from 0
 const FLAG_STATS := 2  ## vehicles carry round_stats and match_stats (sent outside combat only)
 const FLAG_BURNING := 4  ## a burning bitset follows the projectiles (only sent while something burns)
@@ -570,6 +570,11 @@ static func _put_vehicle(sp: StreamPeerBuffer, v: SimVehicle, with_stats: bool =
 		sp.put_u8(clampi(int(w.get("heat", 0)), 0, 255))
 		sp.put_u8(clampi(int(w.get("jam", 0)), 0, 255))
 		sp.put_u8(clampi(int(w.get("sw", 0)), 0, 255))
+		sp.put_u8(clampi(int(w.get("ak", 0)), 0, 255))
+		sp.put_32(int(w.get("aid", -1)))
+		var ap: Vector2 = w.get("ap", Vector2.ZERO)
+		sp.put_float(ap.x)
+		sp.put_float(ap.y)
 		var wammo: Array = v.ammo.get(str(w.get("kind", "")), [])
 		for ai in 2:
 			sp.put_u8(Ammo.IDS.find(str(wammo[ai])) if ai < wammo.size() else 255)
@@ -915,6 +920,9 @@ static func _get_vehicle(r: _Reader, with_stats: bool = false) -> SimVehicle:
 		var wheat: int = r.u8()
 		var wjam: int = r.u8()
 		var wsw: int = r.u8()
+		var wak: int = r.u8()
+		var waid: int = r.s32()
+		var wap := Vector2(r.f32(), r.f32())
 		var wammo: Array[String] = []
 		for ai in 2:
 			var aix: int = r.u8()
@@ -927,6 +935,7 @@ static func _get_vehicle(r: _Reader, with_stats: bool = false) -> SimVehicle:
 			"kind": kind, "damage": dmg, "range": rng, "cooldown_ticks": cdt, "cooldown": cd, "aim": aim,
 			"pellets": pellets, "spread": spread, "pierce": pierce, "splash": splash, "speed": wspeed,
 			"live": wlive, "heat": wheat, "jam": wjam, "sw": wsw, "shots": 0,
+			"ak": wak, "aid": waid, "ap": wap,
 		})
 	v.rule_live = r.u8()
 	v.rules = _get_rules(r, Doctrine.SCOPE_RIG)

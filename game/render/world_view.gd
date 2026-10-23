@@ -54,6 +54,7 @@ var _labels: Node2D
 var _camera: Camera2D
 var _hud: Hud
 var minimap: Minimap
+var targets: TargetMarks  ## what the watched rig and each of its guns are on (T)
 var _hud_layer: CanvasLayer
 var workshop: WorkshopUi
 var game_over: GameOverUi
@@ -180,6 +181,9 @@ func _ready() -> void:
 	_combat = CombatFx.new()
 	_combat.view = self
 	add_child(_combat)
+	targets = TargetMarks.new()
+	targets.view = self
+	add_child(targets)
 
 	_kill_fx = KillFx.new()
 	_kill_fx.view = self
@@ -458,6 +462,14 @@ func display(v: SimVehicle) -> Vector3:
 func display_pos(v: SimVehicle) -> Vector2:
 	var d: Vector3 = _vehicle_display(v)
 	return Gfx.snap(Vector2(d.x, d.y))
+
+
+## Where the alien with stable id `id` is drawn this frame (`fallback` if it is not drawn).
+func enemy_display_pos(id: int, fallback: Vector2) -> Vector2:
+	var d: Variant = _enemy_disp.get(id)
+	if d == null:
+		return fallback
+	return Vector2((d as Vector3).x, (d as Vector3).y)
 
 
 ## A persistent ground mark: cell `col` of a one-row decal sheet with `cols` cells.

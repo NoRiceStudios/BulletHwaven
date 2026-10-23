@@ -360,6 +360,8 @@ In a bullet heaven there are hundreds of objects on screen at once, so the palet
 | **Player projectiles** | Warm: yellow/orange tracers, muzzle flashes |
 | **Alien projectiles** | Cold: acid green/cyan. They're **never** warm, so you instantly know what's dangerous |
 
+**Target marks:** in combat the player always sees what their rig is doing. Every gun brackets its current target in its own warm colour (with a dotted aim line while the target is in reach), and the rig's own target, the one its drive circles, charges or flees from, carries a pin and a dashed ring in the rig's paint. `T` hides them.
+
 **Core rule:** at rest, the aliens are part of the planet. In action, they glow. That serves both the fantasy ("they fit into the environment") and the gameplay (readability).
 
 ### 11d. Alien design: biology from the desert

@@ -88,7 +88,7 @@ const NAMES: PackedStringArray = ["skirmish", "horde", "workshop", "tech_tree", 
 	"recap", "recap_pvp", "scouting", "combat_feed", "pvp_grace", "spectator", "spectator_ws", "awards",
 	"tech_mid", "tech_swap", "workshop_mid", "tech_beginner", "fx_firebrand", "fx_fortress", "fx_scrapper",
 	"fx_chassis", "fx_ram", "juice", "juice_surge", "evo_combat", "evo_flip", "evo_workshop", "evo_moment", "boss_tripod", "boss_colossus", "boss_shards",
-	"boss_warning", "boss_enraged", "boss_spawn", "boss_phase", "boss_kill", "boss_kill_colossus", "boss_retreat", "species", "hive"]
+	"boss_warning", "boss_enraged", "boss_spawn", "boss_phase", "boss_kill", "boss_kill_colossus", "boss_retreat", "species", "hive", "targets"]
 const EVO_FLIP_TICK := 90
 const EVO_PICK_DELAY := 30
 const JUICE_SURGE_TICK := 100
@@ -152,6 +152,8 @@ static func build(name: String, p_seed: int) -> SimWorld:
 			return build("gameover_mp", p_seed)
 		"rules", "rules_weapon":
 			return _programmed(p_seed)
+		"targets":
+			return _targets(p_seed)
 		"rig_growth":
 			return _rig_growth(p_seed)
 		"late_round":
@@ -1233,6 +1235,23 @@ static func _stage_awards(w: SimWorld) -> void:
 
 ## The rule editor (render/doctrine_editor.gd) over a skirmish: a rig with three guns and rules in
 ## several lists, some of them matching (lit lamps).
+## Target marks: three guns on up to three targets (cannon on the strongest, shotgun on the weakest,
+## the mg follows the rig, which circles the nearest).
+static func _targets(p_seed: int) -> SimWorld:
+	var w := SimWorld.new(p_seed)
+	var me: SimVehicle = w.add_vehicle(1, SimWorld.ARENA.get_center(), "MAD MAREK")
+	_scatter(w, 70, 0.15, 0.1, 90.0, 360.0)
+	_tech_up(w, me, ["engineering_frame", "engineering_welder", "engineering_pickup"])
+	_tech_up(w, me, [], {"cannon": 1, "shotgun": 1})
+	for cmd: Dictionary in [
+		{"type": "set_drive", "value": "circle"},
+		{"type": "set_weapon_target", "scope": "cannon", "value": "strongest"},
+		{"type": "set_weapon_target", "scope": "shotgun", "value": "weakest"},
+	]:
+		w.apply_command(me.peer_id, cmd)
+	return w
+
+
 static func _programmed(p_seed: int) -> SimWorld:
 	var w: SimWorld = _skirmish(p_seed)
 	var me: SimVehicle = w.vehicles[0]
