@@ -13,7 +13,7 @@ extends Node
 ##                         through the visible UI's own click path (menu or workshop).
 ##   --scenario=replay --session=<dir> --frames=<frames.json>   (playtest harness, scripts/playtest.sh)
 ## Keys (combat): 1/2/3 drive circle/kite/charge, Q/W/E target nearest/strongest/players_first,
-## P the rule editor (render/doctrine_editor.gd, any phase),
+## P the rule editor (render/doctrine_editor.gd, any phase), R the weapon range rings (render/range_overlay.gd),
 ## Esc the pause / menu overlay (solo pauses the sim). Workshop and game over keys are handled by
 ## render/workshop_ui.gd and render/game_over_ui.gd, menu keys by render/menu_ui.gd.
 ##
@@ -503,6 +503,7 @@ func _run_shot(args: Dictionary) -> void:
 	_view.rules.use_real_pointer = false
 	_view.rules.pointer_override = hover
 	_menu.pointer_override = hover
+	_view.ranges.force = bool(ui.get("ranges", false))
 	if ui.has("rules"):
 		_view.rules.open(str(ui["rules"]))
 	if ui.has("workshop_tab"):

@@ -54,6 +54,7 @@ var _labels: Node2D
 var _camera: Camera2D
 var _hud: Hud
 var minimap: Minimap
+var ranges: RangeOverlay  ## weapon range rings around the watched rig (R)
 var _hud_layer: CanvasLayer
 var workshop: WorkshopUi
 var game_over: GameOverUi
@@ -210,6 +211,9 @@ func _ready() -> void:
 		owner.add_child.call_deferred(hud_layer)
 	else:
 		add_child(hud_layer)
+	ranges = RangeOverlay.new()  # under the HUD panels
+	ranges.view = self
+	hud_layer.add_child(ranges)
 	_hud = Hud.new()
 	_hud.view = self
 	hud_layer.add_child(_hud)

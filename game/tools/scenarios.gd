@@ -30,6 +30,8 @@ extends RefCounted
 ##                  The world is not stepped (any ticks), so the line-up stays put.
 ## - "late_round"   (about 240 ticks) round 8: a dense hive of boulders and spitters, corpses piling
 ##                  up, the local rig at low hp (red vignette), rivals with builds and a bounty leader.
+## - "ranges"       (about 60 ticks) the weapon range rings (R) around a rig with all four guns in a
+##                  horde: flamer, scatter gun and machine gun rings, the cannon's reaching off screen.
 ## - "pvp_on"       (about 380 ticks) fast rounds up to the start of round 4: the PVP ON banner.
 ## - "rig_kill"     (about 60 ticks) a rival rig blowing up next to yours (explosion and debris).
 ##
@@ -88,7 +90,7 @@ const NAMES: PackedStringArray = ["skirmish", "horde", "workshop", "tech_tree", 
 	"recap", "recap_pvp", "scouting", "combat_feed", "pvp_grace", "spectator", "spectator_ws", "awards",
 	"tech_mid", "tech_swap", "workshop_mid", "tech_beginner", "fx_firebrand", "fx_fortress", "fx_scrapper",
 	"fx_chassis", "fx_ram", "juice", "juice_surge", "evo_combat", "evo_flip", "evo_workshop", "evo_moment", "boss_tripod", "boss_colossus", "boss_shards",
-	"boss_warning", "boss_enraged", "boss_spawn", "boss_phase", "boss_kill", "boss_kill_colossus", "boss_retreat", "species", "hive"]
+	"boss_warning", "boss_enraged", "boss_spawn", "boss_phase", "boss_kill", "boss_kill_colossus", "boss_retreat", "species", "hive", "ranges"]
 const EVO_FLIP_TICK := 90
 const EVO_PICK_DELAY := 30
 const JUICE_SURGE_TICK := 100
@@ -156,6 +158,10 @@ static func build(name: String, p_seed: int) -> SimWorld:
 			return _rig_growth(p_seed)
 		"late_round":
 			return _late_round(p_seed)
+		"ranges":
+			var wr: SimWorld = _horde(p_seed)
+			_outfit(wr.vehicles[0], 3, {"flamer": 2, "shotgun": 1, "cannon": 2, "mg": 3})
+			return wr
 		"pvp_on":
 			var w4: SimWorld = attract(p_seed)
 			w4.fast_rounds = true
@@ -241,6 +247,8 @@ static func ui_state(name: String) -> Dictionary:
 				"info": "HOSTING ON PORT 24680 - FRIENDS FIND YOU UNDER JOIN LAN GAME"}
 		"pause":
 			return {"screen": "pause", "solo": false}
+		"ranges":
+			return {"ranges": true}
 		"tech_tree":
 			return {"workshop_tab": "tech", "workshop_actions": [["beginner", false]]}
 		"tech_mid":
