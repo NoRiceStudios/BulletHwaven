@@ -15,7 +15,7 @@ extends Node
 ##   --windowed            start in a window (default: fullscreen, toggled with F11 / Alt+Enter and remembered)
 ## Keys (any screen): F11 or Alt+Enter toggles fullscreen.
 ## Keys (combat): 1/2/3 drive circle/kite/charge, Q/W/E target nearest/strongest/players_first,
-## P the rule editor (render/doctrine_editor.gd, any phase),
+## P the rule editor (render/doctrine_editor.gd, any phase), R the weapon range rings (render/range_overlay.gd),
 ## Esc the pause / menu overlay (solo pauses the sim). Workshop and game over keys are handled by
 ## render/workshop_ui.gd and render/game_over_ui.gd, menu keys by render/menu_ui.gd.
 ##
@@ -576,6 +576,7 @@ func _run_shot(args: Dictionary) -> void:
 	_view.hud().pointer_override = hover
 	if ui.has("picker"):
 		_view.hud().picker_open = true
+	_view.ranges.force = bool(ui.get("ranges", false))
 	if ui.has("rules"):
 		_view.rules.open(str(ui["rules"]))
 	if ui.has("workshop_tab"):

@@ -56,6 +56,7 @@ var _hud: Hud
 var rules_live: RulesLive  ## live rule monitor on the right edge (combat, L toggles)
 var minimap: Minimap
 var rig_status: RigStatus  ## the watched rig's guns and active effects (left edge)
+var ranges: RangeOverlay  ## weapon range rings around the watched rig (R)
 var _hud_layer: CanvasLayer
 var workshop: WorkshopUi
 var game_over: GameOverUi
@@ -220,6 +221,9 @@ func _ready() -> void:
 		owner.add_child.call_deferred(hud_layer)
 	else:
 		add_child(hud_layer)
+	ranges = RangeOverlay.new()  # under the HUD panels
+	ranges.view = self
+	hud_layer.add_child(ranges)
 	_hud = Hud.new()
 	_hud.view = self
 	hud_layer.add_child(_hud)
