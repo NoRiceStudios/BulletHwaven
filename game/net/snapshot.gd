@@ -30,7 +30,7 @@ extends RefCounted
 ## current round, SimWorld.enemy_max_hp). Card and tech ids are table indices (Cards.DEFS / Tech.DEFS).
 ## Projectile pierce / splash are not sent: the client world is passive.
 
-const VERSION := 14  # 14: hive signature (header u16), species kinds 3..5 (enemy kind 3 bits, heading 6 bits), taken stats glass / brood / shrieker, events shriek / brood; 13: boss rounds (header boss_first, FLAG_BOSS tail block, boss enemy kinds, boss events); 12: event surge; 11: salvage (contract offers and progress, loan debt, reserved card, bonus offers), events contract_done / saw / shockwave / chain / jerry_blast; 10: momentum, abilities (slots, cooldowns, effect timers, decoy), swarm mark, jam flags, stunned bitset; 9: ammo / heat per weapon, ground zones, burning bitset, float cooldowns; 8: tech v2.3 (dormant fusions, respecs, purchase rounds); 7: doctrine rules (rig + per weapon); 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
+const VERSION := 17  # 17: live condition masks (vehicle rule_conds u32, weapon clive u32); 16: radio commands (vehicle extras byte 2, bit 1: charges / ticks / cmd / lock), event radio; 15: live order "target mark" (vehicle extras flag 128: mark_order ticks / cooldown / kind / id), event mark; 14: hive signature (header u16), species kinds 3..5 (enemy kind 3 bits, heading 6 bits), taken stats glass / brood / shrieker, events shriek / brood; 13: boss rounds (header boss_first, FLAG_BOSS tail block, boss enemy kinds, boss events); 12: event surge; 11: salvage (contract offers and progress, loan debt, reserved card, bonus offers), events contract_done / saw / shockwave / chain / jerry_blast; 10: momentum, abilities (slots, cooldowns, effect timers, decoy), swarm mark, jam flags, stunned bitset; 9: ammo / heat per weapon, ground zones, burning bitset, float cooldowns; 8: tech v2.3 (dormant fusions, respecs, purchase rounds); 7: doctrine rules (rig + per weapon); 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
 const FLAG_WIDE_IDS := 1  ## enemy ids spread over more than 65535: ids are sent as u32 deltas from 0
 const FLAG_STATS := 2  ## vehicles carry round_stats and match_stats (sent outside combat only)
 const FLAG_BURNING := 4  ## a burning bitset follows the projectiles (only sent while something burns)
@@ -54,7 +54,7 @@ const PROJ_BYTES := 13
 const EVENT_BYTES := 7
 
 const MAX_VEHICLES := 64  ## vehicle ids travel as u8 / i8 owners, keep well below 127
-const EVENT_TYPES: PackedStringArray = ["fire", "hit", "kill", "vehicle_destroyed", "retreat", "respawn", "spit", "pvp_on", "bounty", "drain", "shrapnel", "jam", "overheat", "execute", "nitro", "emp", "smoke", "salvo", "dodge", "sparks", "boom", "shed", "contract_done", "saw", "shockwave", "chain", "jerry_blast", "surge", "boss", "boss_spawn", "boss_phase", "boss_kill", "boss_retreat", "boss_shell", "boss_blast", "boss_ring", "boss_charge", "boss_brood", "boss_split", "shriek", "brood"]
+const EVENT_TYPES: PackedStringArray = ["fire", "hit", "kill", "vehicle_destroyed", "retreat", "respawn", "spit", "pvp_on", "bounty", "drain", "shrapnel", "jam", "overheat", "execute", "nitro", "emp", "smoke", "salvo", "dodge", "sparks", "boom", "shed", "contract_done", "saw", "shockwave", "chain", "jerry_blast", "surge", "boss", "boss_spawn", "boss_phase", "boss_kill", "boss_retreat", "boss_shell", "boss_blast", "boss_ring", "boss_charge", "boss_brood", "boss_split", "shriek", "brood", "mark", "radio"]
 const MAX_ROUND := 65535
 const SPEED_STEPS := 7
 const HEADING_STEPS := 64
@@ -118,7 +118,7 @@ static func encode(world: SimWorld, p_events: Array[Dictionary] = []) -> PackedB
 	sp.put_u16(n_enemy)
 	sp.put_u16(n_proj)
 	sp.put_u32(id_min)
-	sp.put_u8(clampi(world.phase, 0, SimWorld.PHASE_GAME_OVER))
+	sp.put_u8(clampi(world.phase, 0, SimWorld.PHASE_DEPLOY))
 	sp.put_u16(clampi(world.round, 1, MAX_ROUND))
 	sp.put_u16(clampi(world.phase_ticks_left, 0, 65535))
 	sp.put_32(world.winner_peer)
@@ -274,7 +274,7 @@ static func apply(world: SimWorld, bytes: PackedByteArray) -> bool:
 	var boss_first: int = r.u8() & 1
 	var hive_bits: int = r.u16()
 	var with_stats: bool = (flags & FLAG_STATS) != 0
-	if not r.ok or n_veh > MAX_VEHICLES or phase > SimWorld.PHASE_GAME_OVER or round_n < 1:
+	if not r.ok or n_veh > MAX_VEHICLES or phase > SimWorld.PHASE_DEPLOY or round_n < 1:
 		return false
 	var wide: bool = (flags & FLAG_WIDE_IDS) != 0
 
@@ -567,6 +567,7 @@ static func _put_vehicle(sp: StreamPeerBuffer, v: SimVehicle, with_stats: bool =
 		sp.put_float(float(w.get("splash", 0.0)))
 		sp.put_float(float(w.get("speed", 0.0)))
 		sp.put_u8(clampi(int(w.get("live", 0)), 0, 255))
+		sp.put_u32(int(w.get("clive", 0)) & 0xFFFFFF)
 		sp.put_u8(clampi(int(w.get("heat", 0)), 0, 255))
 		sp.put_u8(clampi(int(w.get("jam", 0)), 0, 255))
 		sp.put_u8(clampi(int(w.get("sw", 0)), 0, 255))
@@ -575,6 +576,7 @@ static func _put_vehicle(sp: StreamPeerBuffer, v: SimVehicle, with_stats: bool =
 			sp.put_u8(Ammo.IDS.find(str(wammo[ai])) if ai < wammo.size() else 255)
 		wn += 1
 	sp.put_u8(clampi(v.rule_live, 0, 255))
+	sp.put_u32(v.rule_conds & 0xFFFFFF)
 	_put_rules(sp, v.rules)
 	var kinds: Array = []
 	for k: String in v.weapon_doctrine:
@@ -658,7 +660,18 @@ static func _put_extras(sp: StreamPeerBuffer, v: SimVehicle) -> void:
 		ext |= 32
 	if not v.contract_offers.is_empty() or v.contract_kind >= 0 or v.loan_debt > 0 or v.reserved_card != "" or v.bonus_offers > 0:
 		ext |= 64
+	if v.mark_order_ticks > 0 or v.mark_order_cd > 0:
+		ext |= 128
 	sp.put_u8(ext)
+	var ext2: int = 0
+	if v.radio_charges != Orders.RADIO_CHARGES or v.radio_ticks > 0 or v.radio_lock > 0:
+		ext2 |= 1
+	sp.put_u8(ext2)  # second flags byte (version 16): 1 radio state
+	if (ext2 & 1) != 0:
+		sp.put_u8(clampi(v.radio_charges, 0, 255))
+		sp.put_u8(clampi(v.radio_ticks, 0, 255))
+		sp.put_8(clampi(v.radio_cmd, -1, 127))
+		sp.put_u8(clampi(v.radio_lock, 0, 255))
 	if (ext & 1) != 0:
 		sp.put_float(v.momentum)
 	if (ext & 2) != 0:
@@ -701,13 +714,28 @@ static func _put_extras(sp: StreamPeerBuffer, v: SimVehicle) -> void:
 		sp.put_u8(clampi(v.loan_left, 0, 255))
 		sp.put_u8(Cards.index_of(v.reserved_card) if v.reserved_card != "" else 255)
 		sp.put_u8(clampi(v.bonus_offers, 0, 255))
+	if (ext & 128) != 0:
+		sp.put_u8(clampi(v.mark_order_ticks, 0, 255))
+		sp.put_u16(clampi(v.mark_order_cd, 0, 65535))
+		sp.put_u8(clampi(v.mark_order_kind, 0, 2))
+		sp.put_32(v.mark_order_id)
 
 
 static func _get_extras(r: _Reader, v: SimVehicle, slot_ids: Array[String], slot_cd: PackedInt32Array) -> void:
 	var ext: int = r.u8()
-	if ext >= 128:
-		r.fail()
-		return
+	var ext2: int = r.u8()
+	if (ext2 & 1) != 0:
+		v.radio_charges = r.u8()
+		v.radio_ticks = r.u8()
+		v.radio_cmd = r.s8()
+		v.radio_lock = r.u8()
+		if v.radio_cmd >= Orders.RADIO_IDS.size() or v.radio_charges > Orders.RADIO_CHARGES:
+			r.fail()
+	else:
+		v.radio_charges = Orders.RADIO_CHARGES
+		v.radio_ticks = 0
+		v.radio_cmd = -1
+		v.radio_lock = 0
 	if (ext & 1) != 0:
 		v.momentum = r.f32()
 	if (ext & 2) != 0:
@@ -767,6 +795,13 @@ static func _get_extras(r: _Reader, v: SimVehicle, slot_ids: Array[String], slot
 			if v.reserved_card == "":
 				r.fail()
 		v.bonus_offers = r.u8()
+	if (ext & 128) != 0:
+		v.mark_order_ticks = r.u8()
+		v.mark_order_cd = r.u16()
+		v.mark_order_kind = r.u8()
+		v.mark_order_id = r.s32()
+		if v.mark_order_kind > 2:
+			r.fail()
 
 
 ## Round and match stats of one vehicle (see SimWorld.new_round_stats / new_match_stats).
@@ -912,6 +947,7 @@ static func _get_vehicle(r: _Reader, with_stats: bool = false) -> SimVehicle:
 		var splash: float = r.f32()
 		var wspeed: float = r.f32()
 		var wlive: int = r.u8()
+		var wclive: int = r.u32()
 		var wheat: int = r.u8()
 		var wjam: int = r.u8()
 		var wsw: int = r.u8()
@@ -926,9 +962,10 @@ static func _get_vehicle(r: _Reader, with_stats: bool = false) -> SimVehicle:
 		v.weapons.append({
 			"kind": kind, "damage": dmg, "range": rng, "cooldown_ticks": cdt, "cooldown": cd, "aim": aim,
 			"pellets": pellets, "spread": spread, "pierce": pierce, "splash": splash, "speed": wspeed,
-			"live": wlive, "heat": wheat, "jam": wjam, "sw": wsw, "shots": 0,
+			"live": wlive, "clive": wclive, "heat": wheat, "jam": wjam, "sw": wsw, "shots": 0,
 		})
 	v.rule_live = r.u8()
+	v.rule_conds = r.u32()
 	v.rules = _get_rules(r, Doctrine.SCOPE_RIG)
 	v.weapon_doctrine = {}
 	var nwd: int = r.u8()
@@ -1028,6 +1065,7 @@ static func _commit_vehicles(world: SimWorld, fresh: Array[SimVehicle]) -> void:
 			dst.rules = src.rules
 			dst.weapon_doctrine = src.weapon_doctrine
 			dst.rule_live = src.rule_live
+			dst.rule_conds = src.rule_conds
 			dst.weapons = src.weapons
 			dst.ammo = src.ammo
 			dst.target_kind = src.target_kind
@@ -1080,6 +1118,14 @@ static func _commit_vehicles(world: SimWorld, fresh: Array[SimVehicle]) -> void:
 			dst.shed = src.shed
 			dst.mark_id = src.mark_id
 			dst.mark_pos = src.mark_pos
+			dst.mark_order_ticks = src.mark_order_ticks
+			dst.mark_order_cd = src.mark_order_cd
+			dst.mark_order_kind = src.mark_order_kind
+			dst.mark_order_id = src.mark_order_id
+			dst.radio_charges = src.radio_charges
+			dst.radio_ticks = src.radio_ticks
+			dst.radio_cmd = src.radio_cmd
+			dst.radio_lock = src.radio_lock
 			dst.contract_offers = src.contract_offers
 			dst.contract_kind = src.contract_kind
 			dst.contract_need = src.contract_need

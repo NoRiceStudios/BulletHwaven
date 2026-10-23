@@ -1225,6 +1225,10 @@ func test_session_round_flow_and_departure() -> void:
 	s.world.fast_rounds = true
 	s.world.spawning_enabled = false
 	var v: SimVehicle = s.world.get_vehicle_for_peer(1)
+	assert_eq(s.world.phase, SimWorld.PHASE_DEPLOY)
+	s.send_command({"type": "ready"})
+	s._physics_process(1.0 / 30.0)
+	assert_eq(s.world.phase, SimWorld.PHASE_COMBAT)
 	s.send_command({"type": "pick_card", "value": 0})
 	assert_eq(v.cards, {"mg": 1}, "ignored in combat")
 	for i in SimWorld.FAST_COMBAT_TICKS:

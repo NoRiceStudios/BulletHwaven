@@ -64,6 +64,12 @@ var _scout_pin: int = -1  ## vehicle id whose dossier is pinned next to the conv
 var _hint: Dictionary = {}  ## doctrine hint of the recap, computed once per round (before any click)
 var _hint_key: String = ""
 var _tab: String = "parts"
+var _deploy_shown: bool = false  ## the deploy screen (phase PHASE_DEPLOY) is up
+
+## Deploy screen (before round 1): starting doctrine presets in a column on the left, the rule editor on the right.
+const DEPLOY_COL := Rect2(6, 34, 126, 310)
+const DEPLOY_EDITOR := Rect2(138, 34, 496, 310)
+const PRESET_H := 70.0
 ## Pending tech swap waiting for confirmation in the TECH view ({"from", "to"}; {} = none).
 var confirm: Dictionary = {}
 
@@ -77,7 +83,19 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	var was: bool = visible
-	visible = world != null and world.phase == SimWorld.PHASE_WORKSHOP and _local() != null
+	var was_deploy: bool = _deploy_shown
+	_deploy_shown = world != null and world.phase == SimWorld.PHASE_DEPLOY and _local() != null
+	visible = world != null and (world.phase == SimWorld.PHASE_WORKSHOP or _deploy_shown) and _local() != null
+	if _deploy_shown:
+		_toast_left = maxf(_toast_left - delta, 0.0)
+		_blink += delta
+		if rules != null and (not rules.is_open or rules._embed != DEPLOY_EDITOR):
+			rules.open_embedded(DEPLOY_EDITOR)
+		queue_redraw()
+		return
+	if was_deploy and rules != null and rules.embedded():
+		rules.close()  # round 1 starts: the dock and P take over
+		was = false
 	_toast_left = maxf(_toast_left - delta, 0.0)
 	_blink += delta
 	if visible and not was:
@@ -218,7 +236,7 @@ func _unhandled_input(event: InputEvent) -> void:
 func click_at(p: Vector2) -> bool:
 	var h: Array = _hit_at(p)
 	if h.is_empty():
-		if _tab == "rules" and rules != null and rules.is_open:
+		if (_tab == "rules" or _deploy_shown) and rules != null and rules.is_open:
 			return rules.click_at(p)
 		return false
 	activate(h[1], h[2])
@@ -228,7 +246,12 @@ func click_at(p: Vector2) -> bool:
 ## Every button, card, node and key ends here. Illegal actions only show a toast.
 func activate(action: String, arg: Variant) -> void:
 	var v: SimVehicle = _local()
-	if v == null or world.phase != SimWorld.PHASE_WORKSHOP:
+	if v == null:
+		return
+	if world.phase == SimWorld.PHASE_DEPLOY:
+		_activate_deploy(v, action, arg)
+		return
+	if world.phase != SimWorld.PHASE_WORKSHOP:
 		return
 	if v.eliminated and action in ["pick", "reroll", "tech", "ready", "hint", "tab", "ammo", "ability", "swap_ok"]:
 		return  # spectator: read-only
@@ -351,6 +374,102 @@ func activate(action: String, arg: Variant) -> void:
 				_send({"type": "ready"})
 
 
+# ---------------------------------------------------------------- deploy (before round 1)
+
+func _activate_deploy(v: SimVehicle, action: String, arg: Variant) -> void:
+	match action:
+		"pick", "preset":
+			var i: int = int(arg)
+			if i < 0 or i >= DoctrinePresets.LIST.size():
+				return
+			var p: Dictionary = DoctrinePresets.LIST[i]
+			for cmd in DoctrinePresets.commands(p):
+				_send(cmd)
+			if rules != null:
+				rules.show_work(Doctrine.SCOPE_RIG, Doctrine.parse(p["rules"], Doctrine.SCOPE_RIG))
+			_say("%s LOADED" % p["name"])
+		"ready":
+			if not v.ready:
+				_send({"type": "ready"})
+
+
+func _draw_deploy(v: SimVehicle, vs: Vector2) -> void:
+	draw_rect(Rect2(Vector2.ZERO, vs), Color(0.05, 0.035, 0.03, 0.55))
+	_draw_deploy_bar(v)
+	var col: Rect2 = DEPLOY_COL
+	UiKit.section(self, "STARTING DOCTRINE", col.position + Vector2(0, 2), col.size.x)
+	var cur: String = DoctrinePresets.current(v)
+	var y: float = col.position.y + 14.0
+	for i in DoctrinePresets.LIST.size():
+		_draw_preset(DoctrinePresets.LIST[i], i, Rect2(col.position.x, y, col.size.x, PRESET_H - 4.0), cur)
+		y += PRESET_H
+	var custom: bool = cur == "" and not v.rules.is_empty()
+	var note: String = "CUSTOM - EDITED BY HAND" if custom else "PICK ONE, THEN TUNE IT ON THE RIGHT"
+	UiFont.draw_small(self, note, Vector2(col.position.x + 2, y + 1), Gfx.CRT_HI if custom else Gfx.UI_DIM, Gfx.UI_SHADOW)
+	UiKit.footer(self, "1-4  PRESET    SPACE  ROLL OUT    IN COMBAT: CLICK THE DOCK TO SWITCH    RIGHT-CLICK  MARK    Z X C V  RADIO", vs)
+	_draw_toast(vs)
+
+
+func _draw_deploy_bar(v: SimVehicle) -> void:
+	var r: Rect2 = BAR
+	UiKit.plate(self, r)
+	_hits.append([r, "none", null])
+	var y: float = r.position.y
+	UiFont.draw_big(self, "DEPLOYMENT", Vector2(r.position.x + 7, y + 5), Gfx.UI_TEXT, Gfx.OUTLINE)
+	UiFont.draw_small(self, "BEFORE ROUND 1", Vector2(r.position.x + 7, y + 15), Gfx.UI_DIM)
+	var mx: float = r.position.x + 98.0
+	UiFont.draw(self, "SET HOW YOUR RIG DRIVES AND WHAT IT SHOOTS", Vector2(mx, y + 4), Gfx.UI_TEXT, Gfx.UI_SHADOW)
+	UiFont.draw_small(self, "YOU CAN CHANGE IT ANY TIME DURING THE ROUND", Vector2(mx, y + 14), Gfx.UI_DIM)
+	var br := Rect2(r.end.x - 96, y + 2, 94, 20)
+	var t2: String = UiKit.clock(world.phase_ticks_left)
+	var low: bool = world.phase_ticks_left < 5 * SimWorld.TICK_RATE
+	var tcol: Color = Gfx.UI_BAD if low and fmod(_blink, 0.5) < 0.25 else Gfx.FIRE[4]
+	var tx: float = br.position.x - 6.0 - UiFont.width_big(t2, 2)
+	UiFont.draw_big(self, t2, Vector2(tx, y + 6), tcol, Gfx.OUTLINE, 2)
+	UiFont.draw_small(self, "ROLL OUT IN", Vector2(tx - 4.0 - UiFont.width_small("ROLL OUT IN"), y + 6), Gfx.UI_DIM)
+	var need: int = 0
+	var ready_n: int = 0
+	for o in world.vehicles:
+		if not o.eliminated:
+			need += 1
+			ready_n += 1 if o.ready else 0
+	if need > 1:
+		var rt := "%d/%d READY" % [ready_n, need]
+		UiFont.draw_small(self, rt, Vector2(tx - 4.0 - UiFont.width_small(rt), y + 14), Gfx.HAZARD if ready_n > 0 else Gfx.UI_DIM)
+	if v.ready:
+		UiKit.go_button(self, br, "WAITING", "%d / %d READY" % [ready_n, need], false, false)
+	else:
+		UiKit.go_button(self, br, "ROLL OUT", "SPACE", _is_hover("ready"), true, fmod(_blink, 1.0) < 0.6)
+	_hits.append([br, "ready", null])
+
+
+## One starting doctrine as a CRT card: key, name, tag, three plain lines; lit when the rig runs exactly it.
+func _draw_preset(p: Dictionary, i: int, r: Rect2, cur: String) -> void:
+	var on: bool = cur == p["id"]
+	var hov: bool = _is_hover("preset", i)
+	draw_rect(r.grow(1), Gfx.OUTLINE)
+	draw_rect(r, Gfx.CRT_BG)
+	if hov and not on:
+		draw_rect(r, Color(Gfx.CRT_TEXT, 0.12))
+	UiKit.outline_rect(self, r.grow(-1), Gfx.CRT_HI if on else (Gfx.CRT_TEXT if hov else Gfx.CRT_DIM))
+	var head := Rect2(r.position + Vector2(2, 2), Vector2(r.size.x - 4, 12))
+	if on:
+		draw_rect(head, Gfx.CRT_TEXT)
+	var hc: Color = Gfx.CRT_BG if on else Gfx.CRT_HI
+	var x: float = UiFont.draw(self, "%d " % (i + 1), head.position + Vector2(3, 2), Gfx.CRT_BG if on else Gfx.CRT_DIM)
+	UiFont.draw(self, p["name"], Vector2(x, head.position.y + 2), hc)
+	var tag: String = "ACTIVE" if on else str(p["tag"])
+	UiFont.draw_small(self, tag, Vector2(head.end.x - 3 - UiFont.width_small(tag), head.position.y + 3), Gfx.CRT_BG if on else Gfx.CRT_DIM)
+	var y: float = head.end.y + 4.0
+	for line: String in p["lines"]:
+		UiFont.draw_small(self, line, Vector2(r.position.x + 6, y), Gfx.CRT_TEXT)
+		y += 9.0
+	var lbl: String = "%s / %s" % [str(DoctrineEditor.ACTION_LABELS.get("drive:" + str(p["drive"]), "")),
+		str(DoctrineEditor.ACTION_LABELS.get("target:" + str(p["target"]), "")).trim_prefix("TGT ")]
+	UiFont.draw_small(self, lbl, Vector2(r.position.x + 6, r.end.y - 10), Gfx.CRT_DIM)
+	_hits.append([r, "preset", i])
+
+
 func _send(cmd: Dictionary) -> void:
 	if send_command.is_valid():
 		send_command.call(cmd)
@@ -379,6 +498,9 @@ func _draw() -> void:
 	var c: Vector2 = view.local_screen_pos() if view else Vector2(vs.x / 2.0, 90)
 	var vig := Vector2(Gfx.TEX_VIGNETTE.get_size())
 	draw_texture(Gfx.TEX_VIGNETTE, (c - vig / 2.0).floor())
+	if world.phase == SimWorld.PHASE_DEPLOY:
+		_draw_deploy(v, vs)
+		return
 
 	if v.eliminated:
 		_draw_spectator(v, vs)

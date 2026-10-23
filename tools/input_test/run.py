@@ -34,6 +34,8 @@ CARD0 = vp(320 - 156 + 50, 160 + 61)  # workshop PARTS view: first of three 100x
 DARK_PROBE = (0, 180 * SCALE, 100 * SCALE, 100 * SCALE)  # left plates: dark in workshop, sand in combat
 CARDS_REGION = (162 * SCALE, 150 * SCALE, 316 * SCALE, 140 * SCALE)
 FROZEN_PROBE = (0, 200 * SCALE, 100 * SCALE, 100 * SCALE)
+PRESET_1 = vp(6 + 126 / 2, 48 + 33)  # deploy screen: first starting doctrine card (WorkshopUi.DEPLOY_COL)
+PRESET_REGION = (6 * SCALE, 48 * SCALE, 126 * SCALE, 66 * SCALE)
 
 
 class Runner:
@@ -109,7 +111,20 @@ class Runner:
         if not started:
             self.shot("after_solo_click")
             return 1
+        # 1b. the deploy screen comes first: a mouse click loads a starting doctrine, Space rolls out
         time.sleep(0.4)
+        deploy_luma = self.luma(DARK_PROBE)
+        self.result("deploy screen is showing [pixel]", deploy_luma < 90.0, "left probe luma %.0f (combat would be > 90)" % deploy_luma)
+        self.shot("deploy")
+        before = s.grab(*PRESET_REGION)
+        s.click(*PRESET_1)
+        time.sleep(0.4)
+        changed = before.diff(s.grab(*PRESET_REGION))
+        self.result("mouse click on a starting doctrine selects it [pixel]", changed > 0.05, "card area changed %.0f%%" % (changed * 100.0))
+        s.key("space")
+        rolled = self.wait_until(lambda: self.luma(DARK_PROBE) > 90.0, 3.0, 0.1)
+        self.result("Space rolls out into round 1 [pixel]", bool(rolled), "left probe luma %.0f" % self.luma(DARK_PROBE))
+        time.sleep(0.3)
         combat_luma = self.luma(DARK_PROBE)
         self.result("combat screen is showing [pixel]", combat_luma > 90.0, "left probe luma %.0f (workshop would be < 90)" % combat_luma)
         self.shot("combat")

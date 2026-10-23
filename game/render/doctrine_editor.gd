@@ -20,7 +20,7 @@ const COND_LABELS := {
 	"t_player": "TGT IS RIVAL", "t_boulder": "TGT IS BOULDER", "t_spitter": "TGT IS SPITTER", "pvp": "PVP ON",
 	"has_target": "HAS TARGET",
 	"boulders": "BOULDERS NEAR", "fuel": "OWN FUEL", "rival_weaker": "RIVAL WEAKER", "ability_ready": "ABILITY READY",
-	"t_leader": "TGT IS LEADER", "boss_active": "BOSS ACTIVE", "shrieker_near": "SHRIEKER NEAR",
+	"t_leader": "TGT IS LEADER", "boss_active": "BOSS ACTIVE", "shrieker_near": "SHRIEKER NEAR", "mark_active": "MARK ACTIVE", "radio_active": "RADIO ACTIVE",
 }
 const COND_HELP := {
 	"hp": "YOUR RIG'S HP IN PERCENT OF ITS MAXIMUM.",
@@ -40,6 +40,8 @@ const COND_HELP := {
 	"t_leader": "THE TARGET IS THE MARKED BOUNTY LEADER (HUNTER-KILLER LOGIC).",
 	"boss_active": "A BOSS IS ON THE FIELD.",
 	"shrieker_near": "A SHRIEKER IS WITHIN 360 PX OF THE RIG.",
+	"mark_active": "YOUR TARGET MARK IS RUNNING (RIGHT-CLICK AN ALIEN: ALL GUNS ON IT FOR 6 S).",
+	"radio_active": "A RADIO CALL (Z X C V) IS RUNNING AND OVERRIDES THE OTHER RULES FOR 5 S.",
 }
 const ACTION_LABELS := {
 	"drive:circle": "CIRCLE", "drive:kite": "KITE", "drive:charge": "CHARGE", "drive:flee": "FLEE",
@@ -167,6 +169,14 @@ func _panel() -> Rect2:
 ## Top of the first rule row (the embedded view has no title line).
 func _rows_y() -> float:
 	return _panel().position.y + (92.0 if embedded() else 102.0)
+
+
+## Replaces the working copy of `p_scope` (when it is the open one) with `p_rules`, e.g. after a preset was sent:
+## the sim applies it a tick later, the editor shows it at once.
+func show_work(p_scope: String, p_rules: Variant) -> void:
+	if is_open and scope == p_scope and p_rules is Array:
+		_work = (p_rules as Array).duplicate(true)
+		_menu = {}
 
 
 func toggle() -> void:
@@ -558,7 +568,7 @@ func _draw_rule(i: int, rule: Dictionary, pos: Vector2, row: Rect2, locked: bool
 		x = _draw_cond(i, ci, conds[ci], Vector2(x, pos.y)) + 6.0
 	if conds.size() < Doctrine.max_conds(_local()):
 		x = _chip("+ IF" if conds.is_empty() else "+ AND", Vector2(x, pos.y), false, "add_cond", i) + 6.0
-	x = maxf(x, row.position.x + 404.0)
+	x = maxf(x, row.position.x + minf(404.0, row.size.x - 150.0))  # narrower when embedded in the deploy screen
 	x = UiFont.draw(self, "THEN", Vector2(x, pos.y), Gfx.CRT_DIM) + 5.0
 	_chip(ACTION_LABELS[rule["do"]], Vector2(x, pos.y), false, "action", i, true)
 	var bx: float = row.end.x - 44.0
@@ -627,6 +637,10 @@ static func _cond_phrase(c: Array) -> String:
 			return "A BOSS IS %sON THE FIELD" % ["" if yes else "NOT "]
 		"shrieker_near":
 			return "A SHRIEKER IS %sNEAR" % ["" if yes else "NOT "]
+		"mark_active":
+			return "A TARGET MARK IS %sRUNNING" % ["" if yes else "NOT "]
+		"radio_active":
+			return "A RADIO CALL IS %sRUNNING" % ["" if yes else "NOT "]
 		"boulders":
 			return "%s THAN %d BOULDERS ARE NEAR" % ["FEWER" if lt else "MORE", n]
 		"fuel":

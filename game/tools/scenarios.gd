@@ -82,14 +82,21 @@ extends RefCounted
 ## - "pause"    skirmish with the pause / menu overlay (LAN wording: the fight goes on).
 ## - "rematch"  gameover_mp seen by the host: REMATCH and LEAVE TO MENU.
 ## - "waiting"  gameover_mp seen by the loser (a client): waiting for the host's rematch.
+## - "picker"   the programmed rig of "rules" in combat with the dock's behaviour picker open (--hover a chip).
+## - "mark"     skirmish where MAD MAREK right-clicks an alien at tick MARK_CAST_TICK (target mark order;
+##              about 215 ticks shows the reticle snapping in, 300 the order running).
+## - "rules_live" the programmed rig of "rules" in combat with the live rule monitor (no overlay).
+## - "radio"    skirmish where MAD MAREK calls ALL IN on the radio at tick MARK_CAST_TICK (about 260 ticks).
+## - "deploy"   the deploy screen before round 1 (three rigs, one ready; --click a preset). Under 900 ticks.
 
 const NAMES: PackedStringArray = ["skirmish", "horde", "workshop", "tech_tree", "gameover", "gameover_mp", "eliminated",
 	"menu", "join", "lobby", "pause", "rematch", "waiting", "rig_growth", "late_round", "pvp_on", "rig_kill",
 	"recap", "recap_pvp", "scouting", "combat_feed", "pvp_grace", "spectator", "spectator_ws", "awards",
 	"tech_mid", "tech_swap", "workshop_mid", "tech_beginner", "fx_firebrand", "fx_fortress", "fx_scrapper",
 	"fx_chassis", "fx_ram", "juice", "juice_surge", "evo_combat", "evo_flip", "evo_workshop", "evo_moment", "boss_tripod", "boss_colossus", "boss_shards",
-	"boss_warning", "boss_enraged", "boss_spawn", "boss_phase", "boss_kill", "boss_kill_colossus", "boss_retreat", "species", "hive"]
+	"boss_warning", "boss_enraged", "boss_spawn", "boss_phase", "boss_kill", "boss_kill_colossus", "boss_retreat", "species", "hive", "picker", "deploy", "mark", "radio", "rules_live"]
 const EVO_FLIP_TICK := 90
+const MARK_CAST_TICK := 200
 const EVO_PICK_DELAY := 30
 const JUICE_SURGE_TICK := 100
 ## Info-UI line-up: [name, paint, GROWTH_BUILDS index, drive, target, extra tech].
@@ -150,8 +157,12 @@ static func build(name: String, p_seed: int) -> SimWorld:
 			return _skirmish(p_seed)
 		"rematch", "waiting":
 			return build("gameover_mp", p_seed)
-		"rules", "rules_weapon":
+		"rules", "rules_weapon", "picker", "rules_live":
 			return _programmed(p_seed)
+		"deploy":
+			return _deploy(p_seed)
+		"mark", "radio":
+			return _skirmish(p_seed)
 		"rig_growth":
 			return _rig_growth(p_seed)
 		"late_round":
@@ -255,6 +266,8 @@ static func ui_state(name: String) -> Dictionary:
 			return {"rules": "rig"}
 		"rules_weapon":
 			return {"rules": "cannon"}
+		"picker":
+			return {"picker": true}
 		"rematch", "awards":
 			return {"game_over": "host"}
 		"waiting":
@@ -273,6 +286,23 @@ static func step(name: String, w: SimWorld) -> void:
 		return
 	if name == "species":
 		_species_step(w)
+		return
+	if name == "radio":
+		if w.tick == MARK_CAST_TICK:
+			w.apply_command(1, {"type": "radio", "value": "all_in"})
+		w.step()
+		return
+	if name == "mark":
+		if w.tick == MARK_CAST_TICK:  # the alien nearest a point 120 px ahead of the rig, like a player's right click
+			var me: SimVehicle = w.vehicles[0]
+			var aim: Vector2 = me.pos + Vector2.from_angle(me.heading) * 120.0
+			var best: int = -1
+			for i in w.enemy_count:
+				if best < 0 or w.enemy_pos[i].distance_squared_to(aim) < w.enemy_pos[best].distance_squared_to(aim):
+					best = i
+			if best >= 0:
+				w.apply_command(1, {"type": "mark", "x": w.enemy_pos[best].x, "y": w.enemy_pos[best].y})
+		w.step()
 		return
 	if name == "hive":  # the first workshop, held (round 1 is over: the panel lists this match's species and the next boss)
 		if w.phase == SimWorld.PHASE_COMBAT:
@@ -625,6 +655,17 @@ static func _species_step(w: SimWorld) -> void:
 
 
 ## Two rigs (red: circle / nearest, magenta: kite / players_first) in a running horde.
+## Three fresh rigs in the deploy phase before round 1; the second one is already ready.
+static func _deploy(p_seed: int) -> SimWorld:
+	var w := SimWorld.new(p_seed)
+	w.add_vehicle(1, _old_arena(Vector2(560, 380)), "MAD MAREK")
+	w.add_vehicle(2, _old_arena(Vector2(760, 330)), "DUNE RAT", 2)
+	w.add_vehicle(3, _old_arena(Vector2(700, 470)), "SANDY", 3)
+	w.begin_deploy()
+	w.apply_command(2, {"type": "ready"})
+	return w
+
+
 static func _skirmish(p_seed: int) -> SimWorld:
 	var w := SimWorld.new(p_seed)
 	w.add_vehicle(1, _old_arena(Vector2(420, 420)), "MAD MAREK")

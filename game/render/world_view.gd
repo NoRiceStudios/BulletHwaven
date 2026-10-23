@@ -53,6 +53,7 @@ var juice: JuiceState = JuiceState.new()
 var _labels: Node2D
 var _camera: Camera2D
 var _hud: Hud
+var rules_live: RulesLive  ## live rule monitor on the right edge (combat, L toggles)
 var minimap: Minimap
 var _hud_layer: CanvasLayer
 var workshop: WorkshopUi
@@ -216,6 +217,9 @@ func _ready() -> void:
 	minimap = Minimap.new()
 	minimap.view = self
 	hud_layer.add_child(minimap)
+	rules_live = RulesLive.new()
+	rules_live.view = self
+	hud_layer.add_child(rules_live)
 	workshop = WorkshopUi.new()
 	workshop.view = self
 	hud_layer.add_child(workshop)
@@ -229,6 +233,20 @@ func _ready() -> void:
 	hud_layer.add_child(rules)
 	workshop.rules = rules
 	rules.workshop = workshop
+
+
+func hud() -> Hud:
+	return _hud
+
+
+## Viewport / HUD position of the world point `p`.
+func to_screen(p: Vector2) -> Vector2:
+	return (get_viewport().get_canvas_transform() * Gfx.snap(p)).floor()
+
+
+## World position under `p`, a point in viewport / HUD units (the inverse of screen_pos).
+func world_at(p: Vector2) -> Vector2:
+	return get_viewport().get_canvas_transform().affine_inverse() * p
 
 
 ## Shows `w` from the point of view of `peer` (camera, HUD). Clears all marks of a previous world.
