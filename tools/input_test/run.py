@@ -34,8 +34,8 @@ CARD0 = vp(320 - 156 + 50, 160 + 61)  # workshop PARTS view: first of three 100x
 DARK_PROBE = (0, 180 * SCALE, 100 * SCALE, 100 * SCALE)  # left plates: dark in workshop, sand in combat
 CARDS_REGION = (162 * SCALE, 150 * SCALE, 316 * SCALE, 140 * SCALE)
 FROZEN_PROBE = (0, 200 * SCALE, 100 * SCALE, 100 * SCALE)
-PRESET_1 = vp(6 + 126 / 2, 48 + 33)  # deploy screen: first starting doctrine card (WorkshopUi.DEPLOY_COL)
-PRESET_REGION = (6 * SCALE, 48 * SCALE, 126 * SCALE, 66 * SCALE)
+PRESET_1 = vp(6 + 126 / 2, 48 + 26)  # deploy screen: first starting doctrine card (WorkshopUi.DEPLOY_COL)
+PRESET_REGION = (6 * SCALE, 48 * SCALE, 126 * SCALE, 52 * SCALE)
 
 
 class Runner:

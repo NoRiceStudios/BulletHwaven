@@ -21,6 +21,7 @@ const COND_LABELS := {
 	"has_target": "HAS TARGET",
 	"boulders": "BOULDERS NEAR", "fuel": "OWN FUEL", "rival_weaker": "RIVAL WEAKER", "ability_ready": "ABILITY READY",
 	"t_leader": "TGT IS LEADER", "boss_active": "BOSS ACTIVE", "shrieker_near": "SHRIEKER NEAR", "mark_active": "MARK ACTIVE", "radio_active": "RADIO ACTIVE",
+	"in_zone": "IN ZONE", "zone_dist": "ZONE DISTANCE", "zone_contested": "ZONE CONTESTED", "zones_held": "ZONES HELD",
 }
 const COND_HELP := {
 	"hp": "YOUR RIG'S HP IN PERCENT OF ITS MAXIMUM.",
@@ -42,12 +43,17 @@ const COND_HELP := {
 	"shrieker_near": "A SHRIEKER IS WITHIN 360 PX OF THE RIG.",
 	"mark_active": "YOUR TARGET MARK IS RUNNING (RIGHT-CLICK AN ALIEN: ALL GUNS ON IT FOR 6 S).",
 	"radio_active": "A RADIO CALL (Z X C V) IS RUNNING AND OVERRIDES THE OTHER RULES FOR 5 S.",
+	"in_zone": "YOUR RIG IS INSIDE A CONTROL ZONE (FROM ROUND 4, ONCE PVP IS ON).",
+	"zone_dist": "DISTANCE TO THE NEAREST CONTROL ZONE YOU DO NOT HOLD, IN PX. NO SUCH ZONE: NEVER TRUE.",
+	"zone_contested": "A RIVAL STANDS IN OR IS CAPTURING THE ZONE YOU ARE IN.",
+	"zones_held": "CONTROL ZONES YOU HOLD.",
 }
 const ACTION_LABELS := {
 	"drive:circle": "CIRCLE", "drive:kite": "KITE", "drive:charge": "CHARGE", "drive:flee": "FLEE",
 	"drive:hold": "HOLD POSITION",
 	"target:nearest": "TGT NEAREST", "target:strongest": "TGT STRONGEST", "target:weakest": "TGT WEAKEST",
 	"target:players_first": "TGT RIVALS", "target:boulders": "TGT BOULDERS", "target:spitters": "TGT SPITTERS", "target:boss": "TGT BOSS", "target:shriekers": "TGT SHRIEKERS",
+	"drive:zone": "HOLD ZONE", "target:intruders": "TGT INTRUDERS",
 	"target:follow": "FOLLOW RIG", "fire:hold": "HOLD FIRE", "fire:free": "FIRE AT WILL",
 	"ammo:fire": "LOAD FIRE", "ammo:shrapnel": "LOAD SHRAPNEL", "ammo:ap": "LOAD AP",
 	"fire:focus": "FOCUS FIRE", "ability:nitro": "USE NITRO", "ability:emp": "USE EMP", "ability:smoke": "USE SMOKE",
@@ -67,6 +73,8 @@ const ACTION_HELP := {
 	"target:spitters": "THE NEAREST SPITTER, ELSE THE NEAREST ALIEN.",
 	"target:boss": "THE NEAREST BOSS BODY IN RANGE, ELSE THE NEAREST ALIEN.",
 	"target:shriekers": "THE NEAREST SHRIEKER, ELSE THE NEAREST ALIEN.",
+	"drive:zone": "DRIVE INTO THE NEAREST ZONE YOU DO NOT HOLD (ELSE YOUR OWN) AND ORBIT ITS BEACON WHILE THE GUNS KEEP FIRING. ALONE INSIDE 3 S TAKES IT. NO ZONE OPEN: CIRCLE.",
+	"target:intruders": "RIVALS INSIDE (OR RIGHT NEXT TO) THE ZONE YOU ARE IN OR HOLD, ELSE THE NEAREST ALIEN.",
 	"target:follow": "SHOOT WHAT THE RIG IS AIMING AT.",
 	"fire:hold": "THIS GUN DOES NOT SHOOT.",
 	"fire:free": "THIS GUN SHOOTS (OVERRIDES A LOWER HOLD FIRE).",
@@ -591,7 +599,7 @@ static func sentence(rule: Dictionary, p_scope: String) -> String:
 	match Doctrine.action_group(a):
 		"drive":
 			act = {"circle": "CIRCLES THE TARGET", "kite": "KITES AT RANGE", "charge": "CHARGES IN", "flee": "FLEES",
-				"hold": "HOLDS POSITION"}.get(v, v)
+				"hold": "HOLDS POSITION", "zone": "DRIVES INTO A CONTROL ZONE AND HOLDS IT"}.get(v, v)
 		"fire":
 			act = {"hold": "HOLDS FIRE", "focus": "FOCUSES ALL GUNS ON ONE TARGET"}.get(v, "FIRES AT WILL")
 		"ammo":
@@ -601,7 +609,7 @@ static func sentence(rule: Dictionary, p_scope: String) -> String:
 		_:
 			act = "FOLLOWS THE RIG'S TARGET" if v == "follow" else "TARGETS " + {"nearest": "THE NEAREST ALIEN",
 				"strongest": "THE TOUGHEST ALIEN", "weakest": "THE WEAKEST ALIEN", "players_first": "RIVAL RIGS FIRST",
-				"boulders": "BOULDERS FIRST", "spitters": "SPITTERS FIRST", "boss": "THE BOSS FIRST", "shriekers": "SHRIEKERS FIRST"}.get(v, v)
+				"boulders": "BOULDERS FIRST", "spitters": "SPITTERS FIRST", "boss": "THE BOSS FIRST", "shriekers": "SHRIEKERS FIRST", "intruders": "RIVALS IN ITS ZONE FIRST"}.get(v, v)
 	if parts.is_empty():
 		return "ALWAYS: %s %s." % [who, act]
 	return "IF %s: %s %s." % [" AND ".join(parts), who, act]
@@ -651,6 +659,14 @@ static func _cond_phrase(c: Array) -> String:
 			return "AN ABILITY IS %sREADY" % ["" if yes else "NOT "]
 		"t_leader":
 			return "THE TARGET IS %sTHE LEADER" % ["" if yes else "NOT "]
+		"in_zone":
+			return "OWN RIG IS %sIN A CONTROL ZONE" % ["" if yes else "NOT "]
+		"zone_dist":
+			return "A ZONE YOU DO NOT HOLD IS %s THAN %d PX AWAY" % ["CLOSER" if lt else "FURTHER", n]
+		"zone_contested":
+			return "THE ZONE YOU ARE IN IS %sCONTESTED" % ["" if yes else "NOT "]
+		"zones_held":
+			return "YOU HOLD %s THAN %d ZONES" % ["FEWER" if lt else "MORE", n]
 	return id
 
 

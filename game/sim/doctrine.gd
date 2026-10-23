@@ -25,7 +25,8 @@ const RIVAL_RADIUS := 380.0  ## "rivals": rival rigs within this many px (only w
 
 ## Index tables for the binary form. Only append.
 const COND_IDS: PackedStringArray = ["hp", "swarm", "rivals", "t_dist", "t_hp", "t_player", "t_boulder", "t_spitter", "pvp", "has_target",
-	"boulders", "fuel", "rival_weaker", "ability_ready", "t_leader", "boss_active", "shrieker_near", "mark_active", "radio_active"]
+	"boulders", "fuel", "rival_weaker", "ability_ready", "t_leader", "boss_active", "shrieker_near", "mark_active", "radio_active",
+	"in_zone", "zone_dist", "zone_contested", "zones_held"]
 const OPS: PackedStringArray = ["<", ">", "="]
 const ACTIONS: PackedStringArray = [
 	"drive:circle", "drive:kite", "drive:charge", "drive:flee", "drive:hold",
@@ -34,6 +35,7 @@ const ACTIONS: PackedStringArray = [
 	"ammo:fire", "ammo:shrapnel", "ammo:ap",
 	"fire:focus", "ability:nitro", "ability:emp", "ability:smoke", "ability:salvo",
 	"target:boss", "target:shriekers",
+	"drive:zone", "target:intruders",
 ]
 
 ## Condition metadata: numeric ones take "<" / ">" and a value in [min, max] (UI step `step`);
@@ -58,6 +60,10 @@ const CONDS := {
 	"shrieker_near": {"flag": true, "def": 1},
 	"mark_active": {"flag": true, "def": 1},
 	"radio_active": {"flag": true, "def": 1},
+	"in_zone": {"flag": true, "def": 1},
+	"zone_dist": {"flag": false, "min": 0, "max": 1000, "step": 50, "def": 300, "unit": "px"},
+	"zone_contested": {"flag": true, "def": 1},
+	"zones_held": {"flag": false, "min": 0, "max": 3, "step": 1, "def": 0, "unit": ""},
 }
 ## Conditions the tech tree unlocks: condition id -> tech fx key (anything else is always available).
 const COND_FX := {
@@ -65,10 +71,10 @@ const COND_FX := {
 	"ability_ready": "cond_ability_ready", "t_leader": "cond_t_leader",
 }
 
-const DRIVES: PackedStringArray = ["circle", "kite", "charge", "flee", "hold"]
-const BASE_DRIVES: PackedStringArray = ["circle", "kite", "charge"]  ## base doctrine (set_drive)
-const RIG_TARGETS: PackedStringArray = ["nearest", "strongest", "weakest", "players_first", "boulders", "spitters", "boss", "shriekers"]
-const WEAPON_TARGETS: PackedStringArray = ["follow", "nearest", "strongest", "weakest", "players_first", "boulders", "spitters", "boss", "shriekers"]
+const DRIVES: PackedStringArray = ["circle", "kite", "charge", "flee", "hold", "zone"]
+const BASE_DRIVES: PackedStringArray = ["circle", "kite", "charge", "zone"]  ## base doctrine (set_drive)
+const RIG_TARGETS: PackedStringArray = ["nearest", "strongest", "weakest", "players_first", "boulders", "spitters", "boss", "shriekers", "intruders"]
+const WEAPON_TARGETS: PackedStringArray = ["follow", "nearest", "strongest", "weakest", "players_first", "boulders", "spitters", "boss", "shriekers", "intruders"]
 
 
 ## Rule slots of a list for this vehicle: BASE_SLOTS plus the `rule_slots` of the active tech.
@@ -464,6 +470,15 @@ static func _value(w: SimWorld, v: SimVehicle, id: String, tk: int, ti: int, tid
 			return 1.0 if Orders.active(w, v) else 0.0
 		"radio_active":
 			return 1.0 if Orders.radio_active(v) else 0.0
+		"in_zone":
+			return 1.0 if w.zones_active and Zones.zone_at(w, v.pos) >= 0 else 0.0
+		"zone_dist":
+			var zd: float = Zones.nearest_unheld_dist(w, v)
+			return NAN if zd < 0.0 else zd
+		"zone_contested":
+			return 1.0 if Zones.contested_for(w, v) else 0.0
+		"zones_held":
+			return float(Zones.held_by(w, v)) if w.zones_active else 0.0
 		"shrieker_near":
 			if not ctx.has("shrieker_near"):
 				ctx["shrieker_near"] = Species.shrieker_near(w, v)

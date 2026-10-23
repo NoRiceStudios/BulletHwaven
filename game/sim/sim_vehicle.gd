@@ -100,6 +100,7 @@ var mark_order_id: int = -1  ## stable enemy id (kind 1) or vehicle id (kind 2)
 var radio_charges: int = Orders.RADIO_CHARGES  ## radio commands left this combat round (refilled at every combat start)
 var radio_ticks: int = 0  ## ticks left of the running radio command
 var radio_cmd: int = -1  ## index into Orders.RADIO_IDS, -1 none
+var zone_ticks: int = 0  ## ticks spent alone inside a zone it owns this round (Zones; synced, in the checksum)
 var radio_lock: int = 0  ## ticks until the next radio call is accepted
 
 # Salvage and fusion state (tech tree v2.3 stage 3; Salvage, Fusions). The contract / loan / reserve / bonus fields are synced.

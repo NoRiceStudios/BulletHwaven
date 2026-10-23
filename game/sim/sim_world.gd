@@ -268,6 +268,11 @@ var zone_kind: PackedByteArray = PackedByteArray()
 var zone_ttl: PackedInt32Array = PackedInt32Array()
 var zone_owner: PackedInt32Array = PackedInt32Array()
 
+## PvP control zones (sim/zones.gd): {"pos", "owner", "cap_id", "cap_ticks", "contested"} each. Empty outside
+## combat, solo and before PVP_START_ROUND. `zones_active`: PvP is on, so they capture and score (else locked).
+var zones: Array[Dictionary] = []
+var zones_active: bool = false
+
 var events: Array[Dictionary] = []
 
 # Boss rounds (see bosses.gd). boss_first is derived from the seed at construction; the rest is per round.
@@ -373,7 +378,7 @@ func apply_command(peer_id: int, cmd: Dictionary) -> void:
 	match type:
 		"set_drive":
 			var value: String = str(cmd.get("value", ""))
-			if value in ["circle", "kite", "charge"]:
+			if value in Doctrine.BASE_DRIVES:
 				v.doctrine["drive"] = value
 		"set_target":
 			var value2: String = str(cmd.get("value", ""))
@@ -506,13 +511,13 @@ static func new_round_stats(r: int) -> Dictionary:
 		"kills": 0, "kills_players": 0,
 		"deaths": [],  # {"t": ticks into combat, "cause": SRC_NAMES entry, "src": int, "killer": vehicle id or -1, "killer_kind": enemy kind or -1}
 		"fuel_lost": 0, "fuel_gained": 0, "fuel_drained": 0,
-		"scrap_earned": 0, "interest": 0,
+		"scrap_earned": 0, "interest": 0, "zone_points": 0,
 	}
 
 
 static func new_match_stats() -> Dictionary:
 	return {
-		"kills": 0, "player_kills": 0, "ram_kills": 0, "deaths": 0, "dmg_dealt": 0.0, "scrap_earned": 0,
+		"kills": 0, "player_kills": 0, "ram_kills": 0, "deaths": 0, "dmg_dealt": 0.0, "scrap_earned": 0, "zone_points": 0,
 		"top_victim": -1, "top_victim_n": 0, "nemesis": -1, "nemesis_n": 0,
 	}
 
@@ -765,6 +770,7 @@ func _step_combat() -> void:
 	_update_projectiles()
 	_update_burn()
 	_update_zones()
+	Zones.tick(self)
 	_compact_enemies()
 	_spawn_tick()
 	_hash.rebuild(enemy_pos, enemy_count)
@@ -817,7 +823,7 @@ func checksum() -> int:
 	ctx.start(HashingContext.HASH_SHA256)
 	var head := PackedInt64Array([tick, enemy_count, proj_count, vehicles.size(), phase, round, phase_ticks_left, winner_peer, next_enemy_id, leader_peer, pvp_grace_ticks, fuel_drain,
 		boss_first, boss_kind, boss_state, boss_phase, int(boss_enraged), roundi(boss_max_hp), boss_marks.size(),
-		hive_first[0], hive_first[1], hive_first[2]])
+		hive_first[0], hive_first[1], hive_first[2], int(zones_active), zones.size()])
 	ctx.update(head.to_byte_array())
 	var vf := PackedFloat64Array()
 	for v in vehicles:
@@ -897,6 +903,7 @@ func checksum() -> int:
 		vf.append(float(v.mark_order_cd))
 		vf.append(float(v.mark_order_kind))
 		vf.append(float(v.mark_order_id))
+		vf.append(float(v.zone_ticks))
 		vf.append(float(v.radio_charges))
 		vf.append(float(v.radio_ticks))
 		vf.append(float(v.radio_cmd))
@@ -944,6 +951,13 @@ func checksum() -> int:
 				vf.append(float(aid.hash()))
 		for aid2 in v.ammo_known:
 			vf.append(float(aid2.hash()))
+	for z: Dictionary in zones:
+		vf.append((z["pos"] as Vector2).x)
+		vf.append((z["pos"] as Vector2).y)
+		vf.append(float(z["owner"]))
+		vf.append(float(z["cap_id"]))
+		vf.append(float(z["cap_ticks"]))
+		vf.append(1.0 if z["contested"] else 0.0)
 	for part: PackedByteArray in [
 		vf.to_byte_array(),
 		enemy_id.to_byte_array(),
@@ -1093,6 +1107,7 @@ func _find_spawn_spot(v: SimVehicle) -> Vector2:
 func _begin_workshop() -> void:
 	_compact_enemies()
 	Bosses.end_round(self)
+	Zones.finish(self)
 	var stride: int = maxi(1, ceili(float(enemy_count) / float(RETREAT_EVENT_CAP)))
 	for i in range(0, enemy_count, stride):
 		_emit("retreat", enemy_pos[i], -1, enemy_kind[i])
@@ -1174,6 +1189,7 @@ func _begin_combat() -> void:
 		v.ready = false
 		v.picked = false
 		v.round_stats = new_round_stats(round)
+		v.zone_ticks = 0
 		v.kill_counts = {}
 		v.last_hit_attacker = -1
 		if v.alive and not v.eliminated:
@@ -1199,6 +1215,7 @@ func _begin_combat() -> void:
 			w["heat"] = 0
 			w["jam"] = 0
 			w["sw"] = 0
+	Zones.setup(self)
 
 
 ## Ends the game when at most one player is left in a multiplayer game (winner = the survivor),
