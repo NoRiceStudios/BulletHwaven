@@ -2046,6 +2046,9 @@ func _fire_weapons(v: SimVehicle) -> void:
 			tvel = v.target_vel
 			ti = v.target_index
 			tid = v.target_id
+		w["ak"] = tk  # what this gun is on after the fallback (synced, render: target marks)
+		w["aid"] = tid
+		w["ap"] = tpos
 		if tk == 0:
 			_cool_heat(w)
 			continue
