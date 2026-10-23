@@ -239,6 +239,8 @@ func _unhandled_input(event: InputEvent) -> void:
 ## Clicks at `p` (viewport pixels) exactly like the mouse does; used by screenshot scenarios too.
 ## In the RULES view everything below the top bar belongs to the embedded editor.
 func click_at(p: Vector2) -> bool:
+	if (_tab == "rules" or _deploy_shown) and rules != null and rules.menu_open():
+		return rules.click_at(p)  # an open picker may reach over the top bar: it gets the click first
 	var h: Array = _hit_at(p)
 	if h.is_empty():
 		if (_tab == "rules" or _deploy_shown) and rules != null and rules.is_open:

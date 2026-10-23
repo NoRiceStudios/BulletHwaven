@@ -87,10 +87,10 @@ One branch to its keystone costs 2,130 scrap (100 + 140 + 240 + 380 + 520 + 750)
 
 | Stage | Node | id | Cost | Needs | Effect |
 |---|---|---|---|---|---|
-| 1 | **Rangefinder** | `electronics_rangefinder` | 100 | - | +1 rule slot, condition *boulders near*, laser dot on the current target, +8% damage. |
-| 2a | **Radar Array** | `electronics_radar` | 140 | any stage 1 node (not a prototype) | Conditions *fuel below* and *rival weaker than me*; scouting shows rival rules; spitters are marked 1 s before they spit. |
+| 1 | **Rangefinder** | `electronics_rangefinder` | 100 | - | +1 rule slot, condition *boulders near*, rules may match on ANY condition (`/`), laser dot on the current target, +8% damage. |
+| 2a | **Radar Array** | `electronics_radar` | 140 | any stage 1 node (not a prototype) | Conditions *fuel below*, *rival weaker than me*, *under fire* and *round time*; scouting shows rival rules; spitters are marked 1 s before they spit. |
 | 2b | **Fire Control Relay** | `electronics_relay` | 140 | any stage 1 node (not a prototype) | Action **focus fire** (all guns on one target), +15% fire rate. |
-| 3 | **Targeting Computer** | `electronics_targeting` | 240 | any stage 2 node (not a prototype) | +1 rule slot, 4 conditions per rule, condition *ability ready*, +8% damage. |
+| 3 | **Targeting Computer** | `electronics_targeting` | 240 | any stage 2 node (not a prototype) | +1 rule slot, 4 conditions per rule, condition *ability ready*, rule hold (`@N`), its own target priority list per gun, +8% damage. |
 | 3P | **Auxiliary Mount** | `electronics_aux_mount` | 180 | any stage 2 node (not a prototype) | +1 weapon slot, all weapons -10% range. |
 | 4a | **EMP Pulse** | `electronics_emp` | 380 | the stage 3 core | Ability **EMP**: aliens within 120 px stunned 1.5 s, rival rules off for 3 s, 20 s cooldown. Auto-cast: 5 or more aliens within 120 px. |
 | 4b | **Smoke Launcher** | `electronics_smoke` | 380 | the stage 3 core | Ability **Smoke**: 3 s untargetable, aliens lose their target, 15 s cooldown. Auto-cast: hp < 40%. |

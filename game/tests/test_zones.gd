@@ -352,7 +352,7 @@ func test_snapshot_round_trip() -> void:
 	assert_eq(bad[at], 1)
 	bad[at + 1] = 9
 	assert_false(Snapshot.apply(SimWorld.new(1), bad))
-	assert_eq(Snapshot.VERSION, 18)
+	assert_eq(Snapshot.VERSION, 19)
 	assert_true(Snapshot.EVENT_TYPES.has("zone_bonus"))
 
 
