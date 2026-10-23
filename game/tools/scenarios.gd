@@ -85,6 +85,10 @@ extends RefCounted
 ## - "picker"   the programmed rig of "rules" in combat with the dock's behaviour picker open (--hover a chip).
 ## - "mark"     skirmish where MAD MAREK right-clicks an alien at tick MARK_CAST_TICK (target mark order;
 ##              about 215 ticks shows the reticle snapping in, 300 the order running).
+## - "rules_logic" / "rules_logic_weapon" the rule editor on a rig with Radar and Targeting Computer: an ANY rule
+##              with a hold time, a switched-off rule, a rule shadowed by an ALWAYS rule above it, an edited
+##              priority list (the cannon has its own). Combat overlay, rig tab / cannon tab.
+## - "workshop_rules" the "workshop" scenario in its RULES view.
 ## - "rules_live" the programmed rig of "rules" in combat with the live rule monitor (no overlay).
 ## - "radio"    skirmish where MAD MAREK calls ALL IN on the radio at tick MARK_CAST_TICK (about 260 ticks).
 ## - "deploy"   the deploy screen before round 1 (three rigs, one ready; --click a preset). Under 900 ticks.
@@ -103,7 +107,7 @@ const NAMES: PackedStringArray = ["skirmish", "horde", "workshop", "tech_tree", 
 	"recap", "recap_pvp", "scouting", "combat_feed", "pvp_grace", "spectator", "spectator_ws", "awards",
 	"tech_mid", "tech_swap", "workshop_mid", "tech_beginner", "fx_firebrand", "fx_fortress", "fx_scrapper",
 	"fx_chassis", "fx_ram", "juice", "juice_surge", "evo_combat", "evo_flip", "evo_workshop", "evo_moment", "boss_tripod", "boss_colossus", "boss_shards",
-	"boss_warning", "boss_enraged", "boss_spawn", "boss_phase", "boss_kill", "boss_kill_colossus", "boss_retreat", "species", "hive", "picker", "deploy", "mark", "radio", "rules_live", "zones", "zones_locked"]
+	"boss_warning", "boss_enraged", "boss_spawn", "boss_phase", "boss_kill", "boss_kill_colossus", "boss_retreat", "species", "hive", "picker", "deploy", "mark", "radio", "rules_live", "zones", "zones_locked", "rules_logic", "rules_logic_weapon", "workshop_rules"]
 const EVO_FLIP_TICK := 90
 const MARK_CAST_TICK := 200
 const EVO_PICK_DELAY := 30
@@ -141,7 +145,7 @@ static func build(name: String, p_seed: int) -> SimWorld:
 			return _skirmish(p_seed)
 		"horde":
 			return _horde(p_seed)
-		"workshop", "tech_tree", "tech_mid", "tech_swap", "workshop_mid", "tech_beginner":
+		"workshop", "tech_tree", "tech_mid", "tech_swap", "workshop_mid", "tech_beginner", "workshop_rules":
 			var w: SimWorld = _skirmish(p_seed)
 			w.fast_rounds = true
 			return w
@@ -171,6 +175,8 @@ static func build(name: String, p_seed: int) -> SimWorld:
 			return build("gameover_mp", p_seed)
 		"rules", "rules_weapon", "picker", "rules_live":
 			return _programmed(p_seed)
+		"rules_logic", "rules_logic_weapon":
+			return _programmed_logic(p_seed)
 		"deploy":
 			return _deploy(p_seed)
 		"mark", "radio":
@@ -280,6 +286,12 @@ static func ui_state(name: String) -> Dictionary:
 			return {"rules": "rig"}
 		"rules_weapon":
 			return {"rules": "cannon"}
+		"rules_logic":
+			return {"rules": "rig"}
+		"rules_logic_weapon":
+			return {"rules": "cannon"}
+		"workshop_rules":
+			return {"workshop_tab": "rules"}
 		"picker":
 			return {"picker": true}
 		"rematch", "awards":
@@ -364,7 +376,7 @@ static func step(name: String, w: SimWorld) -> void:
 		"menu", "join", "lobby":
 			if w.phase == SimWorld.PHASE_WORKSHOP:
 				_ready_all(w)
-		"workshop", "tech_tree", "tech_mid", "tech_swap", "workshop_mid", "tech_beginner":
+		"workshop", "tech_tree", "tech_mid", "tech_swap", "workshop_mid", "tech_beginner", "workshop_rules":
 			if w.phase == SimWorld.PHASE_WORKSHOP:
 				if w.round < WORKSHOP_ROUND:
 					_ready_all(w)
@@ -1305,6 +1317,22 @@ static func _programmed(p_seed: int) -> SimWorld:
 		{"type": "set_weapon_target", "scope": "cannon", "value": "strongest"},
 		{"type": "set_rules", "scope": "cannon", "value": "t_boulder=1&t_hp<20|fire:hold;has_target=1|target:spitters"},
 		{"type": "set_rules", "scope": "mg", "value": "t_dist>200|fire:hold"},
+	]:
+		w.apply_command(me.peer_id, cmd)
+	return w
+
+
+static func _programmed_logic(p_seed: int) -> SimWorld:
+	var w: SimWorld = _programmed(p_seed)
+	var me: SimVehicle = w.vehicles[0]
+	me.tech.append_array(["electronics_radar", "electronics_targeting"])
+	Cards.recompute(me)
+	for cmd: Dictionary in [
+		{"type": "set_rules", "scope": "rig", "value": "hp<35/under_fire=1/swarm>25|drive:flee@2;-swarm>10&t_dist<150|drive:kite;flyers>1|target:priority;|target:nearest;pvp=1&rivals>0|target:players_first"},
+		{"type": "set_target", "value": "priority"},
+		{"type": "set_priority", "scope": "rig", "value": "boss,glass,spitter,shrieker,brood,mite,-boulder,rival:weakest"},
+		{"type": "set_weapon_target", "scope": "cannon", "value": "priority"},
+		{"type": "set_priority", "scope": "cannon", "value": "boss,boulder,brood,spitter,shrieker,glass,-mite,-rival:strongest"},
 	]:
 		w.apply_command(me.peer_id, cmd)
 	return w

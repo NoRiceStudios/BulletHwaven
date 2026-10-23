@@ -187,6 +187,17 @@ func test_rules_are_deterministic() -> void:
 	assert_eq(sums[0], sums[1], "same seed, same rules, same world")
 
 
+## Picks the entry with `value` in the editor's open picker (like a click on it).
+func _menu_pick(ed: DoctrineEditor, value: Variant) -> void:
+	var items: Array = ed._menu.get("items", [])
+	for k in items.size():
+		var it: Array = items[k]
+		if not bool(it[5]) and typeof(it[1]) == typeof(value) and it[1] == value:
+			ed.activate("menu_locked" if bool(it[4]) else "menu_pick", k)
+			return
+	assert_true(false, "picker entry %s not found" % str(value))
+
+
 func test_editor_edits_through_commands() -> void:
 	var w := _world()
 	var v: SimVehicle = w.vehicles[0]
@@ -196,33 +207,87 @@ func test_editor_edits_through_commands() -> void:
 	ed.local_peer = 1
 	ed.send_command = func(cmd: Dictionary) -> void: w.apply_command(1, NetSession.validate_command(cmd))
 	ed.open("rig")
-	ed.activate("template", "swarm>20|drive:kite")
-	ed.activate("add_rule", null)
+	ed.activate("new_menu", null)
+	_menu_pick(ed, "swarm>20|drive:kite")
+	ed.activate("new_menu", null)
+	_menu_pick(ed, "hp<30|drive:flee")
 	assert_eq(Doctrine.encode(v.rules), "swarm>20|drive:kite;hp<30|drive:flee")
+	assert_eq(ed._sel, 1, "the new rule unfolds")
 	ed.activate("up", 1)
 	ed.activate("inc", [0, 0])
-	ed.activate("op", [0, 0])
+	ed.activate("op", [0, 0, ">"])
 	assert_eq(Doctrine.encode(v.rules), "hp>40|drive:flee;swarm>20|drive:kite", "reorder, step, flip")
-	ed.activate("add_rule", null)
+	ed.activate("new_menu", null)
+	assert_true(ed._menu.is_empty(), "slots full: no picker")
 	assert_eq(v.rules.size(), 2, "slots full: nothing added")
 	ed.activate("action", 1)
-	ed.activate("menu_pick", "target:weakest")
+	_menu_pick(ed, "target:weakest")
 	ed.activate("add_cond", 1)
-	ed.activate("menu_pick", "t_player")
+	_menu_pick(ed, "t_player")
 	assert_eq(Doctrine.encode(v.rules), "hp>40|drive:flee;swarm>20&t_player=1|target:weakest")
-	ed.activate("cond", [1, 0])
-	ed.activate("menu_pick", "")
+	ed.activate("value_menu", [1, 0])
+	_menu_pick(ed, 35)
+	ed.activate("op", [1, 1, 0])
+	assert_eq(Doctrine.encode(v.rules), "hp>40|drive:flee;swarm>35&t_player=0|target:weakest", "value picker, YES / NO")
+	ed._sel = 1
+	ed.activate("rule_any", true)
+	assert_eq(Doctrine.encode(v.rules), "hp>40|drive:flee;swarm>35&t_player=0|target:weakest", "ANY needs the rangefinder")
+	ed.activate("rule_off", 0)
+	assert_true(Doctrine.rule_off(v.rules[0]), "switched off")
+	ed.activate("undo", null)
+	assert_false(Doctrine.rule_off(v.rules[0]), "undo")
+	ed.activate("del_cond", [1, 1])
 	ed.activate("delete", 0)
-	assert_eq(Doctrine.encode(v.rules), "t_player=1|target:weakest", "remove condition, delete rule")
+	assert_eq(Doctrine.encode(v.rules), "swarm>35|target:weakest", "remove condition, delete rule")
+	ed.activate("undo", null)
+	assert_eq(v.rules.size(), 2, "undo brings the rule back")
+	# priority list
+	ed.activate("prio_up", 1)
+	ed.activate("prio_toggle", "rival")
+	ed.activate("prio_pick", "weakest")
+	assert_eq(Doctrine.encode_priority(v.target_prio), "shrieker,boss,spitter,brood,glass,mite,boulder,-rival:weakest")
+	ed.activate("use_prio", null)
+	assert_eq(str(v.doctrine["target"]), "priority")
 	ed.activate("tab", "cannon")
 	assert_eq(ed.scope, "cannon")
-	ed.activate("weapon_target", "boulders")
-	ed.activate("template", "t_boulder=1|fire:hold")
-	assert_eq(Doctrine.fingerprint(v), "t_player=1|target:weakest#cannon:boulders:t_boulder=1|fire:hold")
+	ed.activate("prio_mode", true)
+	assert_false(Doctrine.weapon_has_own_priority(v, "cannon"), "a gun's own list needs the targeting computer")
+	ed.activate("base_target_menu", null)
+	_menu_pick(ed, "boulders")
+	ed.activate("new_menu", null)
+	_menu_pick(ed, "t_boulder=1|fire:hold")
+	assert_eq(str(Doctrine.weapon_doc(v, "cannon")["target"]), "boulders")
+	assert_eq(Doctrine.encode(Doctrine.weapon_doc(v, "cannon")["rules"]), "t_boulder=1|fire:hold")
 	ed.activate("tab", "flamer")
 	assert_eq(ed.scope, "rig", "a gun the rig does not own falls back to the rig tab")
 	assert_eq(DoctrineEditor.sentence(Doctrine.parse("hp<30&t_player=0|drive:flee", "rig")[0], "rig"),
 		"IF OWN HP IS BELOW 30% AND THE TARGET IS NOT A RIVAL: THE RIG FLEES.")
+	assert_eq(DoctrineEditor.sentence(Doctrine.parse("hp<30/swarm>20|drive:flee@2", "rig")[0], "rig"),
+		"IF OWN HP IS BELOW 30% OR MORE THAN 20 ALIENS ARE NEAR: THE RIG FLEES AND KEEPS AT IT FOR 2 S.")
+	ed.free()
+
+
+func test_editor_picker_fits_the_panel() -> void:
+	var w := _world()
+	var ed := DoctrineEditor.new()
+	ed.world = w
+	ed.local_peer = 1
+	ed.send_command = func(cmd: Dictionary) -> void: w.apply_command(1, NetSession.validate_command(cmd))
+	ed.open("rig")
+	ed.activate("new_menu", null)
+	_menu_pick(ed, "hp<30|drive:flee")
+	for panel: Rect2 in [Rect2(), Rect2(138, 34, 496, 310), Rect2(6, 34, 628, 310)]:
+		if panel.size.x > 0.0:
+			ed.open_embedded(panel)
+		for anchor_y: float in [40.0, 120.0, 200.0, 330.0]:
+			ed._clicked = Rect2(300, anchor_y, 40, 10)
+			ed.activate("add_cond", 0)
+			var scr: Rect2 = ed._screen()
+			var r: Rect2 = ed._menu["rect"]
+			assert_true(scr.encloses(r), "picker inside the screen (panel %s, anchor %d)" % [str(panel), anchor_y])
+			for it: Array in ed._menu["items"]:
+				assert_true(r.encloses(it[0]), "every entry inside the picker")
+			ed._menu = {}
 	ed.free()
 
 
@@ -387,7 +452,9 @@ func test_new_conditions() -> void:
 	assert_eq(Doctrine._value(w, v, "round_time", 0, -1, -1, none, ctx), t0 + 2.0, "seconds into the combat")
 	assert_eq(v.hurt_ticks, 0, "under_fire expires after 60 ticks")
 	for pair in [["t_mite", 0, 1.0], ["t_glass", 3, 1.0], ["t_brood", 4, 1.0], ["t_shrieker", 5, 1.0], ["t_boss", SimWorld.BOSS_A, 1.0], ["t_boss", 0, 0.0], ["t_mite", 2, 0.0]]:
-		var e: int = w.spawn_enemy(int(pair[1]), v.pos + Vector2(100, 100))
+		w.spawn_enemy(mini(int(pair[1]), SimWorld.SHRIEKER), v.pos + Vector2(100, 100))
+		var e: int = w.enemy_count - 1  # spawn_enemy returns the stable id, not the index
+		w.enemy_kind[e] = int(pair[1])  # bosses are not spawned through spawn_enemy
 		assert_eq(Doctrine._value(w, v, str(pair[0]), 1, e, w.enemy_id[e], none, ctx), float(pair[2]), "%s on kind %d" % [pair[0], pair[1]])
 	var locked: SimVehicle = _world().vehicles[0]
 	assert_false(Doctrine.cond_unlocked(locked, "under_fire"))

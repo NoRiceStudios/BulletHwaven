@@ -305,7 +305,7 @@ func _hit_at(p: Vector2) -> Array:
 
 
 func _is_hover(action: String, arg: Variant = null) -> bool:
-	return not _hover.is_empty() and _hover[1] == action and (arg == null or _hover[2] == arg)
+	return not _hover.is_empty() and _hover[1] == action and (arg == null or (typeof(_hover[2]) == typeof(arg) and _hover[2] == arg))
 
 
 # ---------------------------------------------------------------- input
@@ -879,7 +879,7 @@ func _draw_side(v: SimVehicle, side: Rect2) -> void:
 		for w in v.weapons:
 			if str(w["kind"]) == scope:
 				wp = w
-		var info := "RANGE %d  DMG %s  %s/S" % [roundi(float(wp.get("range", 0.0))), UiKit.num(float(wp.get("damage", 0.0)) * float(wp.get("pellets", 1))),
+		var info := "RANGE %d  DMG %s  %s/S" % [roundi(float(wp.get("range", 0.0))), UiKit.num(snappedf(float(wp.get("damage", 0.0)) * float(wp.get("pellets", 1)), 0.1)),
 			UiKit.num(float(SimWorld.TICK_RATE) / maxf(float(wp.get("cooldown_ticks", 1)), 1.0))]
 		UiFont.draw_small(self, info, Vector2(x, y), Gfx.CRT_DIM)
 		y += ROW
@@ -901,7 +901,7 @@ func _draw_side(v: SimVehicle, side: Rect2) -> void:
 		var t: String = order[i]
 		var is_off: bool = off.has(t)
 		var row := Rect2(x - 3, y - 2, side.size.x + 2, 10)
-		if editable and _menu.is_empty() and not _hover.is_empty() and (_hover[2] == t or (_hover[2] is int and int(_hover[2]) == i and str(_hover[1]).begins_with("prio_"))):
+		if editable and _menu.is_empty() and not _hover.is_empty() and ((_hover[2] is String and _hover[2] == t) or (_hover[2] is int and int(_hover[2]) == i and str(_hover[1]).begins_with("prio_"))):
 			draw_rect(row, UiKit.HOVER_WASH)
 		var col: Color = Gfx.CRT_DIM if is_off or not editable else Gfx.CRT_TEXT
 		if not is_off:
@@ -1041,7 +1041,7 @@ func _draw_card(v: SimVehicle, i: int, r: Dictionary, frame: Rect2, lit: bool, s
 	var inner_w: float = frame.size.x - 10.0
 	var sent: PackedStringArray = UiFont.wrap_small(DoctrineEditor.sentence(r, scope), int(inner_w))
 	var note: PackedStringArray = UiFont.wrap_small(str(status[2]), int(inner_w)) if not status.is_empty() else PackedStringArray()
-	var h: float = 14.0 + (ROW if conds.size() >= 2 else 0.0) + ROW * conds.size() + ROW + ROW + 4.0 + 8.0 * sent.size() + 8.0 * note.size() + 3.0
+	var h: float = 14.0 + (ROW if conds.size() >= 2 else 0.0) + ROW * conds.size() + ROW + ROW + 4.0 + 8.0 * sent.size() + 8.0 * note.size() + 5.0
 	var card := Rect2(frame.position, Vector2(frame.size.x, h))
 	draw_rect(card, Color(Gfx.CRT_TEXT, 0.16 if lit else 0.07))
 	UiKit.outline_rect(self, card, Gfx.CRT_TEXT)
@@ -1293,7 +1293,7 @@ func _seg(options: Array, pos: Vector2, cur: Variant, action: String, arg: Varia
 		var a: Variant = val
 		if arg is Array:
 			a = (arg as Array) + [val]
-		var w: float = UiFont.width(str(o[1])) + 6.0 + (6.0 if bool(o[2]) else 0.0)
+		var w: float = UiFont.width(str(o[1])) + 8.0 + (6.0 if bool(o[2]) else 0.0)
 		var r := Rect2(x - 2, pos.y - 2, w, 10)
 		var on: bool = typeof(val) == typeof(cur) and val == cur
 		var hov: bool = not disabled and _menu.is_empty() and _is_hover(action, a)
@@ -1303,7 +1303,7 @@ func _seg(options: Array, pos: Vector2, cur: Variant, action: String, arg: Varia
 			draw_rect(r, Color(Gfx.CRT_TEXT, 0.22))
 		UiKit.outline_rect(self, r, Gfx.CRT_TEXT if on and not disabled else Gfx.CRT_DIM)
 		var tc: Color = Gfx.CRT_BG if on else (Gfx.CRT_DIM if bool(o[2]) or disabled else (Gfx.CRT_HI if hov else Gfx.CRT_TEXT))
-		var tx: float = x + 1.0
+		var tx: float = x + 2.0
 		if bool(o[2]):
 			_padlock(Vector2(tx, pos.y), tc)
 			tx += 6.0
@@ -1397,7 +1397,7 @@ static func short_text(rule: Dictionary) -> String:
 			parts.append("%s %s %d%s" % [lab, c[1], int(c[2]), str(m.get("unit", ""))])
 	var head: String = "ALWAYS" if parts.is_empty() else (" OR " if bool(rule.get("any", false)) else " & ").join(parts)
 	var hold: int = int(rule.get("hold", 0))
-	return "%s  >  %s%s" % [head, _label(str(rule["do"])).trim_prefix("TGT "), (" (%dS)" % hold) if hold > 0 else ""]
+	return "%s  THEN  %s%s" % [head, _label(str(rule["do"])).trim_prefix("TGT "), (" (%dS)" % hold) if hold > 0 else ""]
 
 
 ## The rule as a plain sentence ("IF OWN HP IS BELOW 30%: THE RIG FLEES.").
