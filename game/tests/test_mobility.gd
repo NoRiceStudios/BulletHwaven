@@ -486,7 +486,7 @@ func test_snapshot_carries_mobility_state() -> void:
 	assert_eq(cv.nitro_count, 5)
 	assert_eq(cv.shed, 2)
 	assert_true(Mobility.is_juggernaut(cv), "tech fx follow from the tech list")
-	assert_eq(Snapshot.VERSION, 18)
+	assert_eq(Snapshot.VERSION, 19)
 	# A rig with none of it pays one byte for the whole block.
 	var plain: SimWorld = _world([])
 	var with_state: PackedByteArray = Snapshot.encode(w)

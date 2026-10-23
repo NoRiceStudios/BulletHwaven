@@ -11,8 +11,11 @@ extends RefCounted
 ##                   capture id i8, capture ticks u8, flags u8 (bit 0 contested)
 ##   vehicles variable (about 160 B each: doctrine strings, weapons (with heat, jam, switch pause, loaded ammo), doctrine rules, fuel / flags,
 ##                   offers, cards, tech (+ purchase rounds, dormant fusions, respecs), player name and colour index). Rules are binary: u8 count,
-##                   per rule u8 action (Doctrine.ACTIONS index), u8 conditions, per condition
-##                   u8 id (Doctrine.COND_IDS), u8 op (Doctrine.OPS), u16 value
+##                   per rule u8 action (Doctrine.ACTIONS index), u8 flags (version 19: bit 0 any, bit 1 off, bits 2..4 hold seconds),
+##                   u8 conditions, per condition u8 id (Doctrine.COND_IDS), u8 op (Doctrine.OPS), u16 value.
+##                   After the rig rules (version 19) the rig's target priority, after each weapon doctrine's rules a u8 own-list flag and,
+##                   if 1, its priority; a priority is 10 B: 8 x u8 index into Doctrine.PRIO_TYPES (the order), u8 off bitmask
+##                   (bit = PRIO_TYPES index), u8 pick (Doctrine.PRIO_PICKS index)
 ##   events   7 B each  type, owner, kind, pos (u16 x2, 1/16 px, offset by POS_ORIGIN); the type byte's
 ##                      top bit (EVENT_EXTRA_BIT) adds 2 signed bytes: kill = victim, weapon;
 ##                      vehicle_destroyed = cause (SimWorld.SRC_*), killer
@@ -32,7 +35,7 @@ extends RefCounted
 ## current round, SimWorld.enemy_max_hp). Card and tech ids are table indices (Cards.DEFS / Tech.DEFS).
 ## Projectile pierce / splash are not sent: the client world is passive.
 
-const VERSION := 18  # 18: PvP control zones (header zone block after the ground zones, vehicle extras byte 2 bit 2: zone_ticks, zone_points stats, events zones_open / zone_captured / zone_bonus); 17: live condition masks (vehicle rule_conds u32, weapon clive u32); 16: radio commands (vehicle extras byte 2, bit 1: charges / ticks / cmd / lock), event radio; 15: live order "target mark" (vehicle extras flag 128: mark_order ticks / cooldown / kind / id), event mark; 14: hive signature (header u16), species kinds 3..5 (enemy kind 3 bits, heading 6 bits), taken stats glass / brood / shrieker, events shriek / brood; 13: boss rounds (header boss_first, FLAG_BOSS tail block, boss enemy kinds, boss events); 12: event surge; 11: salvage (contract offers and progress, loan debt, reserved card, bonus offers), events contract_done / saw / shockwave / chain / jerry_blast; 10: momentum, abilities (slots, cooldowns, effect timers, decoy), swarm mark, jam flags, stunned bitset; 9: ammo / heat per weapon, ground zones, burning bitset, float cooldowns; 8: tech v2.3 (dormant fusions, respecs, purchase rounds); 7: doctrine rules (rig + per weapon); 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
+const VERSION := 19  # 19: rule options any / off / hold (flags byte per rule), target priority lists (rig + per weapon doctrine), new conditions and target modes; 18: PvP control zones (header zone block after the ground zones, vehicle extras byte 2 bit 2: zone_ticks, zone_points stats, events zones_open / zone_captured / zone_bonus); 17: live condition masks (vehicle rule_conds u32, weapon clive u32); 16: radio commands (vehicle extras byte 2, bit 1: charges / ticks / cmd / lock), event radio; 15: live order "target mark" (vehicle extras flag 128: mark_order ticks / cooldown / kind / id), event mark; 14: hive signature (header u16), species kinds 3..5 (enemy kind 3 bits, heading 6 bits), taken stats glass / brood / shrieker, events shriek / brood; 13: boss rounds (header boss_first, FLAG_BOSS tail block, boss enemy kinds, boss events); 12: event surge; 11: salvage (contract offers and progress, loan debt, reserved card, bonus offers), events contract_done / saw / shockwave / chain / jerry_blast; 10: momentum, abilities (slots, cooldowns, effect timers, decoy), swarm mark, jam flags, stunned bitset; 9: ammo / heat per weapon, ground zones, burning bitset, float cooldowns; 8: tech v2.3 (dormant fusions, respecs, purchase rounds); 7: doctrine rules (rig + per weapon); 6: positions at 1/16 px (2560x1440 arena); 5: pvp_grace_ticks, fuel_drain, invuln_ticks, round/match stats, event extras
 const FLAG_WIDE_IDS := 1  ## enemy ids spread over more than 65535: ids are sent as u32 deltas from 0
 const FLAG_STATS := 2  ## vehicles carry round_stats and match_stats (sent outside combat only)
 const FLAG_BURNING := 4  ## a burning bitset follows the projectiles (only sent while something burns)
@@ -613,6 +616,7 @@ static func _put_vehicle(sp: StreamPeerBuffer, v: SimVehicle, with_stats: bool =
 	sp.put_u8(clampi(v.rule_live, 0, 255))
 	sp.put_u32(v.rule_conds & 0xFFFFFF)
 	_put_rules(sp, v.rules)
+	_put_priority(sp, v.target_prio)
 	var kinds: Array = []
 	for k: String in v.weapon_doctrine:
 		if Doctrine.is_weapon_scope(k) and kinds.size() < 255:
@@ -623,6 +627,10 @@ static func _put_vehicle(sp: StreamPeerBuffer, v: SimVehicle, with_stats: bool =
 		_put_str(sp, k)
 		sp.put_u8(maxi(Doctrine.WEAPON_TARGETS.find(str(wd["target"])), 0))
 		_put_rules(sp, wd["rules"])
+		var own: bool = Doctrine.weapon_has_own_priority(v, k)
+		sp.put_u8(1 if own else 0)
+		if own:
+			_put_priority(sp, wd["prio"])
 	sp.put_u16(clampi(v.fuel, 0, 65535))
 	sp.put_u16(clampi(v.respawn_ticks, 0, 65535))
 	sp.put_u8((1 if v.eliminated else 0) | (2 if v.ready else 0) | (4 if v.picked else 0))
@@ -1013,16 +1021,23 @@ static func _get_vehicle(r: _Reader, with_stats: bool = false) -> SimVehicle:
 	v.rule_live = r.u8()
 	v.rule_conds = r.u32()
 	v.rules = _get_rules(r, Doctrine.SCOPE_RIG)
+	v.target_prio = _get_priority(r)
 	v.weapon_doctrine = {}
 	var nwd: int = r.u8()
 	for i in nwd:
 		var wk: String = r.string()
 		var ti: int = r.u8()
 		var wrules: Array = _get_rules(r, wk)
+		var wprio: Dictionary = {}
+		if r.u8() == 1:
+			wprio = _get_priority(r)
 		if not r.ok:
 			return v
 		if Doctrine.is_weapon_scope(wk) and ti < Doctrine.WEAPON_TARGETS.size():
-			v.weapon_doctrine[wk] = {"target": Doctrine.WEAPON_TARGETS[ti], "rules": wrules}
+			var wdoc: Dictionary = {"target": Doctrine.WEAPON_TARGETS[ti], "rules": wrules}
+			if not wprio.is_empty():
+				wdoc["prio"] = wprio
+			v.weapon_doctrine[wk] = wdoc
 	v.fuel = r.u16()
 	v.respawn_ticks = r.u16()
 	var bits: int = r.u8()
@@ -1110,6 +1125,7 @@ static func _commit_vehicles(world: SimWorld, fresh: Array[SimVehicle]) -> void:
 			dst.doctrine = src.doctrine
 			dst.rules = src.rules
 			dst.weapon_doctrine = src.weapon_doctrine
+			dst.target_prio = src.target_prio
 			dst.rule_live = src.rule_live
 			dst.rule_conds = src.rule_conds
 			dst.weapons = src.weapons
@@ -1278,6 +1294,7 @@ static func _put_rules(sp: StreamPeerBuffer, rules: Array) -> void:
 		var conds: Array = rule["if"]
 		var nc: int = mini(conds.size(), Doctrine.MAX_CONDS)
 		sp.put_u8(maxi(Doctrine.ACTIONS.find(str(rule["do"])), 0))
+		sp.put_u8((1 if Doctrine.rule_any(rule) else 0) | (2 if Doctrine.rule_off(rule) else 0) | (Doctrine.rule_hold(rule) << 2))
 		sp.put_u8(nc)
 		for j in nc:
 			var c: Array = conds[j]
@@ -1295,6 +1312,7 @@ static func _get_rules(r: _Reader, scope: String) -> Array:
 		return out
 	for i in n:
 		var ai: int = r.u8()
+		var rflags: int = r.u8()
 		var nc: int = r.u8()
 		if nc > Doctrine.MAX_CONDS:
 			r.ok = false
@@ -1316,5 +1334,41 @@ static func _get_rules(r: _Reader, scope: String) -> Array:
 		if not r.ok:
 			return out
 		if good:
-			out.append({"if": conds, "do": Doctrine.ACTIONS[ai]})
+			var hold: int = (rflags >> 2) & 7
+			if hold <= Doctrine.MAX_HOLD:
+				out.append(Doctrine.make_rule(conds, Doctrine.ACTIONS[ai], (rflags & 1) != 0, (rflags & 2) != 0, hold))
 	return out
+
+
+## A target priority list: 8 order indices, off bitmask, pick index. A malformed list becomes the default.
+static func _put_priority(sp: StreamPeerBuffer, p: Dictionary) -> void:
+	var off: Array = p.get("off", [])
+	var mask: int = 0
+	for t: String in p["order"]:
+		var ti: int = maxi(Doctrine.PRIO_TYPES.find(t), 0)
+		sp.put_u8(ti)
+		if off.has(t):
+			mask |= 1 << ti
+	sp.put_u8(mask)
+	sp.put_u8(maxi(Doctrine.PRIO_PICKS.find(str(p.get("pick", "nearest"))), 0))
+
+
+static func _get_priority(r: _Reader) -> Dictionary:
+	var order: Array[String] = []
+	var off: Array[String] = []
+	var ids: Array[int] = []
+	for i in Doctrine.PRIO_TYPES.size():
+		ids.append(r.u8())
+	var mask: int = r.u8()
+	var pick: int = r.u8()
+	if not r.ok:
+		return Doctrine.default_priority()
+	for ti in ids:
+		if ti >= Doctrine.PRIO_TYPES.size() or order.has(Doctrine.PRIO_TYPES[ti]):
+			return Doctrine.default_priority()
+		order.append(Doctrine.PRIO_TYPES[ti])
+		if (mask >> ti) & 1 != 0:
+			off.append(Doctrine.PRIO_TYPES[ti])
+	if pick >= Doctrine.PRIO_PICKS.size():
+		pick = 0
+	return {"order": order, "off": off, "pick": Doctrine.PRIO_PICKS[pick]}

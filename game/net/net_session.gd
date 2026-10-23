@@ -321,6 +321,19 @@ static func validate_command(cmd: Variant) -> Dictionary:
 		if parsed == null:
 			return {}
 		return {"type": type_s, "scope": scope_s, "value": Doctrine.encode(parsed)}
+	if type_s == "set_priority":  # {"scope": "rig" | weapon kind, "value": priority text; "" = a weapon follows the rig}
+		var pscope: Variant = d.get("scope")
+		if typeof(pscope) != TYPE_STRING or typeof(v) != TYPE_STRING:
+			return {}
+		var pscope_s: String = pscope
+		if pscope_s != Doctrine.SCOPE_RIG and not Doctrine.is_weapon_scope(pscope_s):
+			return {}
+		if String(v) == "" and pscope_s != Doctrine.SCOPE_RIG:
+			return {"type": type_s, "scope": pscope_s, "value": ""}
+		var pp: Variant = Doctrine.parse_priority(String(v))
+		if pp == null:
+			return {}
+		return {"type": type_s, "scope": pscope_s, "value": Doctrine.encode_priority(pp)}
 	if type_s == "set_ammo":  # {"scope": weapon kind, "value": ammo id} (the sim checks it is unlocked)
 		var ascope: Variant = d.get("scope")
 		if typeof(ascope) != TYPE_STRING or typeof(v) != TYPE_STRING:

@@ -231,7 +231,7 @@ func test_snapshot_round_trip() -> void:
 	assert_eq(v2.radio_ticks, v.radio_ticks)
 	assert_eq(v2.radio_cmd, 1)
 	assert_eq(v2.radio_lock, 0)
-	assert_eq(Snapshot.VERSION, 18)
+	assert_eq(Snapshot.VERSION, 19)
 	assert_true(Snapshot.EVENT_TYPES.has("radio"))
 	_radio(w, "hold")
 	var w3 := SimWorld.new(1)
