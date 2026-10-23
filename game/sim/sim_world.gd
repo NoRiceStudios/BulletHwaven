@@ -406,6 +406,20 @@ func apply_command(peer_id: int, cmd: Dictionary) -> void:
 				Abilities.set_slot(v, _integral(cmd.get("slot")), str(cmd.get("value", "")))
 		"set_weapon_target":  # {"scope": weapon kind, "value": Doctrine.WEAPON_TARGETS}
 			Doctrine.set_weapon_target(v, str(cmd.get("scope", "")), str(cmd.get("value", "")))
+		"set_priority":  # {"scope": "rig" | weapon kind, "value": priority text; "" on a weapon = follow the rig}; any phase
+			var pscope: String = str(cmd.get("scope", ""))
+			var ptext: String = str(cmd.get("value", ""))
+			if pscope == Doctrine.SCOPE_RIG and ptext != "":
+				var pr: Variant = Doctrine.parse_priority(ptext)
+				if pr != null:
+					Doctrine.set_priority(v, pscope, pr)
+			elif Doctrine.is_weapon_scope(pscope):
+				if ptext == "":
+					Doctrine.set_priority(v, pscope, {})
+				elif Doctrine.weapon_prio_unlocked(v):
+					var wpr: Variant = Doctrine.parse_priority(ptext)
+					if wpr != null:
+						Doctrine.set_priority(v, pscope, wpr)
 		"pick_card":
 			if _can_shop(v) and not v.picked:
 				var idx: int = _integral(cmd.get("value"))
@@ -1068,6 +1082,8 @@ func _respawn(v: SimVehicle) -> void:
 	v.protect_ticks = 0
 	v.invuln_ticks = INVULN_TICKS
 	v.retaliate_ticks = 0
+	v.hurt_ticks = 0
+	Doctrine.clear_hold(v)
 	v.target_kind = 0
 	Orders.reset(v)
 	Orders.reset_radio(v, false)
@@ -1132,6 +1148,8 @@ func _begin_workshop() -> void:
 		v.protect_ticks = 0
 		v.invuln_ticks = 0
 		v.retaliate_ticks = 0
+		v.hurt_ticks = 0
+		Doctrine.clear_hold(v)
 		v.reroll_cost = maxi(1, REROLL_COST_START - v.reroll_discount)
 		v.offers = []
 		Abilities.clear_effects(v)
@@ -1737,6 +1755,8 @@ func _update_vehicles() -> void:
 			v.invuln_ticks -= 1
 		if v.retaliate_ticks > 0:
 			v.retaliate_ticks -= 1
+		if v.hurt_ticks > 0:
+			v.hurt_ticks -= 1
 		if v.regen > 0.0 and v.hp < v.max_hp:
 			v.hp = minf(v.hp + v.regen * DT, v.max_hp)
 		Abilities.tick(self, v)
@@ -1831,6 +1851,8 @@ func _damage_vehicle(v: SimVehicle, dmg: float, attacker: int, use_armor: bool =
 		v.retaliate_id = attacker
 		v.retaliate_ticks = RETALIATE_TICKS
 	var applied: float = minf(dmg, v.hp)
+	if dmg > 0.0:
+		v.hurt_ticks = Doctrine.UNDER_FIRE_TICKS
 	v.hp -= dmg
 	if dmg > Mobility.HIT_LOSS_MIN_DAMAGE and v.momentum > 0.0:
 		v.momentum = maxf(v.momentum - Mobility.HIT_LOSS, 0.0)
