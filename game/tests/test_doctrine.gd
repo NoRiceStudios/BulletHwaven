@@ -628,4 +628,4 @@ func test_priority_and_options_snapshot_roundtrip() -> void:
 	assert_eq(c.weapon_doctrine["cannon"]["prio"], v.weapon_doctrine["cannon"]["prio"])
 	assert_false(Doctrine.weapon_has_own_priority(c, "mg"))
 	assert_eq(Doctrine.encode_priority(client.vehicles[1].target_prio), Doctrine.DEFAULT_PRIO, "default list on the other rig")
-	assert_eq(Snapshot.VERSION, 19)
+	assert_eq(Snapshot.VERSION, 20)

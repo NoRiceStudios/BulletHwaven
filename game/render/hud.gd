@@ -177,6 +177,8 @@ func _draw() -> void:
 		var watching: bool = spec and not elim_recent
 		if world.vehicles.size() > 1:
 			_draw_standings(v)
+		if view != null and view.rig_status != null and view.rig_status.visible_now():
+			_panels.append(RigStatus.panel_rect(world, v))
 		if watching:
 			_draw_spectating(vs, v)
 		elif me != null and not me.eliminated:

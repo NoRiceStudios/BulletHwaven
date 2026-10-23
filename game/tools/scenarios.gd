@@ -8,16 +8,16 @@ extends RefCounted
 ##                  magenta already picked and ready.
 ## - "tech_tree"    (about 400 ticks): the same workshop later in a match: red owns 14 tech nodes
 ##                  (both ballistics forks taken, a fusion) and 640 scrap, with the TECH view
-##                  open (full tree, beginner view off); --hover a node.
-## - "tech_mid"     (about 400 ticks) TECH view later in a match (tech tree v2.3 UI): plan FIREBRAND, a
+##                  open (all five branches, no goals yet: the three ideas); --hover a node.
+## - "tech_mid"     (about 400 ticks) TECH view later in a match (tech tree v2.3 UI): FIREBRAND goals, a
 ##                  built fusion (Hot Rod), a dormant one (Thermite Ram after swapping the bumper away),
 ##                  an idle keystone (War Rig after Truck -> Roll Cage), an active keystone in its swap
 ##                  window (Glowing Barrels), three fusions ready, mixed belts and three abilities.
 ## - "tech_swap"    tech_mid with the swap confirmation open (click on the struck-out Ram Bumper).
 ## - "workshop_mid" tech_mid's rig (Tungsten Stock instead of Mixed Belts, so one ammo type per gun and a
 ##                  chip for the other) in the PARTS view: ammo per gun, ability slots, compact tech column.
-## - "tech_beginner" (about 400 ticks) the round 3 workshop in the beginner view: plan SCRAPPER, the
-##                  other branches folded under MORE.
+## - "tech_goals"   (about 400 ticks) the round 3 workshop with the player's own goals across three
+##                  branches (War Rig, Thunderclap, Scrap Baron): flags, the framed way, NEXT.
 ## - "gameover"     (about 300 ticks): solo, the last fuel burns in round 2, YOUR CONVOY IS LOST.
 ## - "gameover_mp"  (about 200 ticks): magenta runs dry, red is the last rig standing.
 ## - "eliminated"   (about 220 ticks): three rigs; red runs dry and spectates (ELIMINATED).
@@ -30,6 +30,8 @@ extends RefCounted
 ##                  The world is not stepped (any ticks), so the line-up stays put.
 ## - "late_round"   (about 240 ticks) round 8: a dense hive of boulders and spitters, corpses piling
 ##                  up, the local rig at low hp (red vignette), rivals with builds and a bounty leader.
+## - "ranges"       (about 60 ticks) the weapon range rings (R) around a rig with all four guns in a
+##                  horde: flamer, scatter gun and machine gun rings, the cannon's reaching off screen.
 ## - "pvp_on"       (about 380 ticks) fast rounds up to the start of round 4: the PVP ON banner.
 ## - "rig_kill"     (about 60 ticks) a rival rig blowing up next to yours (explosion and debris).
 ##
@@ -105,9 +107,9 @@ extends RefCounted
 const NAMES: PackedStringArray = ["skirmish", "horde", "workshop", "tech_tree", "gameover", "gameover_mp", "eliminated",
 	"menu", "join", "lobby", "pause", "rematch", "waiting", "rig_growth", "late_round", "pvp_on", "rig_kill",
 	"recap", "recap_pvp", "scouting", "combat_feed", "pvp_grace", "spectator", "spectator_ws", "awards",
-	"tech_mid", "tech_swap", "workshop_mid", "tech_beginner", "fx_firebrand", "fx_fortress", "fx_scrapper",
+	"tech_mid", "tech_swap", "workshop_mid", "tech_goals", "fx_firebrand", "fx_fortress", "fx_scrapper",
 	"fx_chassis", "fx_ram", "juice", "juice_surge", "evo_combat", "evo_flip", "evo_workshop", "evo_moment", "boss_tripod", "boss_colossus", "boss_shards",
-	"boss_warning", "boss_enraged", "boss_spawn", "boss_phase", "boss_kill", "boss_kill_colossus", "boss_retreat", "species", "hive", "picker", "deploy", "mark", "radio", "rules_live", "zones", "zones_locked", "rules_logic", "rules_logic_weapon", "workshop_rules"]
+	"boss_warning", "boss_enraged", "boss_spawn", "boss_phase", "boss_kill", "boss_kill_colossus", "boss_retreat", "species", "hive", "picker", "deploy", "mark", "radio", "rules_live", "zones", "zones_locked", "rules_logic", "rules_logic_weapon", "workshop_rules", "ranges", "targets"]
 const EVO_FLIP_TICK := 90
 const MARK_CAST_TICK := 200
 const EVO_PICK_DELAY := 30
@@ -145,7 +147,7 @@ static func build(name: String, p_seed: int) -> SimWorld:
 			return _skirmish(p_seed)
 		"horde":
 			return _horde(p_seed)
-		"workshop", "tech_tree", "tech_mid", "tech_swap", "workshop_mid", "tech_beginner", "workshop_rules":
+		"workshop", "tech_tree", "tech_mid", "tech_swap", "workshop_mid", "tech_goals", "workshop_rules":
 			var w: SimWorld = _skirmish(p_seed)
 			w.fast_rounds = true
 			return w
@@ -181,10 +183,16 @@ static func build(name: String, p_seed: int) -> SimWorld:
 			return _deploy(p_seed)
 		"mark", "radio":
 			return _skirmish(p_seed)
+		"targets":
+			return _targets(p_seed)
 		"rig_growth":
 			return _rig_growth(p_seed)
 		"late_round":
 			return _late_round(p_seed)
+		"ranges":
+			var wr: SimWorld = _horde(p_seed)
+			_outfit(wr.vehicles[0], 3, {"flamer": 2, "shotgun": 1, "cannon": 2, "mg": 3})
+			return wr
 		"pvp_on":
 			var w4: SimWorld = attract(p_seed)
 			w4.fast_rounds = true
@@ -272,16 +280,18 @@ static func ui_state(name: String) -> Dictionary:
 				"info": "HOSTING ON PORT 24680 - FRIENDS FIND YOU UNDER JOIN LAN GAME"}
 		"pause":
 			return {"screen": "pause", "solo": false}
+		"ranges":
+			return {"ranges": true}
 		"tech_tree":
-			return {"workshop_tab": "tech", "workshop_actions": [["beginner", false]]}
+			return {"workshop_tab": "tech"}
 		"tech_mid":
-			return {"workshop_tab": "tech", "workshop_actions": [["beginner", false], ["tpl", "firebrand"]]}
+			return {"workshop_tab": "tech", "workshop_actions": [["idea", "firebrand"]]}
 		"tech_swap":
-			return {"workshop_tab": "tech", "workshop_actions": [["beginner", false], ["tpl", "firebrand"], ["tech", "propulsion_bumper"]]}
+			return {"workshop_tab": "tech", "workshop_actions": [["idea", "firebrand"], ["tech", "propulsion_bumper"]]}
 		"workshop_mid":
-			return {"workshop_actions": [["tpl", "firebrand"]]}
-		"tech_beginner":
-			return {"workshop_tab": "tech", "workshop_actions": [["beginner", true], ["tpl", "scrapper"]]}
+			return {"workshop_actions": [["idea", "firebrand"]]}
+		"tech_goals":
+			return {"workshop_tab": "tech", "workshop_actions": [["goal", "engineering_war_rig"], ["goal", "fusion_thunderclap"], ["goal", "salvage_baron"]]}
 		"rules":
 			return {"rules": "rig"}
 		"rules_weapon":
@@ -376,7 +386,7 @@ static func step(name: String, w: SimWorld) -> void:
 		"menu", "join", "lobby":
 			if w.phase == SimWorld.PHASE_WORKSHOP:
 				_ready_all(w)
-		"workshop", "tech_tree", "tech_mid", "tech_swap", "workshop_mid", "tech_beginner", "workshop_rules":
+		"workshop", "tech_tree", "tech_mid", "tech_swap", "workshop_mid", "tech_goals", "workshop_rules":
 			if w.phase == SimWorld.PHASE_WORKSHOP:
 				if w.round < WORKSHOP_ROUND:
 					_ready_all(w)
@@ -1306,6 +1316,23 @@ static func _stage_awards(w: SimWorld) -> void:
 
 ## The rule editor (render/doctrine_editor.gd) over a skirmish: a rig with three guns and rules in
 ## several lists, some of them matching (lit lamps).
+## Target marks: three guns on up to three targets (cannon on the strongest, shotgun on the weakest,
+## the mg follows the rig, which circles the nearest).
+static func _targets(p_seed: int) -> SimWorld:
+	var w := SimWorld.new(p_seed)
+	var me: SimVehicle = w.add_vehicle(1, SimWorld.ARENA.get_center(), "MAD MAREK")
+	_scatter(w, 70, 0.15, 0.1, 90.0, 360.0)
+	_tech_up(w, me, ["engineering_frame", "engineering_welder", "engineering_pickup"])
+	_tech_up(w, me, [], {"cannon": 1, "shotgun": 1})
+	for cmd: Dictionary in [
+		{"type": "set_drive", "value": "circle"},
+		{"type": "set_weapon_target", "scope": "cannon", "value": "strongest"},
+		{"type": "set_weapon_target", "scope": "shotgun", "value": "weakest"},
+	]:
+		w.apply_command(me.peer_id, cmd)
+	return w
+
+
 static func _programmed(p_seed: int) -> SimWorld:
 	var w: SimWorld = _skirmish(p_seed)
 	var me: SimVehicle = w.vehicles[0]

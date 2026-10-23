@@ -55,6 +55,9 @@ var _camera: Camera2D
 var _hud: Hud
 var rules_live: RulesLive  ## live rule monitor on the right edge (combat, L toggles)
 var minimap: Minimap
+var rig_status: RigStatus  ## the watched rig's guns and active effects (left edge)
+var ranges: RangeOverlay  ## weapon range rings around the watched rig (R)
+var targets: TargetMarks  ## what the watched rig and each of its guns are on (T)
 var _hud_layer: CanvasLayer
 var workshop: WorkshopUi
 var game_over: GameOverUi
@@ -189,6 +192,9 @@ func _ready() -> void:
 	_combat = CombatFx.new()
 	_combat.view = self
 	add_child(_combat)
+	targets = TargetMarks.new()
+	targets.view = self
+	add_child(targets)
 
 	_kill_fx = KillFx.new()
 	_kill_fx.view = self
@@ -219,6 +225,9 @@ func _ready() -> void:
 		owner.add_child.call_deferred(hud_layer)
 	else:
 		add_child(hud_layer)
+	ranges = RangeOverlay.new()  # under the HUD panels
+	ranges.view = self
+	hud_layer.add_child(ranges)
 	_hud = Hud.new()
 	_hud.view = self
 	hud_layer.add_child(_hud)
@@ -228,6 +237,9 @@ func _ready() -> void:
 	rules_live = RulesLive.new()
 	rules_live.view = self
 	hud_layer.add_child(rules_live)
+	rig_status = RigStatus.new()
+	rig_status.view = self
+	hud_layer.add_child(rig_status)
 	workshop = WorkshopUi.new()
 	workshop.view = self
 	hud_layer.add_child(workshop)
@@ -488,6 +500,14 @@ func display(v: SimVehicle) -> Vector3:
 func display_pos(v: SimVehicle) -> Vector2:
 	var d: Vector3 = _vehicle_display(v)
 	return Gfx.snap(Vector2(d.x, d.y))
+
+
+## Where the alien with stable id `id` is drawn this frame (`fallback` if it is not drawn).
+func enemy_display_pos(id: int, fallback: Vector2) -> Vector2:
+	var d: Variant = _enemy_disp.get(id)
+	if d == null:
+		return fallback
+	return Vector2((d as Vector3).x, (d as Vector3).y)
 
 
 ## A persistent ground mark: cell `col` of a one-row decal sheet with `cols` cells.

@@ -165,7 +165,7 @@ const PHASE_DEPLOY := 3  # pre-match doctrine setup (begin_deploy); ends in roun
 const COMBAT_TICKS := 2100  # 70 s
 const COMBAT_TICKS_EARLY := 1350  # 45 s, rounds 1 and 2
 const EARLY_ROUNDS := 2
-const WORKSHOP_TICKS := 1350  # 45 s
+const WORKSHOP_TICKS := 3600  # 120 s (ready-skip ends it early)
 const DEPLOY_TICKS := 900  # 30 s
 const FAST_DEPLOY_TICKS := 60
 const FAST_COMBAT_TICKS := 120  # world.fast_rounds (tests, screenshots)
@@ -2046,6 +2046,9 @@ func _fire_weapons(v: SimVehicle) -> void:
 			tvel = v.target_vel
 			ti = v.target_index
 			tid = v.target_id
+		w["ak"] = tk  # what this gun is on after the fallback (synced, render: target marks)
+		w["aid"] = tid
+		w["ap"] = tpos
 		if tk == 0:
 			_cool_heat(w)
 			continue

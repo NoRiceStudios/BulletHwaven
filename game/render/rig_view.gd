@@ -17,8 +17,12 @@ var _trailer_shadow: Sprite2D
 var _trailer: Sprite2D
 var _layers: Array[Sprite2D] = []
 var _guns: Array[Sprite2D] = []
-var _gun_shadows: Dictionary = {}  ## gun index -> Sprite2D: evolved guns cast a shadow on the hull, so they stand off it
+var _gun_shadows: Dictionary = {}  ## gun index -> Sprite2D: every gun casts a shadow on the hull, so it stands off it
+var _gun_mats: Array[ShaderMaterial] = []  ## per gun: light rim, lifted metal, hot rim after a shot (gun.gdshader)
 const GUN_SHADOW := Vector2(2, 3)
+const GUN_SHADER := preload("res://render/gun.gdshader")
+const GUN_HOT_TICKS := 3  ## the rim glows hot this long after the gun fired
+const KICK := 1.0  ## px every plain gun jerks back along its barrel on the tick it fires
 var _flames: Array[Sprite2D] = []  ## [flame, glow] per exhaust
 var _trailer_dir: Vector2 = Vector2.ZERO  ## trailer forward direction (world), ZERO = not placed yet
 var _trailer_pos: Vector2 = Vector2.ZERO
@@ -73,6 +77,7 @@ func setup(v: SimVehicle) -> void:
 	for k in _gun_shadows:
 		(_gun_shadows[k] as Node).queue_free()
 	_gun_shadows.clear()
+	_gun_mats.clear()
 	for s in _flames:
 		s.queue_free()
 	_layers.clear()
@@ -87,18 +92,20 @@ func setup(v: SimVehicle) -> void:
 	_mounts = _mount_plan(guns.size(), RigArt.has_trailer(v), RigArt.has_sidecar(v))
 	for g: Array in guns:
 		var s: Sprite2D
-		if bool(g[2]):
-			s = _sprite(RigArt.GUN_EVO_TEX, Gfx.Z_TURRETS, 8)
-			s.frame_coords = Vector2i(0, Cards.weapon_kind_index(str(g[0])) * 2)
-			var sh := _sprite(RigArt.GUN_EVO_TEX, Gfx.Z_RIG_DECO, 8)
-			var sm := ShaderMaterial.new()
-			sm.shader = Gfx.SILHOUETTE_SHADER
-			sm.set_shader_parameter("shadow_color", Color(0.12, 0.1, 0.16, 0.55))
-			sh.material = sm
-			_gun_shadows[_guns.size()] = sh
-		else:
-			s = _sprite(RigArt.GUN_TEX[g[0]], Gfx.Z_TURRETS, 3)
-			s.frame_coords = Vector2i(0, int(g[1]) - 1)
+		var tex: Texture2D = RigArt.GUN_EVO_TEX if bool(g[2]) else RigArt.GUN_TEX[g[0]]
+		var rows: int = 8 if bool(g[2]) else 3
+		s = _sprite(tex, Gfx.Z_TURRETS, rows)
+		s.frame_coords = Vector2i(0, Cards.weapon_kind_index(str(g[0])) * 2 if bool(g[2]) else int(g[1]) - 1)
+		var gm := ShaderMaterial.new()
+		gm.shader = GUN_SHADER
+		s.material = gm
+		_gun_mats.append(gm)
+		var sh := _sprite(tex, Gfx.Z_RIG_DECO, rows)
+		var sm := ShaderMaterial.new()
+		sm.shader = Gfx.SILHOUETTE_SHADER
+		sm.set_shader_parameter("shadow_color", Color(0.12, 0.1, 0.16, 0.55))
+		sh.material = sm
+		_gun_shadows[_guns.size()] = sh
 		_guns.append(s)
 	_shadow.frame_coords = Vector2i(0, RigArt.shadow_row(v))
 	var trailer: bool = RigArt.has_trailer(v)
@@ -156,13 +163,18 @@ func place(v: SimVehicle, p: Vector2, head: float, tick: int, frozen: bool) -> v
 			g.position += Vector2(((tick + i) % 2) * 2 - 1, 0)
 		var aim: float = float(v.weapons[i].get("aim", head)) if i < v.weapons.size() else head
 		g.frame_coords.x = Gfx.frame_for_angle(aim, Gfx.VEHICLE_DIRS)
+		var since: int = tick - last_fire(Cards.weapon_kind_index(str(guns[i][0])))
 		if bool(guns[i][2]):
 			_animate_evo(i, g, v, tick)
-			var sh: Sprite2D = _gun_shadows.get(i)
-			if sh != null:
-				sh.visible = g.visible
-				sh.position = g.position + GUN_SHADOW
-				sh.frame_coords = g.frame_coords
+		elif since == 0 and v.alive and not frozen:
+			var a: float = Gfx.frame_rotation(g.frame_coords.x, Gfx.VEHICLE_DIRS) - PI / 2.0
+			g.position -= Gfx.snap(Vector2.from_angle(a) * KICK)
+		_gun_mats[i].set_shader_parameter("heat", 1.0 - float(since) / float(GUN_HOT_TICKS) if since >= 0 and since < GUN_HOT_TICKS else 0.0)
+		var sh: Sprite2D = _gun_shadows.get(i)
+		if sh != null:
+			sh.visible = g.visible
+			sh.position = g.position + GUN_SHADOW
+			sh.frame_coords = g.frame_coords
 	if not _flames.is_empty():
 		var boost: bool = v.nitro_ticks > 0 and v.sputter_ticks <= 0
 		var burning: bool = v.alive and (boost or (_nitro > 0 and v.vel.length() > NITRO_MIN_SPEED))
@@ -297,3 +309,5 @@ func muzzle(kind_index: int, aim: float) -> Array:
 ## Shimmer while protected (0 = off).
 func set_flash(f: float) -> void:
 	_mat.set_shader_parameter("flash", f)
+	for m in _gun_mats:
+		m.set_shader_parameter("flash", f)
