@@ -33,6 +33,7 @@ const DEMO_TICKS := 30 * 120  ## the menu's attract battle restarts after this m
 @onready var _view: WorldView = $Stage/World/WorldView
 
 var _menu: MenuUi = null
+var _audio: AudioDirector = null  ## music and sound effects (not in screenshot mode)
 ## The NetSession and LanDiscovery, loaded by path so screenshot mode never depends on game/net.
 ## Each is created once and reused (the session must keep its node path for RPCs).
 var _session: Node = null
@@ -54,6 +55,12 @@ func _ready() -> void:
 		return
 	_fast = args.has("fast")
 	_load_profile()
+	_audio = AudioDirector.new()
+	_audio.view = _view
+	_view.get_viewport().audio_listener_enable_2d = true  # the world camera is the ear for positional sounds
+	_view.add_child(_audio)
+	_menu.audio_levels = _audio.levels
+	_menu.audio_muted = _audio.muted
 	_menu.action.connect(_on_menu_action)
 	_view.game_over.quit = _leave_to_menu
 	if args.has("host") or args.has("join") or args.has("solo"):
@@ -155,7 +162,16 @@ func _beacon() -> void:
 # ---------------------------------------------------------------- menu actions
 
 func _on_menu_action(act: String, arg: Variant) -> void:
+	if _audio != null and act not in ["volume", "mute"]:
+		_audio.play("ui_click")
 	match act:
+		"volume":  # [key, level]
+			var va: Array = arg
+			_audio.set_level(str(va[0]), float(va[1]))
+			_audio.play("ui_click")
+		"mute":
+			_audio.set_muted(not _audio.muted)
+			_menu.audio_muted = _audio.muted
 		"solo":
 			if _ensure_session():
 				_solo = true
@@ -369,7 +385,10 @@ func _enter_match(host: bool) -> void:
 	_menu.screen = MenuUi.Screen.NONE
 	_view.attract = false
 	_view.ui_visible = true
-	_view.workshop.send_command = func(cmd: Dictionary) -> void: _session.call("send_command", cmd)
+	_view.workshop.send_command = func(cmd: Dictionary) -> void:
+		_session.call("send_command", cmd)
+		if _audio != null:
+			_audio.on_command(cmd)
 	if host:
 		_view.game_over.restart = func() -> void: _session.call("rematch")
 		_view.game_over.restart_label = "RESTART" if _solo else "REMATCH"
