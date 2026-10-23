@@ -3,21 +3,24 @@ extends RefCounted
 ## The workshop's TECH view (design doc section 5b, tech tree v2.3 sections 2, 5, 7 and 8), opened with T
 ## or its tab. Drawn into the WorkshopUi canvas; clicks are registered as its hits.
 ##
-## Layout (640x360 units, top to bottom inside the body):
-## - a tool row: BUILD PLAN chips (FIREBRAND / FORTRESS / SCRAPPER, "tpl"), the BEGINNER VIEW toggle
-##   ("beginner") and the built count;
-## - one column per branch: icon, name and stage pips, the branch's one-sentence pitch, then six stage
-##   rows (choices side by side, the prototype clamped to the stage 3 core, keystones with brass
-##   corners). The beginner view expands only the plan's two branches; the others shrink to narrow
-##   columns of state chips under MORE (header click "expand" opens one). Everything stays buyable;
+## The whole tree is always in view: the player composes a build from all five branches instead of
+## switching between plans. Layout (640x360 units, top to bottom inside the body):
+## - a tool row: YOUR BUILD (the two branches most scrap went into, and the idea it resembles), the goal
+##   count with CLEAR ("clear_goals") or the hint how to mark one, and the built count;
+## - one column per branch, all five equal: icon, name and stage pips, the branch's one-sentence pitch,
+##   then six stage rows (choices side by side, the prototype clamped to the stage 3 core, keystones with
+##   brass corners);
 ## - two fusion rows (small, large), each node tagged with its two requirements;
 ## - the detail panel for the hovered node: effects, what you see, who it is for, the net preview on
 ##   your own rig, fusion partners, swap price and what a swap greys out. With nothing hovered it shows
-##   the plan's cheat sheet and the legend. It stays on the last node while the pointer is on it, so
-##   the underlined glossary words ("gloss") can be hovered for their explanation.
-## Hovering a fusion dims everything except the fusion and the two nodes it needs; hovering a locked node
-## frames the path to it. The next node of the plan pulses amber. Clicking a node builds it; clicking
-## one locked by its sibling opens the swap confirmation (WorkshopUi.confirm, drawn by draw_confirm()).
+##   the build sheet: where the scrap went per branch, the goals with their cost (or three ideas to start
+##   from, "idea"), and the legend. It stays on the last node while the pointer is on it, so the
+##   underlined glossary words ("gloss") can be hovered for their explanation.
+## Goals: right-click any node to flag it ("goal"); the tree frames the path to the goals and pulses
+## the next node to buy. Hovering a fusion dims everything except the fusion and the two nodes it needs;
+## hovering an idea dims everything except the goals it would mark; hovering a locked node frames the
+## path to it. Clicking a node builds it; clicking one locked by its sibling opens the swap confirmation
+## (WorkshopUi.confirm, drawn by draw_confirm()).
 
 const TOOL_H := 14.0
 const HEAD_H := 12.0
@@ -28,7 +31,6 @@ const FUS_LABEL_H := 9.0
 const FUS_H := 19.0
 const GUTTER := 9.0
 const COL_GAP := 4.0
-const COLLAPSED_W := 46.0
 const DETAIL_H := 83.0
 const DIM_WASH := Color(0.06, 0.04, 0.035, 0.68)
 
@@ -38,10 +40,11 @@ enum State { OWNED, BUYABLE, POOR, LOCKED, EXCLUDED, INACTIVE }
 
 static var _focus: Dictionary = {}  ## ids framed for the hovered node (its path, a fusion's parts)
 static var _partner: Dictionary = {}  ## fusions (and their other parts) of the hovered choice
-static var _dim: bool = false  ## a fusion is hovered: wash out everything outside _focus
+static var _dim: bool = false  ## a fusion or an idea is hovered: wash out everything outside _focus
 static var _sticky: String = ""  ## node the detail panel keeps while the pointer is on the panel
-static var _next: String = ""  ## next node of the build plan
-static var _tpl: Dictionary = {}
+static var _goals: Array[String] = []  ## the player's goals (not yet built)
+static var _goal_path: Dictionary = {}  ## id -> true: still to build on the way to the goals
+static var _next: String = ""  ## next node towards the goals
 static var _rects: Dictionary = {}  ## tech id -> Rect2 drawn this frame
 
 
@@ -72,16 +75,21 @@ static func draw(ui: WorkshopUi, v: SimVehicle, r: Rect2) -> String:
 	var x0: float = r.position.x + 4.0
 	var w: float = r.size.x - 8.0
 	var y: float = r.position.y + 4.0
-	_tpl = TechGuide.template_for(ui.world, v)
-	_next = TechGuide.next_on_path(v, _tpl)
+	_goals = TechGuide.goals(ui.world, v)
+	_next = TechGuide.next_step(v, _goals)
+	_goal_path.clear()
+	for p in TechGuide.goals_path(v, _goals):
+		_goal_path[p] = true
 	var det := Rect2(x0, r.end.y - DETAIL_H - 4.0, w, DETAIL_H)
 	var hov_arg: Variant = ui.hover_arg("tech")
 	var hov_id: String = str(hov_arg) if hov_arg != null else ""
+	var idea_arg: Variant = ui.hover_arg("idea")
+	var idea: String = str(idea_arg) if idea_arg != null else ""
 	if hov_id != "":
 		_sticky = hov_id
 	elif not det.has_point(ui.pointer()) or not ui.confirm.is_empty():
 		_sticky = ""
-	_set_focus(v, hov_id)
+	_set_focus(v, hov_id, idea)
 
 	_tool_row(ui, v, Vector2(x0, y), w)
 	y += TOOL_H
@@ -89,15 +97,22 @@ static func draw(ui: WorkshopUi, v: SimVehicle, r: Rect2) -> String:
 	y += HEAD_H + PITCH_H + ROW_H * Tech.MAX_TIER
 	_fusion_rows(ui, v, Rect2(x0 + GUTTER, y, w - GUTTER, FUS_LABEL_H + 2.0 * (FUS_H + 1.0)))
 
-	var tpl_hov: Variant = ui.hover_arg("tpl")
-	_detail(ui, v, _sticky, str(tpl_hov) if tpl_hov != null else "", det)
+	_detail(ui, v, _sticky, idea, det)
 	return hov_id
 
 
-static func _set_focus(v: SimVehicle, id: String) -> void:
+static func _set_focus(v: SimVehicle, id: String, idea: String) -> void:
 	_focus.clear()
 	_partner.clear()
 	_dim = false
+	if id == "" and idea != "":
+		_dim = true
+		var ig: Array[String] = TechGuide.idea_goals(TechGuide.template_by_id(idea))
+		for g in ig:
+			_focus[g] = true
+			for p in TechGuide.build_path(v, g, ig):
+				_focus[p] = true
+		return
 	if id == "":
 		return
 	if Tech.is_fusion(id):
@@ -105,10 +120,10 @@ static func _set_focus(v: SimVehicle, id: String) -> void:
 		_focus[id] = true
 		for rq in Tech.requirements(id):
 			_focus[str(rq)] = true
-			for p in TechGuide.build_path(v, str(rq), _tpl.get("path", [])):
+			for p in TechGuide.build_path(v, str(rq), _goals):
 				_focus[p] = true
 		return
-	for p in TechGuide.build_path(v, id, _tpl.get("path", [])):
+	for p in TechGuide.build_path(v, id, _goals):
 		_focus[p] = true
 	for f in Tech.fusion_partners(id):
 		_partner[f] = true
@@ -119,111 +134,81 @@ static func _set_focus(v: SimVehicle, id: String) -> void:
 
 # ---------------------------------------------------------------- tool row
 
+## YOUR BUILD on the left (named after where the scrap went), goals and the built count on the right.
 static func _tool_row(ui: WorkshopUi, v: SimVehicle, p: Vector2, w: float) -> void:
-	var x: float = UiFont.draw_small(ui, "BUILD PLAN", Vector2(p.x + 2, p.y + 3), Gfx.UI_DIM) + 5.0
-	var picked: bool = TechGuide.is_picked(ui.world)
-	for t: Dictionary in TechGuide.TEMPLATES:
-		var on: bool = t["id"] == _tpl["id"]
-		var label: String = str(t["name"])
-		var sub: String = "%s+%s" % [str(t["branches"][0]).left(3).to_upper(), str(t["branches"][1]).left(3).to_upper()]
-		var cw: float = UiFont.width(label) + UiFont.width_small(sub) + 14.0
-		var cr := Rect2(x, p.y, cw, 11)
-		var hov: bool = ui.is_hover("tpl", t["id"])
-		ui.draw_rect(cr, Gfx.OUTLINE)
-		if on:
-			ui.draw_rect(cr.grow(-1.0), Gfx.FIRE[4] if picked else Gfx.BRASS[2])
-			ui.draw_rect(Rect2(cr.position + Vector2.ONE, Vector2(cr.size.x - 2, 1)), Gfx.FIRE[5] if picked else Gfx.BRASS[3])
-		else:
-			ui.draw_rect(cr.grow(-1.0), Color(0.18, 0.13, 0.1) if hov else Color(0.11, 0.08, 0.07))
-			UiKit.outline_rect(ui, cr.grow(-1.0), Gfx.FIRE[3] if hov else UiKit.PANEL_EDGE)
-		var tx: float = UiFont.draw(ui, label, Vector2(cr.position.x + 4, p.y + 3), Gfx.INK if on else (Gfx.FIRE[5] if hov else Gfx.UI_TEXT))
-		UiFont.draw_small(ui, sub, Vector2(tx + 4, p.y + 3), Color(Gfx.INK, 0.7) if on else Gfx.UI_DIM)
-		ui.add_hit(cr, "tpl", t["id"])
-		x = cr.end.x + 3.0
-	if not picked:
-		UiFont.draw_small(ui, "(SUGGESTED - CLICK ONE TO FOLLOW IT)", Vector2(x + 2, p.y + 3), Gfx.UI_DIM)
-	# right: built count, then the beginner toggle
-	var beg: bool = TechGuide.beginner()
-	var bl: String = "BEGINNER VIEW: %s" % ("ON" if beg else "OFF")
-	var bw: float = UiFont.width_small(bl) + 10.0
-	var br := Rect2(p.x + w - bw, p.y, bw, 11)
-	var bh: bool = ui.is_hover("beginner")
-	ui.draw_rect(br, Gfx.OUTLINE)
-	ui.draw_rect(br.grow(-1.0), Color(0.18, 0.13, 0.1) if bh else Color(0.11, 0.08, 0.07))
-	UiKit.outline_rect(ui, br.grow(-1.0), Gfx.FIRE[3] if bh else UiKit.PANEL_EDGE)
-	var lx: float = UiFont.draw_small(ui, "BEGINNER VIEW: ", Vector2(br.position.x + 5, p.y + 3), Gfx.UI_DIM)
-	UiFont.draw_small(ui, "ON" if beg else "OFF", Vector2(lx, p.y + 3), Gfx.FIRE[4] if beg else Gfx.UI_TEXT)
-	ui.add_hit(br, "beginner", not beg)
+	var x: float = UiFont.draw_small(ui, "YOUR BUILD", Vector2(p.x + 2, p.y + 3), Gfx.UI_DIM) + 6.0
+	var mb: Array[String] = TechGuide.main_branches(v)
+	if mb.is_empty():
+		UiFont.draw(ui, "NOTHING BUILT YET - ALL FIVE BRANCHES ARE OPEN, MIX THEM", Vector2(x, p.y + 2), Gfx.UI_TEXT, Gfx.UI_SHADOW)
+	else:
+		var names: PackedStringArray = []
+		for b in mb:
+			names.append(b.to_upper())
+		x = UiFont.draw(ui, " + ".join(names), Vector2(x, p.y + 2), Gfx.FIRE[4], Gfx.UI_SHADOW)
+		var like: Dictionary = TechGuide.idea_like(v)
+		if not like.is_empty():
+			UiFont.draw_small(ui, "  LIKE %s" % str(like["name"]), Vector2(x, p.y + 3), Gfx.BRASS[3])
+	# right: built count, then the goals
 	var cnt: String = "%d / %d BUILT" % [v.tech.size(), Tech.count()]
-	UiFont.draw_small(ui, cnt, Vector2(br.position.x - 8 - UiFont.width_small(cnt), p.y + 3), Gfx.UI_DIM)
+	var cx: float = p.x + w - UiFont.width_small(cnt) - 2.0
+	UiFont.draw_small(ui, cnt, Vector2(cx, p.y + 3), Gfx.UI_DIM)
+	var gx: float = cx - 12.0
+	if _goals.is_empty():
+		var hint: String = "RIGHT-CLICK A NODE: MARK IT AS YOUR GOAL"
+		gx -= UiFont.width_small(hint)
+		UiFont.draw_small(ui, hint, Vector2(gx, p.y + 3), Gfx.UI_DIM)
+		_flag(ui, Vector2(gx - 8, p.y + 2), Gfx.FIRE[3])
+	else:
+		var cl := Rect2(gx - 34, p.y, 34, 11)
+		var ch: bool = ui.is_hover("clear_goals")
+		ui.draw_rect(cl, Gfx.OUTLINE)
+		ui.draw_rect(cl.grow(-1.0), Color(0.18, 0.13, 0.1) if ch else Color(0.11, 0.08, 0.07))
+		UiKit.outline_rect(ui, cl.grow(-1.0), Gfx.FIRE[3] if ch else UiKit.PANEL_EDGE)
+		UiFont.draw_small(ui, "CLEAR", Vector2(cl.position.x + 6, p.y + 3), Gfx.FIRE[5] if ch else Gfx.UI_TEXT)
+		ui.add_hit(cl, "clear_goals", null)
+		var left: int = TechGuide.path_cost(v, TechGuide.goals_path(v, _goals))
+		var gl: String = "%d %s - %d SCRAP TO GO" % [_goals.size(), "GOAL" if _goals.size() == 1 else "GOALS", left]
+		var tx: float = cl.position.x - 6.0 - UiFont.width_small(gl)
+		UiFont.draw_small(ui, gl, Vector2(tx, p.y + 3), Gfx.FIRE[4])
+		_flag(ui, Vector2(tx - 8, p.y + 2), Gfx.FIRE[4])
+
+
+## A small pennant (6x8) on a dark pole: "your goal".
+static func _flag(ui: WorkshopUi, p: Vector2, col: Color) -> void:
+	var q: Vector2 = p.floor()
+	ui.draw_rect(Rect2(q, Vector2(2, 9)), Gfx.OUTLINE)
+	ui.draw_rect(Rect2(q + Vector2(1, 0), Vector2(6, 6)), Gfx.OUTLINE)
+	ui.draw_rect(Rect2(q + Vector2(1, 1), Vector2(4, 4)), col)
+	ui.draw_rect(Rect2(q + Vector2(5, 2), Vector2(1, 2)), col)
+	ui.draw_rect(Rect2(q + Vector2(1, 1), Vector2(4, 1)), col.lightened(0.25))
 
 
 # ---------------------------------------------------------------- branch columns
 
+## All five branches side by side, always open and equal.
 static func _tree(ui: WorkshopUi, v: SimVehicle, r: Rect2) -> void:
-	var beg: bool = TechGuide.beginner()
-	var order: Array[String] = []
-	var open: Dictionary = {}
-	if beg:
-		for b: String in _tpl["branches"]:
-			order.append(b)
-			open[b] = true
-		for b in Tech.BRANCHES:
-			if not order.has(b):
-				order.append(b)
-				if TechGuide.is_opened(b):
-					open[b] = true
-	else:
-		for b in Tech.BRANCHES:
-			order.append(b)
-			open[b] = true
-	var n_open: int = open.size()
-	var n_closed: int = order.size() - n_open
-	var avail: float = r.size.x - GUTTER - COL_GAP * float(order.size() - 1) - (4.0 if n_closed > 0 else 0.0)
-	var open_w: float = floorf((avail - COLLAPSED_W * n_closed) / float(n_open))
+	var n: int = Tech.BRANCHES.size()
+	var col_w: float = floorf((r.size.x - GUTTER - COL_GAP * float(n - 1)) / float(n))
 	# stage numbers in the gutter
 	var ry0: float = r.position.y + HEAD_H + PITCH_H
 	for tier in range(1, Tech.MAX_TIER + 1):
 		var gy: float = ry0 + (tier - 1) * ROW_H + 6.0
 		UiFont.draw_small(ui, str(tier), Vector2(r.position.x + 2, gy), Gfx.BRASS[3] if tier == Tech.MAX_TIER else Gfx.UI_DIM)
 	var x: float = r.position.x + GUTTER
-	var closed_x: float = -1.0
-	# MORE first gets its group title, so the open plan columns come first and the rest after a gap
-	var sorted: Array[String] = []
-	for b in order:
-		if open.has(b):
-			sorted.append(b)
-	for b in order:
-		if not open.has(b):
-			sorted.append(b)
-	for b in sorted:
-		if open.has(b):
-			_column(ui, v, b, Rect2(x, r.position.y, open_w, r.size.y), beg and not (_tpl["branches"] as Array).has(b))
-			x += open_w + COL_GAP
-		else:
-			if closed_x < 0.0:
-				x += 4.0
-				closed_x = x
-			_collapsed(ui, v, b, Rect2(x, r.position.y, COLLAPSED_W, r.size.y))
-			x += COLLAPSED_W + COL_GAP
-	if closed_x >= 0.0:
-		UiKit.section(ui, "MORE", Vector2(closed_x, r.position.y + 2), x - COL_GAP - closed_x)
-		ui.draw_rect(Rect2(closed_x - 5.0, r.position.y + 2, 1, r.size.y - 4), Color(UiKit.PANEL_EDGE, 0.8))
+	for i in n:
+		var last: bool = i == n - 1
+		_column(ui, v, Tech.BRANCHES[i], Rect2(x, r.position.y, (r.end.x - x) if last else col_w, r.size.y))
+		x += col_w + COL_GAP
 
 
-## One open branch: header, pitch, six stage rows. `closable`: opened from MORE (header click closes it).
-static func _column(ui: WorkshopUi, v: SimVehicle, b: String, r: Rect2, closable: bool) -> void:
+## One branch: header (lit once you have built in it), pitch, six stage rows.
+static func _column(ui: WorkshopUi, v: SimVehicle, b: String, r: Rect2) -> void:
 	var cx: float = r.position.x
 	var y: float = r.position.y
-	var plan: bool = (_tpl["branches"] as Array).has(b)
+	var mine: bool = Tech.branch_tier(v, b) > 0
 	UiKit.icon(ui, b, Vector2(cx, y - 3))
-	UiFont.draw(ui, b.to_upper(), Vector2(cx + 18, y + 1), Gfx.FIRE[4] if plan else Gfx.UI_TEXT, Gfx.UI_SHADOW)
+	UiFont.draw(ui, b.to_upper(), Vector2(cx + 18, y + 1), Gfx.FIRE[4] if mine else Gfx.UI_TEXT, Gfx.UI_SHADOW)
 	UiKit.pips(ui, Vector2(r.end.x - 31, y + 1), Tech.branch_tier(v, b), Tech.MAX_TIER, Gfx.BRASS[3])
-	if closable:
-		var hr := Rect2(cx, y - 2, r.size.x, HEAD_H)
-		var hov: bool = ui.is_hover("expand", b)
-		UiFont.draw_small(ui, "CLOSE", Vector2(r.end.x - 31 - 6 - UiFont.width_small("CLOSE"), y + 2), Gfx.FIRE[5] if hov else Gfx.UI_DIM)
-		ui.add_hit(hr, "expand", b)
 	y += HEAD_H
 	var pitch: PackedStringArray = UiFont.wrap_small(str(TechGuide.PITCH.get(b, "")), int(r.size.x) - 2)
 	for k in mini(pitch.size(), 2):
@@ -251,27 +236,6 @@ static func _column(ui: WorkshopUi, v: SimVehicle, b: String, r: Rect2, closable
 		y += ROW_H
 
 
-## A branch folded under MORE: short name and pips (click to open), then a chip per node.
-static func _collapsed(ui: WorkshopUi, v: SimVehicle, b: String, r: Rect2) -> void:
-	var hr := Rect2(r.position.x, r.position.y + HEAD_H - 1, r.size.x, PITCH_H)
-	var hov: bool = ui.is_hover("expand", b)
-	if hov:
-		ui.draw_rect(hr, UiKit.HOVER_WASH)
-	UiFont.draw_small(ui, b.left(4).to_upper() + " +", Vector2(r.position.x + 1, hr.position.y + 1), Gfx.FIRE[5] if hov else Gfx.UI_TEXT)
-	UiKit.pips(ui, Vector2(r.position.x, hr.position.y + 8), Tech.branch_tier(v, b), Tech.MAX_TIER, Gfx.BRASS[3])
-	ui.add_hit(hr, "expand", b)
-	var y: float = r.position.y + HEAD_H + PITCH_H
-	for tier in range(1, Tech.MAX_TIER + 1):
-		var row: Array[String] = _row_ids(b, tier)
-		var gap: float = 2.0
-		var nw: float = floorf((r.size.x - gap * (row.size() - 1)) / float(row.size()))
-		for k in row.size():
-			var last: bool = k == row.size() - 1
-			var x: float = r.position.x + k * (nw + gap)
-			_chip(ui, v, row[k], Rect2(x, y + 3, (r.end.x - x) if last else nw, NODE_H - 6))
-		y += ROW_H
-
-
 ## The nodes of `branch` at `tier` in table order: core / choices first, the prototype last.
 static func _row_ids(branch: String, tier: int) -> Array[String]:
 	var out: Array[String] = []
@@ -283,8 +247,8 @@ static func _row_ids(branch: String, tier: int) -> Array[String]:
 
 # ---------------------------------------------------------------- nodes
 
-## Frames around a node: hover path / fusion parts (light), fusion partners (brass), next plan node
-## (pulsing amber).
+## Frames around a node: hover path / fusion parts (light), fusion partners (brass), next node towards
+## the goals (pulsing amber), a goal (amber), the rest of the way to the goals (dashed orange).
 static func _halo(ui: WorkshopUi, id: String, nr: Rect2, hov: bool) -> void:
 	if hov:
 		return
@@ -294,6 +258,10 @@ static func _halo(ui: WorkshopUi, id: String, nr: Rect2, hov: bool) -> void:
 		UiKit.outline_rect(ui, nr.grow(1.0), Gfx.BRASS[2])
 	elif id == _next:
 		UiKit.outline_rect(ui, nr.grow(1.0), Gfx.FIRE[4] if fmod(ui.blink(), 1.0) < 0.6 else Gfx.FIRE[2])
+	elif _goals.has(id):
+		UiKit.outline_rect(ui, nr.grow(1.0), Gfx.FIRE[4])
+	elif _goal_path.has(id):
+		_dashed(ui, nr.grow(1.0), Gfx.FIRE[3])
 
 
 static func _node(ui: WorkshopUi, v: SimVehicle, id: String, nr: Rect2) -> void:
@@ -357,7 +325,7 @@ static func _node(ui: WorkshopUi, v: SimVehicle, id: String, nr: Rect2) -> void:
 	if hov and st != State.LOCKED and st != State.EXCLUDED:
 		UiKit.outline_rect(ui, nr, Gfx.UI_TEXT)
 	# name: full where it fits, else the short label, else the short label in fine print
-	var avail: float = nr.size.x - 6.0
+	var avail: float = nr.size.x - (15.0 if _goals.has(id) else 6.0)
 	var full: String = UiKit.tech_name(id)
 	var short: String = str(d["short"])
 	var label: String = full if UiFont.width(full) <= avail else short
@@ -386,18 +354,22 @@ static func _node(ui: WorkshopUi, v: SimVehicle, id: String, nr: Rect2) -> void:
 		_link_glyph(ui, Vector2(tx, by), _glyph_col(v, id, st))
 		tx += 9.0
 	if tag != "" and tx + UiFont.width_small(tag) < rx - 3.0:
-		var tcol: Color = Gfx.FIRE[4] if tag == "NEXT" else (Gfx.BRASS[0] if st == State.OWNED else Gfx.STEEL[4])
+		var tcol: Color = Gfx.FIRE[4] if tag == "NEXT" or tag == "GOAL" else (Gfx.BRASS[0] if st == State.OWNED else Gfx.STEEL[4])
 		if tag == "NEXT" and st == State.OWNED:
 			tcol = Gfx.INK
 		UiFont.draw_small(ui, tag, Vector2(tx, by), tcol)
+	if _goals.has(id):
+		_flag(ui, Vector2(nr.end.x - 9, nr.position.y + 2), Gfx.FIRE[4])
 	if _dim and not _focus.has(id):
 		ui.draw_rect(nr, DIM_WASH)
 
 
-## Left tag on the lower line: NEXT on the plan, KEYSTONE, PROTOTYPE, DORMANT (only where it fits).
+## Left tag on the lower line: NEXT towards a goal, GOAL, KEYSTONE, PROTOTYPE, DORMANT (only where it fits).
 static func _tag(v: SimVehicle, id: String, st: State) -> String:
 	if id == _next and st != State.OWNED:
 		return "NEXT"
+	if _goals.has(id):
+		return "GOAL"
 	var d: Dictionary = Tech.def(id)
 	if v.tech_dormant.has(id):
 		return "DORMANT"
@@ -466,34 +438,6 @@ static func _fit_small(text: String, w: float) -> String:
 	while UiFont.width_small(t) > w and t.length() > 1:
 		t = t.left(t.length() - 1)
 	return t
-
-
-## A node of a folded branch: a state-coloured chip without text (hover for details, click to build).
-static func _chip(ui: WorkshopUi, v: SimVehicle, id: String, nr: Rect2) -> void:
-	_rects[id] = nr
-	var st: State = state(v, id)
-	var hov: bool = ui.is_hover("tech", id)
-	_halo(ui, id, nr, hov)
-	ui.add_hit(nr.grow_individual(0, 3, 0, 3), "tech", id)
-	ui.draw_rect(nr, Gfx.OUTLINE)
-	var fill: Color
-	match st:
-		State.OWNED: fill = Gfx.BRASS[2]
-		State.INACTIVE: fill = Color(0.29, 0.22, 0.13)
-		State.BUYABLE: fill = Gfx.STEEL[3]
-		State.POOR: fill = Gfx.STEEL[2]
-		_: fill = Gfx.STEEL[1]
-	ui.draw_rect(nr.grow(-1.0), fill)
-	if st == State.BUYABLE:
-		UiKit.outline_rect(ui, nr, Gfx.HAZARD)
-	elif st == State.EXCLUDED:
-		ui.draw_rect(Rect2(nr.position.x + 2, nr.get_center().y, nr.size.x - 4, 1), Gfx.INK_RED)
-	if int(Tech.def(id)["tier"]) == Tech.MAX_TIER:
-		_keystone_corners(ui, nr)
-	if hov:
-		UiKit.outline_rect(ui, nr.grow(1.0), Gfx.UI_TEXT)
-	if _dim and not _focus.has(id):
-		ui.draw_rect(nr, DIM_WASH)
 
 
 # ---------------------------------------------------------------- fusions
@@ -588,6 +532,8 @@ static func _fusion(ui: WorkshopUi, v: SimVehicle, id: String, nr: Rect2) -> voi
 		if i > 0:
 			px = UiFont.draw_small(ui, " + ", Vector2(px, nr.position.y + 10), Gfx.STEEL[3] if st != State.OWNED else Gfx.BRASS[0])
 		px = UiFont.draw_small(ui, t, Vector2(px, nr.position.y + 10), col)
+	if _goals.has(id):
+		_flag(ui, Vector2(nr.end.x - 9, nr.position.y + 9), Gfx.FIRE[4])
 	if _dim and not _focus.has(id):
 		ui.draw_rect(nr, DIM_WASH)
 
@@ -647,12 +593,12 @@ static func _where(id: String) -> String:
 	return "%s - STAGE %d CORE" % [b, tier]
 
 
-static func _detail(ui: WorkshopUi, v: SimVehicle, id: String, tpl_hover: String, r: Rect2) -> void:
+static func _detail(ui: WorkshopUi, v: SimVehicle, id: String, idea: String, r: Rect2) -> void:
 	ui.draw_rect(r, Color(0.08, 0.05, 0.06, 0.6))
 	UiKit.outline_rect(ui, r, Gfx.OUTLINE)
 	ui.add_hit(r, "none", null)
 	if id == "":
-		_overview(ui, v, tpl_hover, r)
+		_overview(ui, v, idea, r)
 		return
 	var st: State = state(v, id)
 	var max_y: float = r.end.y - 8.0
@@ -755,7 +701,7 @@ static func _status_lines(ui: WorkshopUi, v: SimVehicle, id: String, st: State) 
 			else:
 				out.append(["NOTHING GREYS OUT, FOLLOW-UPS STAY BUILT", Gfx.UI_DIM, true])
 		State.LOCKED:
-			var path: Array[String] = TechGuide.build_path(v, id, _tpl.get("path", []))
+			var path: Array[String] = TechGuide.build_path(v, id, _goals)
 			out.append(["BUILD %s FIRST" % UiKit.tech_name(path[0] if not path.is_empty() else Tech.next_step(v, id)), Gfx.UI_BAD])
 			if path.size() > 1:
 				out.append(["PATH: %d NODES, %d SCRAP IN ALL" % [path.size(), TechGuide.path_cost(v, path)], Gfx.UI_TEXT, true])
@@ -769,6 +715,11 @@ static func _status_lines(ui: WorkshopUi, v: SimVehicle, id: String, st: State) 
 				out.append(["CLICK: RE-BUY AT HALF PRICE - %d SCRAP" % Tech.price(v, id), Gfx.HAZARD])
 			else:
 				out.append(["CLICK TO BUILD - %d SCRAP" % Tech.price(v, id), Gfx.HAZARD])
+	if st != State.OWNED and st != State.INACTIVE:
+		if _goals.has(id):
+			out.append(["YOUR GOAL - RIGHT-CLICK TO DROP IT", Gfx.FIRE[4], true])
+		else:
+			out.append(["RIGHT-CLICK: MARK AS YOUR GOAL", Gfx.UI_DIM, true])
 	# what it needs (fusions always, nodes while not active)
 	var req: Array = Tech.requirements(id)
 	if Tech.is_fusion(id):
@@ -830,60 +781,124 @@ static func _names(ids: Array[String]) -> String:
 	return ", ".join(n)
 
 
-## Nothing hovered: the plan's cheat sheet, the legend and the house rules.
-static func _overview(ui: WorkshopUi, v: SimVehicle, tpl_hover: String, r: Rect2) -> void:
-	var t: Dictionary = TechGuide.template_by_id(tpl_hover) if tpl_hover != "" else _tpl
+## Nothing hovered: the build sheet. Where the scrap went per branch, the goals (or three ideas to start
+## from; hovering one shows its cheat sheet), and the legend.
+static func _overview(ui: WorkshopUi, v: SimVehicle, idea: String, r: Rect2) -> void:
+	# A: your build, branch by branch (the hovered idea's cheat sheet instead)
 	var ax: float = r.position.x + 6.0
+	var aw: float = 204.0
 	var y: float = r.position.y + 4.0
-	var picked: bool = TechGuide.is_picked(ui.world) and t["id"] == _tpl["id"]
-	var head: String = "BUILD PLAN" if picked else ("CLICK TO FOLLOW THIS PLAN" if tpl_hover != "" else "SUGGESTED PLAN")
-	UiFont.draw_small(ui, head, Vector2(ax, y), Gfx.FIRE[4] if tpl_hover != "" and not picked else Gfx.UI_DIM)
-	y += 8.0
-	var nx: float = UiFont.draw_big(ui, str(t["name"]), Vector2(ax, y), Gfx.UI_TEXT, Gfx.OUTLINE)
-	UiFont.draw_small(ui, "%s + %s" % [str(t["branches"][0]).to_upper(), str(t["branches"][1]).to_upper()], Vector2(nx + 6, y + 2), Gfx.UI_DIM)
-	y += 10.0
-	UiFont.draw_small(ui, str(t["blurb"]), Vector2(ax, y), Gfx.BRASS[3])
-	y += 9.0
-	for ln: String in t["cheat"]:
-		UiFont.draw(ui, ln, Vector2(ax, y), Gfx.UI_TEXT)
+	if idea != "":
+		var t: Dictionary = TechGuide.template_by_id(idea)
+		UiFont.draw_small(ui, "IDEA - CLICK TO FLAG ITS GOALS", Vector2(ax, y), Gfx.HAZARD)
 		y += 8.0
-	var pp: Vector2i = TechGuide.path_progress(v, t)
-	var nxt: String = TechGuide.next_on_path(v, t)
-	var nt: String = "PATH %d/%d BUILT" % [pp.x, pp.y]
-	if nxt != "":
-		nt += " - NEXT: %s (%d)" % [UiKit.tech_name(nxt), Tech.price(v, nxt)]
-	UiFont.draw_small(ui, nt, Vector2(ax, y + 1), Gfx.FIRE[4])
+		var nx: float = UiFont.draw_big(ui, str(t["name"]), Vector2(ax, y), Gfx.UI_TEXT, Gfx.OUTLINE)
+		UiFont.draw_small(ui, "%s + %s" % [str(t["branches"][0]).left(4).to_upper(), str(t["branches"][1]).left(4).to_upper()], Vector2(nx + 6, y + 2), Gfx.UI_DIM)
+		y += 11.0
+		UiFont.draw_small(ui, str(t["blurb"]), Vector2(ax, y), Gfx.BRASS[3])
+		y += 9.0
+		for ln: String in t["cheat"]:
+			UiFont.draw_small(ui, ln, Vector2(ax, y), Gfx.UI_TEXT)
+			y += 7.0
+		y += 2.0
+		for ln in UiFont.wrap_small("GOALS: " + _names(TechGuide.idea_goals(t)), int(aw)):
+			UiFont.draw_small(ui, ln, Vector2(ax, y), Gfx.FIRE[4])
+			y += 7.0
+	else:
+		var inv: Dictionary = TechGuide.invested(v)
+		var total: int = 0
+		var top: int = 1
+		for b in Tech.BRANCHES:
+			total += int(inv[b])
+			top = maxi(top, int(inv[b]))
+		UiKit.section(ui, "YOUR BUILD", Vector2(ax, y), aw, "%d SCRAP IN TECH" % total)
+		y += 10.0
+		var mb: Array[String] = TechGuide.main_branches(v)
+		for b in Tech.BRANCHES:
+			var n: int = int(inv[b])
+			var main: bool = mb.has(b)
+			UiFont.draw_small(ui, b.left(4).to_upper(), Vector2(ax, y), Gfx.FIRE[4] if main else Gfx.UI_TEXT)
+			var bar := Rect2(ax + 26, y, aw - 26 - 30, 5)
+			ui.draw_rect(bar, Gfx.OUTLINE)
+			ui.draw_rect(bar.grow(-1.0), Color(0.11, 0.08, 0.07))
+			if n > 0:
+				var fw: float = maxf(roundf((bar.size.x - 2.0) * float(n) / float(top)), 1.0)
+				ui.draw_rect(Rect2(bar.position + Vector2.ONE, Vector2(fw, 3)), Gfx.FIRE[4] if main else Gfx.BRASS[2])
+				ui.draw_rect(Rect2(bar.position + Vector2.ONE, Vector2(fw, 1)), Gfx.FIRE[5] if main else Gfx.BRASS[3])
+			var nt: String = "%d%%" % roundi(100.0 * float(n) / float(total)) if total > 0 else "-"
+			UiFont.draw_small(ui, nt, Vector2(ax + aw - UiFont.width_small(nt), y), Gfx.UI_TEXT if n > 0 else Gfx.UI_DIM)
+			y += 8.0
+		y += 2.0
+		var like: Dictionary = TechGuide.idea_like(v)
+		var line: String = "MIX ANY BRANCHES - NO PLAN LOCKS YOU IN" if like.is_empty() else "%s + %s IS LIKE %s" % [mb[0].left(4).to_upper(), mb[1].left(4).to_upper(), str(like["name"])]
+		UiFont.draw_small(ui, line, Vector2(ax, y), Gfx.BRASS[3])
 	ui.draw_rect(Rect2(r.position.x + 216, r.position.y + 4, 1, r.size.y - 8), Color(UiKit.PANEL_EDGE, 0.7))
-	# legend: one swatch per state
+	# B: goals, or ideas to start from
 	var bx: float = r.position.x + 222.0
+	var bw: float = 168.0
 	var by: float = r.position.y + 4.0
-	UiKit.section(ui, "HOW TO READ IT", Vector2(bx, by), 168.0)
-	by += 10.0
-	var items: Array = [["BUILT", "brass"], ["BUILD NOW", "buy"], ["NEED SCRAP", "poor"], ["LOCKED", "lock"],
-		["SWAP (SIBLING)", "swap"], ["IDLE / DORMANT", "idle"], ["NEXT ON YOUR PLAN", "next"], ["KEYSTONE", "key"]]
-	for i in items.size():
-		var lx: float = bx + (i % 2) * 86.0
-		var ly: float = by + (i / 2) * 10.0
-		_legend_chip(ui, Rect2(lx, ly - 1, 11, 7), str(items[i][1]))
-		UiFont.draw_small(ui, str(items[i][0]), Vector2(lx + 15, ly), Gfx.UI_TEXT)
-	by += 42.0
-	_link_glyph(ui, Vector2(bx + 2, by), Gfx.BRASS[3])
-	UiFont.draw_small(ui, "THIS CHOICE CAN FUSE WITH ANOTHER BRANCH", Vector2(bx + 15, by), Gfx.UI_TEXT)
-	by += 9.0
-	ui.draw_rect(Rect2(bx + 1, by + 2, 10, 2), Color(Gfx.INK_RED, 0.85))
-	UiFont.draw_small(ui, "PROTOTYPE: AN EXTRA WITH A DRAWBACK", Vector2(bx + 15, by), Gfx.UI_TEXT)
+	if not _goals.is_empty():
+		UiKit.section(ui, "YOUR GOALS", Vector2(bx, by), bw, "SCRAP TO REACH")
+		by += 10.0
+		var shown: int = 0
+		for g in _goals:
+			if shown == 5:
+				UiFont.draw_small(ui, "+%d MORE" % (_goals.size() - shown), Vector2(bx + 10, by), Gfx.UI_DIM)
+				by += 8.0
+				break
+			_flag(ui, Vector2(bx, by - 1), Gfx.FIRE[4])
+			var swap: bool = false
+			var path: Array[String] = TechGuide.build_path(v, g, _goals)
+			for p in path:
+				swap = swap or Tech.blocked_by(v, p) != ""
+			var nm: String = UiKit.tech_name(g)
+			var rt: String = "NEEDS A SWAP" if swap else str(TechGuide.path_cost(v, path))
+			if UiFont.width(nm) > bw - 14.0 - UiFont.width_small(rt) - 4.0:
+				nm = str(Tech.def(g)["short"])
+			UiFont.draw(ui, nm, Vector2(bx + 10, by), Gfx.UI_TEXT)
+			UiFont.draw_small(ui, rt, Vector2(bx + bw - UiFont.width_small(rt), by + 1), Gfx.UI_BAD if swap else Gfx.UI_TEXT)
+			by += 8.0
+			shown += 1
+		by += 2.0
+		if _next != "":
+			UiFont.draw_small(ui, "NEXT: %s - %d SCRAP" % [UiKit.tech_name(_next), Tech.price(v, _next)], Vector2(bx, by), Gfx.FIRE[4])
+		else:
+			UiFont.draw_small(ui, "NO GOAL REACHABLE WITHOUT A SWAP", Vector2(bx, by), Gfx.UI_BAD)
+	else:
+		UiKit.section(ui, "START FROM AN IDEA", Vector2(bx, by), bw, "OR MARK YOUR OWN")
+		by += 10.0
+		for t: Dictionary in TechGuide.TEMPLATES:
+			var ir := Rect2(bx - 2, by - 2, bw + 4, 16)
+			var ih: bool = ui.is_hover("idea", t["id"])
+			ui.draw_rect(ir, UiKit.HOVER_WASH if ih else Color(0.11, 0.08, 0.07, 0.8))
+			UiKit.outline_rect(ui, ir, Gfx.FIRE[3] if ih else UiKit.PANEL_EDGE)
+			var nx2: float = UiFont.draw(ui, str(t["name"]), Vector2(bx + 1, by), Gfx.FIRE[5] if ih else Gfx.UI_TEXT, Gfx.UI_SHADOW)
+			UiFont.draw_small(ui, "%s + %s" % [str(t["branches"][0]).left(4).to_upper(), str(t["branches"][1]).left(4).to_upper()], Vector2(nx2 + 5, by + 1), Gfx.UI_DIM)
+			UiFont.draw_small(ui, str(t["blurb"]), Vector2(bx + 1, by + 7), Gfx.BRASS[3])
+			ui.add_hit(ir, "idea", t["id"])
+			by += 18.0
+		UiFont.draw_small(ui, "AN IDEA ONLY FLAGS GOALS - CHANGE THEM ANY TIME", Vector2(bx, by - 1), Gfx.UI_DIM)
 	ui.draw_rect(Rect2(r.position.x + 396, r.position.y + 4, 1, r.size.y - 8), Color(UiKit.PANEL_EDGE, 0.7))
-	# house rules
+	# C: legend, one swatch per state, and the two house rules that matter most
 	var cx: float = r.position.x + 402.0
 	var cw: float = r.end.x - cx - 5.0
 	var cy: float = r.position.y + 4.0
-	UiKit.section(ui, "RULES OF THE TREE", Vector2(cx, cy), cw)
+	UiKit.section(ui, "HOW TO READ IT", Vector2(cx, cy), cw)
 	cy += 10.0
-	for txt: String in ["A STAGE NEEDS A NODE OF THE ONE BEFORE. ONE CHOICE PER STAGE.",
-			"CLICK A STRUCK-OUT CHOICE TO SWAP: FIRST SWAP FREE, THEN +50%.",
-			"FUSIONS JOIN TWO BRANCHES. SWAP A PART AWAY AND THEY SLEEP.",
-			"HELD SCRAP EARNS INTEREST UP TO YOUR INTEREST CAP."]:
-		cy = _gloss_par(ui, txt, Vector2(cx, cy), cw, Gfx.UI_DIM, true, 7.0, r.end.y - 6.0) + 2.0
+	var items: Array = [["BUILT", "brass"], ["BUILD NOW", "buy"], ["NEED SCRAP", "poor"], ["LOCKED", "lock"],
+		["SWAP (SIBLING)", "swap"], ["IDLE / DORMANT", "idle"], ["YOUR GOAL", "goal"], ["NEXT TO A GOAL", "next"],
+		["KEYSTONE", "key"], ["PROTOTYPE", "proto"]]
+	var colw: float = floorf(cw / 2.0)
+	for i in items.size():
+		var lx: float = cx + (i % 2) * colw
+		var ly: float = cy + (i / 2) * 9.0
+		_legend_chip(ui, Rect2(lx, ly - 1, 11, 7), str(items[i][1]))
+		UiFont.draw_small(ui, str(items[i][0]), Vector2(lx + 15, ly), Gfx.UI_TEXT)
+	cy += 46.0
+	_link_glyph(ui, Vector2(cx + 2, cy), Gfx.BRASS[3])
+	UiFont.draw_small(ui, "FUSES WITH ANOTHER BRANCH", Vector2(cx + 15, cy), Gfx.UI_TEXT)
+	cy += 8.0
+	_gloss_par(ui, "ONE CHOICE PER STAGE - CLICK A STRUCK-OUT ONE TO SWAP", Vector2(cx, cy), cw, Gfx.UI_DIM, true, 7.0, r.end.y - 6.0)
 
 
 static func _legend_chip(ui: WorkshopUi, r: Rect2, kind: String) -> void:
@@ -912,6 +927,13 @@ static func _legend_chip(ui: WorkshopUi, r: Rect2, kind: String) -> void:
 		"key":
 			ui.draw_rect(inner, Gfx.STEEL[1])
 			_keystone_corners(ui, r)
+		"goal":
+			ui.draw_rect(inner, Gfx.STEEL[2])
+			UiKit.outline_rect(ui, r.grow(1.0), Gfx.FIRE[4])
+			_flag(ui, Vector2(r.end.x - 5, r.position.y - 1), Gfx.FIRE[4])
+		"proto":
+			ui.draw_rect(inner, Gfx.STEEL[2])
+			ui.draw_rect(Rect2(inner.position.x, inner.end.y - 2, inner.size.x, 2), Color(Gfx.INK_RED, 0.85))
 
 
 # ---------------------------------------------------------------- overlays (drawn after everything)
