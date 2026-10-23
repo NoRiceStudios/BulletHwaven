@@ -6,3 +6,4 @@ __pycache__/
 game/.godot/
 *.translation
 build/
+.claude/worktrees/
