@@ -4,7 +4,7 @@ extends Control
 ## carries, at the gun's real reach (Weapon "range" after cards and tech, the same number the sim fires
 ## at), in a warm colour per gun with the gun's name where the ring is on screen. Guns that reach the
 ## same distance share one ring and one label. R toggles it during combat (kept in user://profile.cfg
-## [ui] ranges, off by default; in the workshop R is the reroll). Sits under the HUD panels. Reads sim
+## [ui] ranges, on by default since the player asked for it; in the workshop R is the reroll). Sits under the HUD panels. Reads sim
 ## state and the WorldView only.
 
 const PROFILE_PATH := "user://profile.cfg"
@@ -17,7 +17,7 @@ const EDGE := 6.0  ## labels keep this far from the screen edge
 const ALPHA := 0.9
 
 var view: WorldView = null
-var shown: bool = false
+var shown: bool = true
 var force: bool = false  ## screenshot mode: show it whatever the player's preference
 
 
@@ -26,7 +26,7 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var cfg := ConfigFile.new()
 	if cfg.load(PROFILE_PATH) == OK:
-		shown = bool(cfg.get_value("ui", "ranges", false))
+		shown = bool(cfg.get_value("ui", "ranges", true))
 
 
 func _process(_delta: float) -> void:
