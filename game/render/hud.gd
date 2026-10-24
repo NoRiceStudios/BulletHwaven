@@ -394,7 +394,8 @@ func _draw_mobility(v: SimVehicle, dock: Rect2) -> void:
 			label += " %d" % ceili(float(cd) / float(SimWorld.TICK_RATE))
 		UiFont.draw_small(self, label, Vector2(x, y), col, Gfx.UI_SHADOW)
 		x += UiFont.width_small(label) + 10.0
-	_draw_mark_chip(v, Vector2(x, y))
+	x = _draw_mark_chip(v, Vector2(x, y)) + 10.0
+	_draw_toggle_chips(Vector2(x, y))
 
 
 # ---------------------------------------------------------------- radio
@@ -440,7 +441,7 @@ func _draw_radio(v: SimVehicle, vs: Vector2) -> void:
 
 
 ## The target mark order: "RMB MARK" when ready, the seconds left while it runs, the cooldown after.
-func _draw_mark_chip(v: SimVehicle, p: Vector2) -> void:
+func _draw_mark_chip(v: SimVehicle, p: Vector2) -> float:
 	var label: String
 	var col: Color
 	if Orders.active(world, v):
@@ -452,7 +453,16 @@ func _draw_mark_chip(v: SimVehicle, p: Vector2) -> void:
 	else:
 		label = "RMB MARK"
 		col = Gfx.FIRE[5]
-	UiFont.draw_small(self, label, p, col, Gfx.UI_SHADOW)
+	return UiFont.draw_small(self, label, p, col, Gfx.UI_SHADOW)
+
+
+## The view toggles next to the mark chip, lit while on: R range rings, T target marks.
+func _draw_toggle_chips(p: Vector2) -> void:
+	if view == null or view.ranges == null or view.targets == null:
+		return
+	var x: float = p.x
+	for t: Array in [["R RANGE", view.ranges.shown], ["T TARGETS", view.targets.shown]]:
+		x = UiFont.draw_small(self, str(t[0]), Vector2(x, p.y), Gfx.FIRE[5] if bool(t[1]) else Gfx.UI_DIM, Gfx.UI_SHADOW) + 10.0
 
 
 ## Reticle over the local rig's marked target: four warm corner brackets that snap in on the cast and a bar

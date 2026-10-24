@@ -577,6 +577,7 @@ func _run_shot(args: Dictionary) -> void:
 	_view.hud().pointer_override = hover
 	if ui.has("picker"):
 		_view.hud().picker_open = true
+	_view.ranges.shown = false  # screenshots show the rings only when the ui state asks
 	_view.ranges.force = bool(ui.get("ranges", false))
 	_view.targets.shown = bool(ui.get("targets", true))  # not the player's saved preference
 	if ui.has("rules"):
